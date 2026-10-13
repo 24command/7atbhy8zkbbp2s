@@ -7,7 +7,7 @@ mkdir -p "$OUT/PhiMod.framework"
 xcrun --sdk iphoneos clang++ \
   -arch arm64 -isysroot "$SDK" -miphoneos-version-min=15.0 \
   -std=c++17 -fobjc-arc -fvisibility=hidden -dynamiclib \
-  -framework UIKit -framework Foundation \
+  -framework UIKit -framework Foundation -framework CoreGraphics -framework QuartzCore \
   -Wl,-install_name,@rpath/PhiMod.framework/PhiMod \
   -Wl,-dead_strip \
   "$ROOT/PhiMod/Sources/PhiModBootstrap.mm" \
