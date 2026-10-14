@@ -238,11 +238,18 @@ static UIColor *PMColor(uint32_t argb) {
  if(ok && [sender.accessibilityIdentifier isEqualToString:@"opacity"])self.bubble.alpha=number*(self.open?0.65:1);
 }
 - (void)probeRuntime {self.statusLabel.text=[PMRuntime probe];}
+- (void)readGameSnapshot {
+ NSDictionary *s=[PMRuntime gameSnapshot];
+ if(![s[@"ok"] boolValue]){self.statusLabel.text=[@"读取失败：" stringByAppendingString:(s[@"message"] ?: @"未知错误")];return;}
+ self.statusLabel.text=[NSString stringWithFormat:@"语言 %@ · P %.0f/G %.0f/B %.0f ms · RKS %.3f",s[@"language"], [s[@"perfectMs"] doubleValue],[s[@"goodMs"] doubleValue],[s[@"badMs"] doubleValue],[s[@"rks"] doubleValue]];
+}
+- (void)setChinese {NSDictionary *r=[PMRuntime setGameLanguage:6];self.statusLabel.text=r[@"message"] ?: @"完成";}
+- (void)setEnglish {NSDictionary *r=[PMRuntime setGameLanguage:10];self.statusLabel.text=r[@"message"] ?: @"完成";}
 - (void)renderPage {
  for(UIView *view in self.body.arrangedSubviews.copy){[self.body removeArrangedSubview:view];[view removeFromSuperview];}
  NSArray *names=@[@"谱库",@"章节",@"判定",@"模式",@"设置"];
  [self.body addArrangedSubview:[self label:names[self.selectedTab] size:18 color:PMColor(0xfff1f5fa)]];
- [self.body addArrangedSubview:[self label:@"配置层已迁移；游戏功能未接入。以下开关仅保存草案，不代表生效。" size:12 color:PMColor(0xff92a2b9)]];
+ [self.body addArrangedSubview:[self label:@"设置页已接入游戏语言切换与状态读取（待真机验证）。判定／模式开关仍仅保存草案。" size:12 color:PMColor(0xff92a2b9)]];
  if(self.selectedTab==0 || self.selectedTab==1){[self.body addArrangedSubview:[self label:@"等待移植谱面存储、导入和游戏导航；不会修改原版曲库。" size:13 color:PMColor(0xff92a2b9)]];}
  if(self.selectedTab==2){[self addSetting:@"enabled" title:@"自定义判定（草案）" boolean:YES];[self addSetting:@"perfect" title:@"Perfect / ms" boolean:NO];[self addSetting:@"good" title:@"Good / ms" boolean:NO];[self addSetting:@"holdGrace" title:@"Hold 容错 / ms" boolean:NO];}
  if(self.selectedTab==3){
@@ -251,7 +258,7 @@ static UIColor *PMColor(uint32_t argb) {
  NSArray *numbers=@[@[@"unified",@"统一键型 0–4"],@[@"challenge",@"挑战 0关 / 1AP / 2FC"],@[@"radius",@"噪域半径"],@[@"noiseGrace",@"噪域容错 / ms"],@[@"holdFx",@"Hold 特效间隔 / ms"],@[@"hpMax",@"最大 HP"],@[@"hpPerfect",@"Perfect HP 增减"],@[@"hpGood",@"Good HP 增减"],@[@"hpBad",@"Bad HP 增减"],@[@"hpMiss",@"Miss HP 增减"],@[@"hpRed",@"红色阈值 %"],@[@"hpBlue",@"蓝色阈值 %"]];
  for(NSArray *p in numbers)[self addSetting:p[0] title:p[1] boolean:NO];
  }
- if(self.selectedTab==4){[self addSetting:@"opacity" title:@"浮窗透明度 0.15–1（立即生效）" boolean:NO];[self addSetting:@"showShortcuts" title:@"选曲快捷按钮（待接入）" boolean:YES];[self.body addArrangedSubview:[self textButton:@"只读探测 IL2CPP" action:@selector(probeRuntime)]];}
+ if(self.selectedTab==4){[self addSetting:@"opacity" title:@"浮窗透明度 0.15–1（立即生效）" boolean:NO];[self addSetting:@"showShortcuts" title:@"选曲快捷按钮（待接入）" boolean:YES];[self.body addArrangedSubview:[self textButton:@"读取游戏状态（实际读取）" action:@selector(readGameSnapshot)]];[self.body addArrangedSubview:[self textButton:@"切换中文" action:@selector(setChinese)]];[self.body addArrangedSubview:[self textButton:@"切换 English" action:@selector(setEnglish)]];[self.body addArrangedSubview:[self textButton:@"只读探测 IL2CPP" action:@selector(probeRuntime)]];}
  [self.body addArrangedSubview:[self textButton:@"UI 自检" action:@selector(runSelfTest)]];
  for(UIButton *button in self.tabBar.arrangedSubviews){BOOL selected=button.tag==200+self.selectedTab;button.backgroundColor=selected?PMColor(0xff71e1cf):PMColor(0xff252f40);[button setTitleColor:selected?PMColor(0xff142b35):PMColor(0xfff1f5fa) forState:UIControlStateNormal];}
  self.scroll.contentOffset=CGPointZero;

@@ -1,5 +1,7 @@
 #import <Foundation/Foundation.h>
-/// Read-only metadata probe. Never invokes gameplay methods or writes fields.
+/// All operations must be called on the UIKit/Unity main thread.
 @interface PMRuntime : NSObject
 + (NSString *)probe;
++ (NSDictionary<NSString *, id> *)gameSnapshot;
++ (NSDictionary<NSString *, id> *)setGameLanguage:(NSInteger)language;
 @end
