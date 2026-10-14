@@ -10,7 +10,7 @@ xcrun --sdk iphoneos clang++ \
   -framework UIKit -framework Foundation -framework CoreGraphics -framework QuartzCore \
   -Wl,-install_name,@rpath/PhiMod.framework/PhiMod \
   -Wl,-dead_strip \
-  "$ROOT/PhiMod/Sources/PhiModBootstrap.mm" \
+  "$ROOT"/PhiMod/Sources/*.mm \
   -o "$OUT/PhiMod.framework/PhiMod"
 cp "$ROOT/PhiMod/Resources/Info.plist" "$OUT/PhiMod.framework/Info.plist"
 /usr/bin/codesign --force --sign - --timestamp=none "$OUT/PhiMod.framework"

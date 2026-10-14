@@ -1,5 +1,3 @@
-# PhiMod iOS UI prototype
+# PhiMod iOS UI/configuration prototype
 
-UI only; no game binaries, assets, credentials, or signing certificates.
-Run Actions > Build PhiMod iOS framework. Download the PhiMod-framework artifact.
-This is not an installable IPA and has not yet been device-tested.
+UI settings persist locally; gameplay effects are NOT implemented. Manual IL2CPP probe is read-only. New sources require CI compilation and device testing. No game assets or extracted dump included.

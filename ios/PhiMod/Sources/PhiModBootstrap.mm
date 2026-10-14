@@ -1,5 +1,7 @@
 #import <UIKit/UIKit.h>
 #import "PhiModBootstrap.h"
+#import "PMSettings.h"
+#import "PMRuntime.h"
 
 static const NSInteger PMOverlayRootTag = 0x50484D4F;
 static NSString * const PMBubbleXKey = @"phimod.ios.bubble.x";
@@ -30,6 +32,7 @@ static NSString * const PMBubbleYKey = @"phimod.ios.bubble.y";
 @property(nonatomic, strong) UILabel *statusLabel;
 @property(nonatomic, strong) UIStackView *tabBar;
 @property(nonatomic, strong) UIStackView *body;
+@property(nonatomic, strong) UIScrollView *scroll;
 @property(nonatomic, assign) NSInteger selectedTab;
 @property(nonatomic, assign) BOOL open;
 + (instancetype)shared;
@@ -128,6 +131,7 @@ static UIColor *PMColor(uint32_t argb) {
     [self.bubble addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragBubble:)]];
     [self.root addSubview:self.bubble];
     [self restoreBubblePosition];
+    self.bubble.alpha=[[[PMSettings shared] value:@"opacity"] doubleValue];
 
     self.panel = [UIView new];
     self.panel.backgroundColor = PMColor(0xf51a2130);
@@ -172,7 +176,17 @@ static UIColor *PMColor(uint32_t argb) {
     self.body.axis = UILayoutConstraintAxisVertical;
     self.body.alignment = UIStackViewAlignmentFill;
     self.body.spacing = 10;
-    [self.panel addSubview:self.body];
+    self.scroll=[UIScrollView new];
+    [self.panel addSubview:self.scroll];
+    [self.scroll addSubview:self.body];
+    self.body.translatesAutoresizingMaskIntoConstraints=NO;
+    [NSLayoutConstraint activateConstraints:@[
+      [self.body.leadingAnchor constraintEqualToAnchor:self.scroll.contentLayoutGuide.leadingAnchor],
+      [self.body.trailingAnchor constraintEqualToAnchor:self.scroll.contentLayoutGuide.trailingAnchor],
+      [self.body.topAnchor constraintEqualToAnchor:self.scroll.contentLayoutGuide.topAnchor],
+      [self.body.bottomAnchor constraintEqualToAnchor:self.scroll.contentLayoutGuide.bottomAnchor],
+      [self.body.widthAnchor constraintEqualToAnchor:self.scroll.frameLayoutGuide.widthAnchor]
+    ]];
 
     self.selectedTab = 0;
     [self renderPage];
@@ -204,37 +218,49 @@ static UIColor *PMColor(uint32_t argb) {
     title.frame = CGRectMake(0, 0, CGRectGetMinX(close.frame) - 8, 36);
     self.statusLabel.frame = CGRectMake(inner + 4, 50, panelWidth - inner * 2 - 8, 18);
     self.tabBar.frame = CGRectMake(inner, 72, panelWidth - inner * 2, 40);
-    self.body.frame = CGRectMake(inner, 124, panelWidth - inner * 2, panelHeight - 140);
+    self.scroll.frame = CGRectMake(inner, 124, panelWidth - inner * 2, MAX(1, panelHeight - 140));
     [self clampBubble];
 }
 
+- (void)addSetting:(NSString *)key title:(NSString *)title boolean:(BOOL)boolean {
+ UIStackView *row=[UIStackView new];row.axis=UILayoutConstraintAxisHorizontal;row.spacing=8;row.alignment=UIStackViewAlignmentCenter;
+ UILabel *label=[self label:title size:13 color:PMColor(0xfff1f5fa)];[row addArrangedSubview:label];
+ if(boolean){UISwitch *control=[UISwitch new];control.accessibilityIdentifier=key;control.on=[[[PMSettings shared] value:key] boolValue];[control addTarget:self action:@selector(settingSwitch:) forControlEvents:UIControlEventValueChanged];[row addArrangedSubview:control];}
+ else {UITextField *field=[UITextField new];field.accessibilityIdentifier=key;field.text=[[[PMSettings shared] value:key] description];field.textColor=PMColor(0xff71e1cf);field.borderStyle=UITextBorderStyleRoundedRect;field.keyboardType=UIKeyboardTypeNumbersAndPunctuation;field.returnKeyType=UIReturnKeyDone;[field.widthAnchor constraintEqualToConstant:100].active=YES;[field addTarget:self action:@selector(settingNumber:) forControlEvents:UIControlEventEditingDidEnd];[field addTarget:field action:@selector(resignFirstResponder) forControlEvents:UIControlEventEditingDidEndOnExit];[row addArrangedSubview:field];}
+ [self.body addArrangedSubview:row];
+}
+- (void)settingSwitch:(UISwitch *)sender {NSString *error=nil;BOOL ok=[[PMSettings shared] setValue:@(sender.on) forKey:sender.accessibilityIdentifier error:&error];if(!ok)sender.on=[[[PMSettings shared] value:sender.accessibilityIdentifier] boolValue];self.statusLabel.text=ok?@"配置已保存；尚未应用到游戏":error;}
+- (void)settingNumber:(UITextField *)sender {
+ NSScanner *scanner=[NSScanner scannerWithString:sender.text ?: @""];scanner.locale=[NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];double number=0;NSString *error=nil;
+ BOOL parsed=[scanner scanDouble:&number] && scanner.isAtEnd;
+ BOOL ok=parsed && [[PMSettings shared] setValue:@(number) forKey:sender.accessibilityIdentifier error:&error];
+ sender.text=[[[PMSettings shared] value:sender.accessibilityIdentifier] description];self.statusLabel.text=ok?@"配置已保存；尚未应用到游戏":(error ?: @"请输入有效数值");
+ if(ok && [sender.accessibilityIdentifier isEqualToString:@"opacity"])self.bubble.alpha=number*(self.open?0.65:1);
+}
+- (void)probeRuntime {self.statusLabel.text=[PMRuntime probe];}
 - (void)renderPage {
-    for (UIView *view in self.body.arrangedSubviews.copy) {
-        [self.body removeArrangedSubview:view];
-        [view removeFromSuperview];
-    }
-    NSArray *names = @[@"谱库", @"章节", @"判定", @"模式", @"设置"];
-    self.pageTitle = [self label:names[self.selectedTab] size:18 color:PMColor(0xfff1f5fa)];
-    self.pageTitle.font = [UIFont systemFontOfSize:18 weight:UIFontWeightSemibold];
-    [self.body addArrangedSubview:self.pageTitle];
-    UILabel *notice = [self label:@"当前阶段仅验证 iOS 浮窗加载、触摸穿透、拖动和页面结构。游戏功能将在完成 IL2CPP 定位后接入。" size:13 color:PMColor(0xff92a2b9)];
-    [self.body addArrangedSubview:notice];
-    UIButton *test = [self textButton:@"UI 自检" action:@selector(runSelfTest)];
-    [self.body addArrangedSubview:test];
-    UIView *spacer = [UIView new];
-    [spacer setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisVertical];
-    [self.body addArrangedSubview:spacer];
-    for (UIButton *button in self.tabBar.arrangedSubviews) {
-        BOOL selected = button.tag == 200 + self.selectedTab;
-        button.backgroundColor = selected ? PMColor(0xff71e1cf) : PMColor(0xff252f40);
-        [button setTitleColor:selected ? PMColor(0xff142b35) : PMColor(0xfff1f5fa) forState:UIControlStateNormal];
-    }
+ for(UIView *view in self.body.arrangedSubviews.copy){[self.body removeArrangedSubview:view];[view removeFromSuperview];}
+ NSArray *names=@[@"谱库",@"章节",@"判定",@"模式",@"设置"];
+ [self.body addArrangedSubview:[self label:names[self.selectedTab] size:18 color:PMColor(0xfff1f5fa)]];
+ [self.body addArrangedSubview:[self label:@"配置层已迁移；游戏功能未接入。以下开关仅保存草案，不代表生效。" size:12 color:PMColor(0xff92a2b9)]];
+ if(self.selectedTab==0 || self.selectedTab==1){[self.body addArrangedSubview:[self label:@"等待移植谱面存储、导入和游戏导航；不会修改原版曲库。" size:13 color:PMColor(0xff92a2b9)]];}
+ if(self.selectedTab==2){[self addSetting:@"enabled" title:@"自定义判定（草案）" boolean:YES];[self addSetting:@"perfect" title:@"Perfect / ms" boolean:NO];[self addSetting:@"good" title:@"Good / ms" boolean:NO];[self addSetting:@"holdGrace" title:@"Hold 容错 / ms" boolean:NO];}
+ if(self.selectedTab==3){
+ NSArray *flags=@[@[@"autoplay",@"AutoPlay"],@[@"noise",@"噪域"],@[@"clearOriginalNoise",@"清除原噪域"],@[@"fullScreen",@"全屏判定"],@[@"noCombo",@"隐藏 Combo"],@[@"hpEnabled",@"HP 生存"],@[@"noiseVisual",@"噪域视觉"],@[@"hpTopEffect",@"顶部 HP 特效"],@[@"hpBackgroundEffect",@"背景 HP 特效"]];
+ for(NSArray *p in flags)[self addSetting:p[0] title:p[1] boolean:YES];
+ NSArray *numbers=@[@[@"unified",@"统一键型 0–4"],@[@"challenge",@"挑战 0关 / 1AP / 2FC"],@[@"radius",@"噪域半径"],@[@"noiseGrace",@"噪域容错 / ms"],@[@"holdFx",@"Hold 特效间隔 / ms"],@[@"hpMax",@"最大 HP"],@[@"hpPerfect",@"Perfect HP 增减"],@[@"hpGood",@"Good HP 增减"],@[@"hpBad",@"Bad HP 增减"],@[@"hpMiss",@"Miss HP 增减"],@[@"hpRed",@"红色阈值 %"],@[@"hpBlue",@"蓝色阈值 %"]];
+ for(NSArray *p in numbers)[self addSetting:p[0] title:p[1] boolean:NO];
+ }
+ if(self.selectedTab==4){[self addSetting:@"opacity" title:@"浮窗透明度 0.15–1（立即生效）" boolean:NO];[self addSetting:@"showShortcuts" title:@"选曲快捷按钮（待接入）" boolean:YES];[self.body addArrangedSubview:[self textButton:@"只读探测 IL2CPP" action:@selector(probeRuntime)]];}
+ [self.body addArrangedSubview:[self textButton:@"UI 自检" action:@selector(runSelfTest)]];
+ for(UIButton *button in self.tabBar.arrangedSubviews){BOOL selected=button.tag==200+self.selectedTab;button.backgroundColor=selected?PMColor(0xff71e1cf):PMColor(0xff252f40);[button setTitleColor:selected?PMColor(0xff142b35):PMColor(0xfff1f5fa) forState:UIControlStateNormal];}
+ self.scroll.contentOffset=CGPointZero;
 }
 
 - (void)togglePanel {
     self.open = !self.open;
     self.panel.hidden = !self.open;
-    self.bubble.alpha = self.open ? 0.65 : 1.0;
+    self.bubble.alpha = [[[PMSettings shared] value:@"opacity"] doubleValue] * (self.open ? 0.65 : 1.0);
     if (self.open) {
         [self.root bringSubviewToFront:self.panel];
         [self.root bringSubviewToFront:self.bubble];
