@@ -2,6 +2,7 @@
 #import "PhiModBootstrap.h"
 #import "PMSettings.h"
 #import "PMRuntime.h"
+#import "PMGameplay.h"
 
 static const NSInteger PMOverlayRootTag = 0x50484D4F;
 static NSString * const PMBubbleXKey = @"phimod.ios.bubble.x";
@@ -238,6 +239,8 @@ static UIColor *PMColor(uint32_t argb) {
  if(ok && [sender.accessibilityIdentifier isEqualToString:@"opacity"])self.bubble.alpha=number*(self.open?0.65:1);
 }
 - (void)probeRuntime {self.statusLabel.text=[PMRuntime probe];}
+- (void)previewGameplay {NSDictionary *r=[PMGameplay previewConfiguration];self.statusLabel.text=r[@"message"] ?: @"配置错误";}
+- (void)validateGameplay {NSDictionary *r=[PMGameplay validateConfiguration];self.statusLabel.text=r[@"message"] ?: @"配置错误";}
 - (void)readGameSnapshot {
  NSDictionary *s=[PMRuntime gameSnapshot];
  if(![s[@"ok"] boolValue]){self.statusLabel.text=[@"读取失败：" stringByAppendingString:(s[@"message"] ?: @"未知错误")];return;}
@@ -259,6 +262,8 @@ static UIColor *PMColor(uint32_t argb) {
  for(NSArray *p in numbers)[self addSetting:p[0] title:p[1] boolean:NO];
  }
  if(self.selectedTab==4){[self addSetting:@"opacity" title:@"浮窗透明度 0.15–1（立即生效）" boolean:NO];[self addSetting:@"showShortcuts" title:@"选曲快捷按钮（待接入）" boolean:YES];[self.body addArrangedSubview:[self textButton:@"读取游戏状态（实际读取）" action:@selector(readGameSnapshot)]];[self.body addArrangedSubview:[self textButton:@"切换中文" action:@selector(setChinese)]];[self.body addArrangedSubview:[self textButton:@"切换 English" action:@selector(setEnglish)]];[self.body addArrangedSubview:[self textButton:@"只读探测 IL2CPP" action:@selector(probeRuntime)]];}
+ [self.body addArrangedSubview:[self textButton:@"玩法核心配置校验（不应用）" action:@selector(validateGameplay)]];
+ [self.body addArrangedSubview:[self textButton:@"玩法核心预览（不应用）" action:@selector(previewGameplay)]];
  [self.body addArrangedSubview:[self textButton:@"UI 自检" action:@selector(runSelfTest)]];
  for(UIButton *button in self.tabBar.arrangedSubviews){BOOL selected=button.tag==200+self.selectedTab;button.backgroundColor=selected?PMColor(0xff71e1cf):PMColor(0xff252f40);[button setTitleColor:selected?PMColor(0xff142b35):PMColor(0xfff1f5fa) forState:UIControlStateNormal];}
  self.scroll.contentOffset=CGPointZero;

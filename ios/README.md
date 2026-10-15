@@ -1,7 +1,9 @@
 ﻿# PhiMod iOS bootstrap
 
-This directory contains the first iOS migration stage: an in-game UIKit overlay
-only. It does not yet call game/IL2CPP functions.
+This directory contains the UIKit overlay, a version-gated IL2CPP bridge for
+language switching/read-only snapshots, and tested portable gameplay/chart rules.
+Gameplay hooks and save/result interception are NOT installed: gameplay toggles
+remain drafts. See MIGRATION_STATUS.md for the source/runtime feature matrix.
 
 ## What is modified
 
@@ -70,3 +72,12 @@ G:\games.Pigeon.Phigros_4.0.1_und3fined\Il2CppDumperOutput_v6746
 Import `ida_with_struct_py3.py` from Il2CppDumper v6.7.46 into the IDA database
 opened on `UnityFramework`, and select this output directory's `script.json` and
 `il2cpp.h` when requested. Save a backup of the IDA database before importing.
+
+## Portable core tests
+
+```bash
+bash ios/tests/run_core_tests.sh
+```
+
+The macOS workflow runs these host tests before building the arm64 framework.
+Host tests do not validate UIKit, game hooks, signing, or device behavior.

@@ -1,36 +1,39 @@
-# iOS 源码迁移状态（2026-10-15，本次续作）
+# iOS 迁移状态（2026-10-15）
 
-## 本次新增：已接入源码，未完成 Apple 编译和真机测试
-- PMRuntime：限定供给的 iOS 4.0.1 UnityFramework UUID，按 Assembly-CSharp.dll 查类。
-- 动态解析 23 个 IL2CPP API；检查字段类型/静态性、方法参数和返回类型；不读取 MethodInfo 的私有布局。
-- 游戏语言切换：对应 Android Bridge.setLanguage -> MultiLanguageManager.SetLanguage；先核验 getter/setter，切换后读回。支持 6/10/22/40/41，UI 先提供中文(6)和英文(10)。游戏自身可能持久化语言偏好。
-- 实时状态快照：当前语言、Perfect/Good/Bad 毫秒、挑战状态和当前 RKS。RKS 是现有值，不是完整 B30 报告，也不主动重新计算。
-- 所有入口限定主线程；仅在需要时附加 IL2CPP 线程；只释放自己拥有的附加。托管调用异常停止后续调用；语言切换异常不假称回滚。
-- 设置页接入语言按钮和读取按钮；判定/模式开关仍为草案，不会改成绩或开启 AutoPlay。
-- 未初始化的 GameInformation 拒绝操作。未做后台轮询或自动应用。
+## 本轮交付
+- 新增 PhiMod/Core/PMGameplayCore.hpp：C++17 玩法规则，无 Android 地址/JNI/Unity 指针。
+- 移植判定窗口计算与基线恢复、AutoPlay 判定计划、Hold 尾端延迟计分与去重、Hold 容错、全屏空间覆盖计划、ACC-only 公式、统一键型、HP、AP/FC 重开规则、噪域矩形并集及练习配色。
+- 新增 PMChartCore.hpp：Android 谱面 UTF-8→UTF-16 验证转换、RPE floor/control/Hold 几何和 HUD 偏移算法。这里只移植算法，不代表自制谱导入或 RPE 渲染接通。
+- PMGameplay.h/.mm 将 UI 配置转换到核心并校验；新增“玩法核心配置校验（不应用）”和“玩法核心预览（不应用）”。明确返回 backendReady=false，不触碰游戏字段。
+- 练习局隔离状态机：七项挂接覆盖缺一不可，辅助模式拒绝启动；隔离标记贯穿结果阶段，关闭开关不会解除；后端失败停止辅助且继续隔离。当前它只是核心规则，还没有拦截游戏实际写入。
+- 核心补充假音符计分拒绝、HP 失败一次性派发及非有限判定样本拒绝。
 
-## 本次验证
-- PhiMod-framework2.zip 内嵌 PhiMod.framework.zip；arm64、最低 iOS 15.0。这是修改前的产物，不包含本次新功能。
-- 目标 UnityFramework UUID：6e181f31750a3044a73a1498dc2d56d4；23 个需要的导出均存在。
-- verify_runtime_contracts.py 对 dump 校验 8 个声明，以及 3 个不兼容反例。此静态检查不证明 ABI/线程执行/真机加载一定正确。
-- MCP 已实际连接 127.0.0.1:13337，server_health 确认打开的是目标 UnityFramework。查询时自动分析未完成；本次没有把未完成的反编译当证据，没有修改 IDB。
-- 未在 Windows 上声称完成 Apple 编译；需要 GitHub macOS 构建和设备测试。
+## 实际验证结果
+- Windows 本地使用 Zig 0.16.0 单任务编译最新 C++17 核心测试，启用 -Wall -Wextra -Werror -pedantic；通过 **10,124 项检查**。包含 100 轮随机噪域几何覆盖/不重叠检查、UTF-8 非法序列、生命周期、隔离、HP/挑战、Hold 计分和 RPE 计算。
+- dump 静态合约：8 项声明 + 3 个反例 + 源码保护检查通过。PMRuntime 没有 field_static_set_value。
+- IDA MCP 已重新确认目标 UnityFramework 和 auto_analysis_ready=true，auto_wait 返回 true；没有修改 IDB 或原始游戏。
+- 本地 IDA 审计确认：LevelRecord.UpdateRecord 修改内存成绩；SetSongRecord 序列化并持久化；LevelOverControl.Start 是协程工厂，不能只拦工厂就宣称结算保护完整。
+- framework3.zip：嵌套 PhiMod.framework.zip，Mach-O arm64 dylib，iOS 平台、最低 15.0，依赖系统框架；包含上一版运行时桥接，不含本轮 PMGameplay，需要重新构建。未在 Windows 验证 Apple 签名有效性。
+- 已添加 macOS 主机核心测试步骤到两份构建工作流；Apple SDK 编译/设备测试还未执行。
 
-## 已有实现
-UIKit 浮窗、拖动/穿透、配置持久化及范围校验、源代码构建脚本和 IPA 暂存打包工具。
-Android 73/73 引用类型找到，34 个 Bridge 入口未全部迁移；类型匹配不等同于功能完成。
+## 功能分层
+| 功能 | 源码状态 | 游戏内状态 |
+|---|---|---|
+| UIKit 浮窗、配置存储 | 已有实现 | 等待设备验证 |
+| 语言切换、判定/RKS快照 | 运行时桥接已实现 | 等待设备验证 |
+| 判定/AutoPlay/Hold/HP/AP-FC/ACC/统一键型/全屏 | 核心规则已移植并测试 | 未挂接，未启用 |
+| 噪域 | 并集算法已移植 | 生成、触摸和视觉未挂接 |
+| 练习局成绩隔离 | 状态机已移植并测试 | 保存、排行和结算拦截未安装 |
+| RPE 与自制谱 | 部分编码/几何算法已移植 | 导入、资源和渲染未接通 |
+| 章节导航、音频、皮肤、解锁、完整报告 | 尚未完成 | 未启用 |
 
-## 尚未完成
-- 判定/AutoPlay/噪域/HP/统一键型等逻辑，以及练习局成绩隔离。
-- 游戏帧执行点和 Hook 后端。当前主线程用户操作不替代完整 Unity Update 调度。
-- 谱库/章节导航、自制谱导入、音频、皮肤、解锁、完整报告。
-- 正常签名的非越狱设备加载验证；TrollStore 成功不能替代该验证。
+## 后续关键工作
+1. 对 iOS ARM64 的实际 ABI、生命周期及结算迭代器 MoveNext 验证，补齐完整游戏接入。
+2. 选择并验证能服务普通签名非越狱目标的挂接方式；不能以越狱/Dobby 运行时改代码成功替代。当前没有离线 trampoline 或完整 hook 后端，不伪造 Coverage。
+3. 先完整安装并验证成绩/排行/存档/结算保护，再开放玩法修改，避免污染存档。
+4. macOS CI 重新构建；真机回到手边后做原生游戏、重启、前后台、暂停/退出、结果和存档对照测试。
+5. TrollStore 和普通证书签名分别验证，当前未声称非越狱安装成功。
 
-## 验证流程
-1. 上传新版源代码到 GitHub，运行 macOS 构建。不要上传 audit、dump、IPA、IDA 数据库。
-2. 用新生成的 framework 打包（原始游戏和 framework2.zip 保持不动）。
-3. 设备返回后先到游戏主界面：探测 -> 读取状态 -> 切英文 -> 切中文 -> 再读取；核对原生游戏 UI 是否实际更新。
-4. 对照游戏原设置检查语言持久化、重启、前后台、横竖屏、打歌暂停菜单；如异常，记录场景和崩溃日志。
-5. 判定/模式仍只保存草案；不要据开关状态认为生效。
-
-当前无需购买额外工具。审计文件只留本地。
+## 使用与交付
+源代码上传包只包含 ios 和根目录工作流；audit、dump、IPA、IDA 数据库、编译器及测试 exe/pdb 都不上传。
+本轮无需新购工具。Windows 的主机 C++ 测试不能代替 Apple Objective-C++/UIKit 编译。
