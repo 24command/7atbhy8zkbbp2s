@@ -1,0 +1,34 @@
+name: Build PhiMod iOS framework
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'ios/PhiMod/**'
+      - 'ios/build_unsigned.sh'
+      - 'ios/tests/**'
+      - '.github/workflows/build-ios.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test portable gameplay core
+        run: bash ios/tests/run_core_tests.sh
+      - name: Build arm64 framework
+        run: bash ios/build_unsigned.sh "$RUNNER_TEMP/out"
+      - name: Verify and archive
+        run: |
+          file "$RUNNER_TEMP/out/PhiMod.framework/PhiMod"
+          xcrun lipo -info "$RUNNER_TEMP/out/PhiMod.framework/PhiMod"
+          codesign --verify --verbose "$RUNNER_TEMP/out/PhiMod.framework"
+          cd "$RUNNER_TEMP/out"
+          ditto -c -k --keepParent PhiMod.framework PhiMod.framework.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PhiMod-framework
+          path: ${{ runner.temp }}/out/PhiMod.framework.zip
+          if-no-files-found: error
+          retention-days: 7
