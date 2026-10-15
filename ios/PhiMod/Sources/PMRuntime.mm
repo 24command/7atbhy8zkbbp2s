@@ -27,6 +27,7 @@ struct Runtime {
     int (*field_get_flags)(P) = nullptr;
     P (*field_get_type)(P) = nullptr;
     void (*field_static_get_value)(P, P) = nullptr;
+    void (*field_static_set_value)(P, P) = nullptr;
     void (*field_get_value)(P, P, P) = nullptr;
     char *(*type_get_name)(P) = nullptr;
     void (*free_memory)(P) = nullptr;
@@ -82,7 +83,7 @@ struct Runtime {
         PM_API(image_get_name); PM_API(class_from_name);
         PM_API(thread_current); PM_API(thread_attach); PM_API(thread_detach);
         PM_API(class_get_field_from_name); PM_API(field_get_flags); PM_API(field_get_type);
-        PM_API(field_static_get_value); PM_API(field_get_value); PM_API(type_get_name);
+        PM_API(field_static_get_value); PM_API(field_static_set_value); PM_API(field_get_value); PM_API(type_get_name);
         load(free_memory,"il2cpp_free");
         PM_API(class_get_methods); PM_API(method_get_name); PM_API(method_get_param_count);
         PM_API(method_get_flags); PM_API(method_get_param); PM_API(method_get_return_type);
@@ -121,6 +122,9 @@ struct Runtime {
     }
     template<class T> T staticValue(P c,const char *name,const char *type) {
         T v{}; field_static_get_value(field(c,name,type,true),&v); return v;
+    }
+    template<class T> void setStaticValue(P c,const char *name,const char *type,T value) {
+        P f=field(c,name,type,true); field_static_set_value(f,&value);
     }
     P mainGame() {
         // The static field itself keeps this object alive. Do not retain across UI callbacks.
@@ -210,5 +214,27 @@ NSDictionary *failure(const std::exception &e) {return @{ @"ok":@NO, @"message":
         if (invoked) return @{ @"ok":@NO,@"message":[@"切换已尝试，当前状态未知；请刷新读取。" stringByAppendingString:errorText(e)] };
         return failure(e);
     }
+}
++ (NSDictionary<NSString *,id> *)applyJudgeSettings:(BOOL)enabled perfectMs:(double)perfectMs goodMs:(double)goodMs {
+    try {
+        if (!std::isfinite(perfectMs) || !std::isfinite(goodMs) || perfectMs < 1 || goodMs < perfectMs || goodMs > 2000)
+            return @{ @"ok":@NO, @"message":@"Judge window range invalid" };
+        Runtime r; r.open(); r.mainGame(); P judge=r.klass("JudgeControl");
+        P pf=r.field(judge,"PerfectTimeRange","System.Single",true);
+        P gf=r.field(judge,"GoodTimeRange","System.Single",true);
+        P bf=r.field(judge,"BadTimeRange","System.Single",true);
+        float oldP=0,oldG=0,oldB=0; r.field_static_get_value(pf,&oldP); r.field_static_get_value(gf,&oldG); r.field_static_get_value(bf,&oldB);
+        static bool saved=false; static float savedP=0,savedG=0,savedB=0;
+        if (!saved) { saved=true; savedP=oldP; savedG=oldG; savedB=oldB; }
+        if (enabled) {
+            float p=static_cast<float>(perfectMs/1000.0), g=static_cast<float>(goodMs/1000.0);
+            float b=std::max(oldB,g+0.04f);
+            r.field_static_set_value(pf,&p); r.field_static_set_value(gf,&g); r.field_static_set_value(bf,&b);
+        } else {
+            r.field_static_set_value(pf,&savedP); r.field_static_set_value(gf,&savedG); r.field_static_set_value(bf,&savedB);
+        }
+        float p=0,g=0,b=0; r.field_static_get_value(pf,&p); r.field_static_get_value(gf,&g); r.field_static_get_value(bf,&b);
+        return @{ @"ok":@YES, @"enabled":@(enabled), @"perfectMs":@(p*1000), @"goodMs":@(g*1000), @"badMs":@(b*1000), @"message":enabled ? @"Judge window applied and read back" : @"Judge window restored" };
+    } catch (const std::exception &e) { return failure(e); }
 }
 @end

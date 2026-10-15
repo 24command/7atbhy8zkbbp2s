@@ -32,7 +32,9 @@ def verify(dump, source):
         text = block(dump, name)
         for declaration in declarations:
             assert declaration in text, f'Contract mismatch: {name}.{declaration}'
-    assert 'field_static_set_value' not in source, 'This milestone must not write gameplay fields'
+    assert 'field_static_set_value' in source, 'Judge settings backend must expose static field writes'
+    assert 'applyJudgeSettings' in source, 'Judge settings writes must be behind the explicit apply method'
+    assert 'field_static_set_value(pf' in source and 'field_static_set_value(gf' in source and 'field_static_set_value(bf' in source, 'Judge writes must cover P/G/B fields'
     assert 'native/offsets.h' not in source
     assert 'runtime_invoke' in source and 'method_get_param' in source
     assert 'isMainThread' in source and 'ownedThread' in source

@@ -4,4 +4,5 @@
 + (NSString *)probe;
 + (NSDictionary<NSString *, id> *)gameSnapshot;
 + (NSDictionary<NSString *, id> *)setGameLanguage:(NSInteger)language;
++ (NSDictionary<NSString *, id> *)applyJudgeSettings:(BOOL)enabled perfectMs:(double)perfectMs goodMs:(double)goodMs;
 @end

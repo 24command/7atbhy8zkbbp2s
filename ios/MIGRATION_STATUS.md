@@ -13,7 +13,7 @@
 - dump 静态合约：8 项声明 + 3 个反例 + 源码保护检查通过。PMRuntime 没有 field_static_set_value。
 - IDA MCP 已重新确认目标 UnityFramework 和 auto_analysis_ready=true，auto_wait 返回 true；没有修改 IDB 或原始游戏。
 - 本地 IDA 审计确认：LevelRecord.UpdateRecord 修改内存成绩；SetSongRecord 序列化并持久化；LevelOverControl.Start 是协程工厂，不能只拦工厂就宣称结算保护完整。
-- framework3.zip：嵌套 PhiMod.framework.zip，Mach-O arm64 dylib，iOS 平台、最低 15.0，依赖系统框架；包含上一版运行时桥接，不含本轮 PMGameplay，需要重新构建。未在 Windows 验证 Apple 签名有效性。
+- framework4.zip：嵌套 PhiMod.framework.zip，Mach-O arm64 dylib，iOS 平台、最低 15.0，依赖系统框架；包含上一版运行时桥接，不含本轮 PMGameplay，需要重新构建。未在 Windows 验证 Apple 签名有效性。
 - 已添加 macOS 主机核心测试步骤到两份构建工作流；Apple SDK 编译/设备测试还未执行。
 
 ## 功能分层
