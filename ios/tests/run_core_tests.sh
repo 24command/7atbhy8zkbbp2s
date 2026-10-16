@@ -8,3 +8,5 @@ trap 'rm -f "$OUT/PMGameplayCoreTest" "$OUT/PMJudgeCoreTest"; rmdir "$OUT"' EXIT
 
 "${CXX:-clang++}" -std=c++17 -Wall -Wextra -Werror -pedantic "$ROOT/tests/PMJudgeCoreTest.cpp" -o "$OUT/PMJudgeCoreTest"
 "$OUT/PMJudgeCoreTest"
+
+python3 "$ROOT/tests/test_scene_state_lookup.py" --cxx "${CXX:-clang++}"

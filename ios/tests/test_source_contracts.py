@@ -32,6 +32,15 @@ class SourceContracts(unittest.TestCase):
   self.assertIn('tabFailed=true;tabButton=tabText=nullptr;dispose(r,tabRoot,true);throw;',settings)
   self.assertLess(settings.index('emptyClick(r,button)'),settings.index('tabButton=button;tabText=text;'))
   self.assertLess(settings.index('validateSnapshot:d'),settings.index('[PMRuntime applyJudgeSettings:'))
+ def test_scene_state_avoids_posix_open_name_collision(self):
+  s=(ROOT/'PhiMod/Sources/PMSceneUI.mm').read_text(encoding='utf-8')
+  self.assertNotRegex(s,r'\bopen\b')
+  self.assertIn('modEditorOpen=false',s)
+  self.assertIn('modEditorOpen=true',s)
+  self.assertIn('if(!modEditorOpen)return;',s)
+ def test_ci_shell_scripts_use_lf(self):
+  for relative in ('build_unsigned.sh', 'tests/run_core_tests.sh'):
+   self.assertNotIn(b'\r', (ROOT/relative).read_bytes(), relative)
  def test_judge_cannot_enable_without_protection(self):
   s=(ROOT/'PhiMod/Sources/PMRuntime.mm').read_text(encoding='utf-8')
   self.assertLess(s.index('[PMHookBackend protectJudgeChange]'),s.index('controller.apply(*patch'))

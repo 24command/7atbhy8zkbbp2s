@@ -1,6 +1,6 @@
 ﻿# PhiMod iOS bootstrap
 
-1This directory contains the overlay, IL2CPP bridge, portable gameplay rules,
+This directory contains the overlay, IL2CPP bridge, portable gameplay rules,
 and a new offline entry-hook backend with song shortcuts / a Settings MOD tab.
 The newer source has not yet been compiled with the Apple SDK or device-tested.
 Downloaded framework6 only contains the preceding judge-hotfix version.

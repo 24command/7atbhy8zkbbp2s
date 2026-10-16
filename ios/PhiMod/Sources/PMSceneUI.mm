@@ -15,7 +15,7 @@ struct Bounds{float l=1e9f,r=-1e9f,b=1e9f,t=-1e9f;float width()const{return r-l;
 struct Item{uint32_t root=0;P tr=nullptr,button=nullptr,bg=nullptr,text=nullptr,sizer=nullptr,group=nullptr;V3 offset{};float fit=1;int display=-1;};
 Runtime *runtime=nullptr;uint32_t selectorRoot=0,settingRoot=0,tabRoot=0;
 P mirror=nullptr,mirrorText=nullptr,mirrorTransform=nullptr,mirrorButton=nullptr,mirrorGroup=nullptr,tabButton=nullptr,tabText=nullptr;
-std::array<Item,7> items{};std::map<P,int> buttons;bool built=false,layoutReady=false,open=false,tabFailed=false;unsigned ticks=0;
+std::array<Item,7> items{};std::map<P,int> buttons;bool built=false,layoutReady=false,modEditorOpen=false,tabFailed=false;unsigned ticks=0;
 std::vector<std::pair<uint32_t,bool>> hidden,animations,mutes;
 static const char *labels[]={"AutoPlay","Noise","Unified","AP / FC","HP","Full Screen","Accuracy"};
 static NSString *keys[]={@"autoplay",@"noise",@"unified",@"challenge",@"hpEnabled",@"fullScreen",@"noCombo"};
@@ -131,11 +131,11 @@ void projectTab(Runtime&r){P tab=target(r,tabRoot);if(!r.alive(tab))return;P txt
 
 namespace pmscene {
 using namespace sceneimpl;
-void settingsLeave(Runtime&r){restore(r,hidden,"SetActive");restore(r,animations,"set_enabled");restore(r,mutes,"set_mute");open=false;[[PMModEditor shared] cancel];
+void settingsLeave(Runtime&r){restore(r,hidden,"SetActive");restore(r,animations,"set_enabled");restore(r,mutes,"set_mute");modEditorOpen=false;[[PMModEditor shared] cancel];
  P owner=target(r,settingRoot);if(r.alive(owner)){P tabs=r.get<P>(owner,"tabAnimators");int index=r.get<int>(owner,"currentTab");if(tabs&&index>=0&&uintptr_t(index)<r.array_length(tabs)){P tr=transform(r,r.arrayAt(tabs,index)),slider=r.get<P>(owner,"sliderController");V2 pos=r.unbox<V2>(r.call(tr,"get_anchoredPosition")),size=r.unbox<V2>(r.call(tr,"get_sizeDelta"));if(slider)r.call(slider,"MoveTo",{"System.Single","System.Single"},{&pos.x,&size.x});}}
 }
 void selectorOff(Runtime&r){clearSelector(r);}
-void selectorFrame(Runtime&r,P self){runtime=&r;if(open)settingsLeave(r);if(settingRoot){dispose(r,tabRoot,true);dispose(r,settingRoot,false);tabButton=tabText=nullptr;}
+void selectorFrame(Runtime&r,P self){runtime=&r;if(modEditorOpen)settingsLeave(r);if(settingRoot){dispose(r,tabRoot,true);dispose(r,settingRoot,false);tabButton=tabText=nullptr;}
  if(target(r,selectorRoot)!=self)makeSelector(r,self);if(!built)return;
  NSDictionary*s=[[PMSettings shared] snapshot];bool visible=[s[@"showShortcuts"] boolValue]&&r.unbox<bool>(r.call(go(r,mirrorTransform),"get_activeInHierarchy"))&&!r.get<bool>(self,"exit");
  V3 position=r.unbox<V3>(r.call(mirrorTransform,"get_localPosition")),scale=r.unbox<V3>(r.call(mirrorTransform,"get_localScale"));
@@ -188,8 +188,8 @@ void settingsFrame(Runtime&r,P self){runtime=&r;
   }
  }
  r.text(tabText,"MOD");
- PMModEditor*editor=[PMModEditor shared];if(open&&editor.hidden){settingsLeave(r);return;}
- if(!open)return;
+ PMModEditor*editor=[PMModEditor shared];if(modEditorOpen&&editor.hidden){settingsLeave(r);return;}
+ if(!modEditorOpen)return;
  if(!r.unbox<bool>(r.call(go(r,self),"get_activeInHierarchy"))||r.get<float>(self,"leaveTime")>0){settingsLeave(r);return;}
  if(editor.saveRequested){editor.saveRequested=NO;NSDictionary*before=[[PMSettings shared] snapshot];NSDictionary*d=[editor.draft copy];NSString*validationError=nil;if(![[PMSettings shared] validateSnapshot:d error:&validationError]){editor.status.text=validationError;return;}BOOL change=[d[@"enabled"] boolValue]!=[before[@"enabled"] boolValue]||[d[@"perfect"] doubleValue]!=[before[@"perfect"] doubleValue]||[d[@"good"] doubleValue]!=[before[@"good"] doubleValue];
   if(change&&([d[@"enabled"] boolValue]||[before[@"enabled"] boolValue])){NSDictionary*out=[PMRuntime applyJudgeSettings:[d[@"enabled"] boolValue] perfectMs:[d[@"perfect"] doubleValue] goodMs:[d[@"good"] doubleValue]];if(![out[@"ok"] boolValue]){editor.status.text=out[@"message"];return;}}
@@ -198,8 +198,8 @@ void settingsFrame(Runtime&r,P self){runtime=&r;
  projectTab(r);[editor layoutEditor];
 }
 bool press(Runtime&r,P button){auto found=buttons.find(button);if(found!=buttons.end()){int i=found->second;if(i==1||i==2)return true;P owner=target(r,selectorRoot);if(!r.alive(owner)||r.get<bool>(owner,"exit")||r.get<bool>(owner,"isMoving"))return true;NSString*key=keys[i];NSInteger old=[[[PMSettings shared] value:key] integerValue];NSNumber*value=i==3?@((old+1)%3):@(!old);NSString*error=nil;[[PMSettings shared] setValue:value forKey:key error:&error];return true;}
- if(button!=tabButton)return false;P self=target(r,settingRoot);if(!r.alive(self))return true;if(open)return true;
- int tab=2;r.call(self,"ChangeTab",{"System.Int32"},{&tab});open=true;
+ if(button!=tabButton)return false;P self=target(r,settingRoot);if(!r.alive(self))return true;if(modEditorOpen)return true;
+ int tab=2;r.call(self,"ChangeTab",{"System.Int32"},{&tab});modEditorOpen=true;
  try{P tabs=r.get<P>(self,"tabAnimators");for(unsigned i=0;i<r.array_length(tabs);++i)stash(r,animations,r.arrayAt(tabs,int(i)),"get_enabled","set_enabled",false);
   P scroll=r.get<P>(self,"scrollRect"),preview=r.get<P>(self,"previewNoteHolder");for(P p:{scroll?go(r,scroll):nullptr,r.get<P>(self,"judgeLine"),r.get<P>(self,"clickPosition"),preview?go(r,preview):nullptr})if(p)stash(r,hidden,p,"get_activeSelf","SetActive",false);
   for(const char*name:{"audioSource1","audioSource2"}){P src=r.get<P>(self,name);if(src)stash(r,mutes,r.get<P>(src,"audioSource"),"get_mute","set_mute",true);}
