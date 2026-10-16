@@ -1,99 +1,80 @@
-﻿# PhiMod iOS bootstrap
+# PhiMod iOS - device fixes + native gameplay modes
 
-This directory contains the overlay, IL2CPP bridge, portable gameplay rules,
-and a new offline entry-hook backend with song shortcuts / a Settings MOD tab.
-The newer source has not yet been compiled with the Apple SDK or device-tested.
-Downloaded framework6 only contains the preceding judge-hotfix version.
-Read [GAMEPLAY_UI_PORT.md](GAMEPLAY_UI_PORT.md) for exact capability and safety
-boundaries. Noise/Unified are unavailable, not silently simulated by AutoPlay.
+Source revision: **2026-10-17**, protocol **PMGameplay-v2 / 54 hooks**,
+framework version **0.2.0 (54)**. This revision is newer than framework7.
+**It must be rebuilt with the Apple iOS SDK before creating a new test IPA.**
 
-## What is modified
+Start with [DEVICE_FIX_20261017.md](DEVICE_FIX_20261017.md) for the Chinese
+build/test checklist, and [GAMEPLAY_UI_PORT.md](GAMEPLAY_UI_PORT.md) for scope
+and safety boundaries. Windows host tests have passed; Apple compilation and
+real-device behavior of THIS revision have not been verified.
 
-The source Payload is never modified. Inside a temporary staging copy, the
-packaging helper adds one `LC_LOAD_DYLIB` dependency:
+## Changes
 
-```text
-@loader_path/../PhiMod.framework/PhiMod
-```
+- Practice result coroutine presentation and navigation-only recovery.
+- HP failure delay/transition; native SecretChallengeLifeBar and HPDisplay assets.
+- Real Button.OnPointerClick / OnSubmit paths for the MOD tab and song shortcuts.
+- Noise masks and touch blocking; No Noise; unified Tap/Drag/Hold/Flick conversion.
+- Noise Hold grace and AutoPlay Hold effect interval, following Android logic.
+- Save/RKS/reward/unlock protection remains enabled for assisted sessions.
 
-For frameworks containing `PMJudgeHook-v1`, packaging also invokes
-`tools/patch_judge_windows.py`: three exact, UUID-gated ARM64 stores in
-ProgressControl.Update branch to RX stubs in unused TEXT padding. A new
-zero-fill section in unused DATA VM padding holds the desired values and
-latest engine baseline. No runtime code-page writes or external hook library
-are used. With the override disabled the original stores execute unchanged.
-Rebuild AND repackage; replacing only the framework in an older IPA is not enough.
+Chart import/storage/navigation, the extended RPE/media/skin ecosystem and exact
+pixel-for-pixel Android settings presentation are **not** finished. The MOD tab
+uses a native Unity navigation button with a UIKit editor. Do not call this a
+fully verified Android port or a verified normal-signing release.
 
+## Build on GitHub Actions (no local Mac required)
 
-For frameworks containing `PMGameplay-v1`, packaging also installs 37 exact
-entry gates with `patch_gameplay_hooks.py`. These call PhiMod through RW callback
-slots or transparently execute the original prologue when unregistered. The
-framework validates the full protocol/metadata/stubs before publishing callbacks.
+Upload the contents of the clean source package into the repository root, with
+both `ios/` and `.github/workflows/build-ios.yml` present. Do not upload game
+binaries, dump.cs, metadata, IDA databases or the extracted IPA.
 
-It also embeds `PhiMod.framework` under `Phigros.app/Frameworks`. The framework's
-constructor installs the overlay after the application becomes active.
+Run the existing `Build PhiMod iOS framework` workflow. The workflow tests the
+portable cores, generated ARM64 gateways and source contracts, then builds the
+arm64 framework on macOS and checks its protocol markers. Download the artifact
+and unpack until `PhiMod.framework/PhiMod` is present.
 
-## Build without a local Mac
-
-The framework must be compiled with an Apple iOS SDK. The repository-root GitHub
-Actions workflow `.github/workflows/build-ios.yml` can build the arm64 framework
-on a macOS runner. It uploads `PhiMod.framework` as an artifact. Do not upload the
-game IPA to CI; only the small, original PhiMod source needs to be in the repo.
-
-On a Mac the equivalent command is:
+Equivalent on a Mac:
 
 ```bash
 bash ios/build_unsigned.sh
 ```
 
-## Make the unsigned IPA on Windows
+## Package locally on Windows
 
-After obtaining the compiled framework:
+Use the NEW framework with the NEW packaging tools and the ORIGINAL extracted
+Payload. Merely replacing PhiMod.framework inside an older patched IPA is not
+sufficient: the Unity entry gates changed from 37 to 54 and from v1 to v2.
+The helper rejects stale frameworks before copying the game.
 
 ```powershell
 python ios\tools\package_unsigned_ipa.py `
   --source "G:\games.Pigeon.Phigros_4.0.1_und3fined" `
   --framework "C:\path\to\PhiMod.framework" `
-  --output "G:\Phigros_4.0.1_PhiMod_unsigned.ipa"
+  --output "G:\Phigros_4.0.1_PhiMod_devicefix_unsigned.ipa"
 ```
 
-The source app is copied to a temporary staging directory; it is not patched in
-place. The output is deliberately unsigned.
+The source app is not modified. In a temporary copy, the helper embeds
+PhiMod.framework, adds the load dependency to UnityFramework, installs the
+UUID/prologue-gated judge patch and 54 gameplay gateways, and removes old
+signature data. No runtime executable-page writes or external hook library are
+used. Final output is deliberately unsigned.
 
-## Signing requirements
+Signing and installation on an ordinary non-jailbroken device are separate
+acceptance steps. A TrollStore test alone is not evidence of normal-signing
+compatibility. Keep signing credentials and provisioning files out of the repo.
 
-Simply zipping `Payload` is not enough for a normal, non-jailbroken iOS device.
-Changing a Mach-O load command invalidates its code signature, and adding a
-framework introduces another nested code object. A signing tool must:
-
-1. sign `PhiMod.framework/PhiMod`;
-2. re-sign `UnityFramework.framework` after its load command changes;
-3. sign any other changed nested code;
-4. sign the outer `Phigros.app` last with a compatible provisioning profile and
-   entitlements;
-5. package the signed `Payload` as an IPA.
-
-TrollStore is useful for early functional testing, but a TrollStore installation
-does not prove that an ordinary certificate/provisioning-profile installation
-will work. Test both paths separately.
-
-## IDA / Il2CppDumper
-
-The iOS metadata-31 dump is at:
-
-```text
-G:\games.Pigeon.Phigros_4.0.1_und3fined\Il2CppDumperOutput_v6746
-```
-
-Import `ida_with_struct_py3.py` from Il2CppDumper v6.7.46 into the IDA database
-opened on `UnityFramework`, and select this output directory's `script.json` and
-`il2cpp.h` when requested. Save a backup of the IDA database before importing.
-
-## Portable core tests
+## Local verification
 
 ```bash
 bash ios/tests/run_core_tests.sh
+python ios/tests/test_source_contracts.py
+python ios/tests/test_judge_patch.py
+python ios/tests/test_gameplay_hooks.py
+python ios/tools/verify_runtime_contracts.py /path/to/dump.cs
+python ios/tools/verify_gameplay_contracts.py /path/to/dump.cs
 ```
 
-The macOS workflow runs these host tests before building the arm64 framework.
-Host tests do not validate UIKit, game hooks, signing, or device behavior.
+The emulator tests require `unicorn==2.1.4`. They also accept `--unity` to audit
+the local original UnityFramework without altering it. Dump verification checks
+metadata/ABI and source lookup contracts, not in-game execution.

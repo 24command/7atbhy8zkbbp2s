@@ -13,9 +13,11 @@ NSDictionary *errorResult(const std::exception &e) {return @{ @"ok":@NO,@"messag
 @implementation PMGameplay
  + (NSDictionary<NSString *,id> *)validateConfiguration {
  try {auto options=PMReadOptions([[PMSettings shared] snapshot]);NSDictionary *backend=[PMHookBackend install];
-  bool supported=!options.noise&&!options.unified&&!options.clearNoise;
+  bool supported=[backend[@"ok"] boolValue] &&
+    (!options.noise || [backend[@"noiseReady"] boolValue]) &&
+    (!options.unified || [backend[@"unifiedReady"] boolValue]);
   return @{ @"ok":@(supported),@"assisted":@(options.assisted()),@"backendReady":backend[@"ok"],@"backend":backend,
-   @"message":supported?backend[@"message"]:@"Disable Noise / Unified / No Noise: pipelines not implemented" };
+   @"message":backend[@"message"] ?: @"Gameplay backend unavailable" };
  } catch(const std::exception &e){return errorResult(e);}
 }
 + (NSDictionary<NSString *,id> *)previewConfiguration {

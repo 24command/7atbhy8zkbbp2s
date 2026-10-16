@@ -37,7 +37,7 @@ class GameplayGateTest(unittest.TestCase):
     def test_protocol_manifest_and_fail_closed(self):
         r=self.report;c=r['code'];d=self.patched
         self.assertEqual(d[c:c+16],hook.MAGIC)
-        self.assertEqual(struct.unpack_from('<IIQ',d,c+16),(1,37,r['state']))
+        self.assertEqual(struct.unpack_from('<IIQ',d,c+16),(2,len(r['hooks']),r['state']))
         for i,e in enumerate(r['hooks']):
             self.assertEqual(struct.unpack_from('<IIQ',d,c+32+i*16),(e['rva'],int.from_bytes(bytes.fromhex(e['bytes']),'little'),e['gateway']))
         with self.assertRaises(ValueError):hook.patch_binary(d)
@@ -62,12 +62,12 @@ class GameplayGateTest(unittest.TestCase):
             _,_,commands=inject.parse_commands(data)
             names=[inject.dylib_name(data,p,n) for p,c,n in commands if c==inject.LC_LOAD_DYLIB]
             self.assertIn(dependency,names)
-            self.assertEqual(report['state_size'],37*8)
+            self.assertEqual(report['state_size'],len(report['hooks'])*8)
             binary.write_bytes(both)
             self.assertEqual(inject.inject(binary,dependency,False),"already present")
             self.assertEqual(binary.read_bytes(),both)
 
-    def test_all_37_gates_with_two_aslr_slides(self):
+    def test_all_gates_with_two_aslr_slides(self):
         rng=random.Random(40137)
         # Compare SP, all integer / vector banks, flags, and stack spill data.
         for slide in (0,0x100000000):

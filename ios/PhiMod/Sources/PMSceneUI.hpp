@@ -6,5 +6,7 @@ void selectorOff(pmbridge::Runtime&);
 void settingsFrame(pmbridge::Runtime&,void*);
 void settingsLeave(pmbridge::Runtime&);
 bool press(pmbridge::Runtime&,void*);
-void hpFrame(float,float,bool);
+bool ownsButton(void*);
+void resultRecovery(pmbridge::Runtime&,void*,const std::string&);
+void clearRecovery(pmbridge::Runtime&);
 }

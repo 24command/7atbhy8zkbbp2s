@@ -240,7 +240,7 @@ static UIColor *PMColor(uint32_t argb) {
 }
 
 - (void)addSetting:(NSString *)key title:(NSString *)title boolean:(BOOL)boolean {
- BOOL supported=![@[@"noise",@"unified",@"clearOriginalNoise",@"noiseVisual",@"noiseGrace",@"radius",@"holdGrace",@"holdFx"] containsObject:key];
+ BOOL supported=YES;
  UIStackView *row=[UIStackView new];row.alpha=supported?1:.4;row.userInteractionEnabled=supported;row.axis=UILayoutConstraintAxisHorizontal;row.spacing=8;row.alignment=UIStackViewAlignmentCenter;
  UILabel *label=[self label:title size:13 color:PMColor(0xfff1f5fa)];[row addArrangedSubview:label];
  if(boolean){UISwitch *control=[UISwitch new];control.accessibilityIdentifier=key;control.on=[[[PMSettings shared] value:key] boolValue];[control addTarget:self action:@selector(settingSwitch:) forControlEvents:UIControlEventValueChanged];[row addArrangedSubview:control];}
@@ -272,16 +272,16 @@ static UIColor *PMColor(uint32_t argb) {
  for(UIView *view in self.body.arrangedSubviews.copy){[self.body removeArrangedSubview:view];[view removeFromSuperview];}
  NSArray *names=@[@"谱库",@"章节",@"判定",@"模式",@"设置"];
  [self.body addArrangedSubview:[self label:names[self.selectedTab] size:18 color:PMColor(0xfff1f5fa)]];
- [self.body addArrangedSubview:[self label:@"Practice hooks + original-style song shortcuts / MOD tab. Back up saves. Noise / Unified / Hold tuning are disabled; device verification pending." size:12 color:PMColor(0xff92a2b9)]];
+ [self.body addArrangedSubview:[self label:@"Practice hooks + original-style song shortcuts / MOD tab. Back up saves. Native Noise / Unified / Hold tuning connected; device verification pending." size:12 color:PMColor(0xff92a2b9)]];
  if(self.selectedTab==0 || self.selectedTab==1){[self.body addArrangedSubview:[self label:@"等待移植谱面存储、导入和游戏导航；不会修改原版曲库。" size:13 color:PMColor(0xff92a2b9)]];}
- if(self.selectedTab==2){[self addSetting:@"enabled" title:@"Custom judge (apply to game)" boolean:YES];[self addSetting:@"perfect" title:@"Perfect / ms" boolean:NO];[self addSetting:@"good" title:@"Good / ms" boolean:NO];[self addSetting:@"holdGrace" title:@"Hold grace / ms (draft only)" boolean:NO];}
+ if(self.selectedTab==2){[self addSetting:@"enabled" title:@"Custom judge (apply to game)" boolean:YES];[self addSetting:@"perfect" title:@"Perfect / ms" boolean:NO];[self addSetting:@"good" title:@"Good / ms" boolean:NO];[self addSetting:@"holdGrace" title:@"Noise Hold grace / ms" boolean:NO];}
  if(self.selectedTab==3){
- NSArray *flags=@[@[@"autoplay",@"AutoPlay"],@[@"noise",@"噪域"],@[@"clearOriginalNoise",@"清除原噪域"],@[@"fullScreen",@"全屏判定"],@[@"noCombo",@"隐藏 Combo"],@[@"hpEnabled",@"HP 生存"],@[@"noiseVisual",@"噪域视觉"],@[@"hpTopEffect",@"顶部 HP 特效"],@[@"hpBackgroundEffect",@"背景 HP 特效"]];
+ NSArray *flags=@[@[@"autoplay",@"AutoPlay"],@[@"noise",@"噪域"],@[@"clearOriginalNoise",@"清除原噪域"],@[@"fullScreen",@"全屏判定"],@[@"noCombo",@"Accuracy（去除连击分）"],@[@"hpEnabled",@"HP 生存"],@[@"noiseVisual",@"噪域视觉"],@[@"hpTopEffect",@"顶部 HP 特效"],@[@"hpBackgroundEffect",@"背景 HP 特效"]];
  for(NSArray *p in flags)[self addSetting:p[0] title:p[1] boolean:YES];
  NSArray *numbers=@[@[@"unified",@"统一键型 0–4"],@[@"challenge",@"挑战 0关 / 1AP / 2FC"],@[@"radius",@"噪域半径"],@[@"noiseGrace",@"噪域容错 / ms"],@[@"holdFx",@"Hold 特效间隔 / ms"],@[@"hpMax",@"最大 HP"],@[@"hpPerfect",@"Perfect HP 增减"],@[@"hpGood",@"Good HP 增减"],@[@"hpBad",@"Bad HP 增减"],@[@"hpMiss",@"Miss HP 增减"],@[@"hpRed",@"红色阈值 %"],@[@"hpBlue",@"蓝色阈值 %"]];
  for(NSArray *p in numbers)[self addSetting:p[0] title:p[1] boolean:NO];
  }
- if(self.selectedTab==4){[self addSetting:@"opacity" title:@"浮窗透明度 0.15–1（立即生效）" boolean:NO];[self addSetting:@"showShortcuts" title:@"选曲快捷按钮（待接入）" boolean:YES];[self.body addArrangedSubview:[self textButton:@"读取游戏状态（实际读取）" action:@selector(readGameSnapshot)]];[self.body addArrangedSubview:[self textButton:@"切换中文" action:@selector(setChinese)]];[self.body addArrangedSubview:[self textButton:@"切换 English" action:@selector(setEnglish)]];[self.body addArrangedSubview:[self textButton:@"只读探测 IL2CPP" action:@selector(probeRuntime)]];}
+ if(self.selectedTab==4){[self addSetting:@"opacity" title:@"浮窗透明度 0.15–1（立即生效）" boolean:NO];[self addSetting:@"showShortcuts" title:@"选曲快捷按钮" boolean:YES];[self.body addArrangedSubview:[self textButton:@"读取游戏状态（实际读取）" action:@selector(readGameSnapshot)]];[self.body addArrangedSubview:[self textButton:@"切换中文" action:@selector(setChinese)]];[self.body addArrangedSubview:[self textButton:@"切换 English" action:@selector(setEnglish)]];[self.body addArrangedSubview:[self textButton:@"只读探测 IL2CPP" action:@selector(probeRuntime)]];}
  [self.body addArrangedSubview:[self textButton:@"Validate gameplay config" action:@selector(validateGameplay)]];
  [self.body addArrangedSubview:[self textButton:@"Preview gameplay config (not applied)" action:@selector(previewGameplay)]];
  [self.body addArrangedSubview:[self textButton:@"UI 自检" action:@selector(runSelfTest)]];

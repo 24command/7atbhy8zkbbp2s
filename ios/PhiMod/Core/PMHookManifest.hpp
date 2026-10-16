@@ -1,5 +1,5 @@
 #pragma once
-#include <cstdint>
+#include "PMHookProtocol.hpp"
 namespace phimod::hooks {
 struct ExpectedEntry { uint32_t site,original; };
 inline constexpr ExpectedEntry expected[]={
@@ -40,6 +40,23 @@ inline constexpr ExpectedEntry expected[]={
  {0x14b16b8u,0xd10103ffu}, // LegacySaveInt
  {0x14b174cu,0xd10103ffu}, // LegacySaveFloat
  {0x14b17e0u,0xa9bd57f6u}, // LegacySaveString
+ {0x3a426b4u,0xa9be4ff4u}, // buttonClick
+ {0x3a4275cu,0xa9bd57f6u}, // buttonSubmit
+ {0x14d85b8u,0xa9bd57f6u}, // lifeStart
+ {0x14d8ae8u,0xa9bd57f6u}, // lifeNormalized
+ {0x14d9284u,0xa9bc5ff8u}, // lifeModStart
+ {0x1574f40u,0xa9bd57f6u}, // hpBackgroundStart
+ {0x15931d8u,0xa9bd57f6u}, // progressLevelOver
+ {0x14d8d6cu,0x6dbb2bebu}, // lifeUpdate
+ {0x1581010u,0xa9ba6ffcu}, // levelCodes
+ {0x15814f8u,0x6db63befu}, // levelInfo
+ {0x1590aa4u,0x6db82bebu}, // noteManager
+ {0x157d668u,0xd10283ffu}, // blocking
+ {0x15788e8u,0xa9bd57f6u}, // blockLate
+ {0x158f9e0u,0x6dba33edu}, // holdMove
+ {0x158e2b8u,0x6dbb2bebu}, // clickMove
+ {0x158eb38u,0x6dbb2bebu}, // dragMove
+ {0x158f294u,0x6dbb2bebu}, // flickMove
 };
-static_assert(sizeof(expected)/sizeof(expected[0])==Count);
+static_assert(sizeof(expected)/sizeof(expected[0])==Count,"Offline hook manifest must match callback protocol");
 }

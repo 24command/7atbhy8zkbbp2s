@@ -103,7 +103,7 @@ void projectTab(Runtime&r){P tab=target(r,tabRoot);if(!r.alive(tab))return;P txt
 + (instancetype)shared{static PMModEditor*v;static dispatch_once_t once;dispatch_once(&once,^{v=[PMModEditor new];});return v;}
 - (UILabel*)label:(NSString*)text size:(CGFloat)size{UILabel*l=[UILabel new];l.text=text;l.textColor=[UIColor colorWithWhite:.12 alpha:1];l.font=[UIFont systemFontOfSize:size weight:UIFontWeightMedium];l.numberOfLines=0;return l;}
 - (UIButton*)button:(NSString*)title action:(SEL)action{UIButton*b=[UIButton buttonWithType:UIButtonTypeSystem];[b setTitle:title forState:UIControlStateNormal];[b setTitleColor:UIColor.blackColor forState:UIControlStateNormal];b.titleLabel.font=[UIFont boldSystemFontOfSize:17];[b addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];return b;}
-- (void)begin{self.draft=[[[PMSettings shared] snapshot] mutableCopy];self.draft[@"noise"]=@NO;self.draft[@"unified"]=@0;self.draft[@"clearOriginalNoise"]=@NO;self.page=0;self.visuals=NO;self.saveRequested=NO;self.backgroundColor=[UIColor colorWithWhite:.96 alpha:.97];self.layer.cornerRadius=10;[self render];}
+- (void)begin{self.draft=[[[PMSettings shared] snapshot] mutableCopy];self.page=0;self.visuals=NO;self.saveRequested=NO;self.backgroundColor=[UIColor colorWithWhite:.96 alpha:.97];self.layer.cornerRadius=10;[self render];}
 - (void)layoutEditor{UIWindow*w=sceneimpl::window();if(!w)return;if(self.superview!=w)[w addSubview:self];CGFloat margin=MAX(24,w.safeAreaInsets.left+12),top=MAX(sceneimpl::panelTop,w.safeAreaInsets.top+12);self.frame=CGRectMake(margin,top,w.bounds.size.width-margin*2,w.bounds.size.height-top-MAX(18,w.safeAreaInsets.bottom));self.scroll.frame=CGRectMake(22,96,self.bounds.size.width-44,MAX(20,self.bounds.size.height-108));}
 - (void)addToggle:(NSString*)key title:(NSString*)title{UIStackView*row=[UIStackView new];row.axis=UILayoutConstraintAxisHorizontal;row.alignment=UIStackViewAlignmentCenter;[row addArrangedSubview:[self label:title size:16]];UISwitch*sw=[UISwitch new];sw.on=[self.draft[key] boolValue];sw.accessibilityIdentifier=key;[sw addTarget:self action:@selector(toggle:) forControlEvents:UIControlEventValueChanged];[row addArrangedSubview:sw];[self.body addArrangedSubview:row];}
 - (void)addNumber:(NSString*)key title:(NSString*)title{UIStackView*row=[UIStackView new];row.axis=UILayoutConstraintAxisHorizontal;row.alignment=UIStackViewAlignmentCenter;row.spacing=18;UILabel*l=[self label:title size:16];[row addArrangedSubview:l];UITextField*f=[UITextField new];f.borderStyle=UITextBorderStyleRoundedRect;f.backgroundColor=UIColor.whiteColor;f.text=[self.draft[key] description];f.accessibilityIdentifier=key;f.keyboardType=UIKeyboardTypeNumbersAndPunctuation;f.delegate=self;[f.widthAnchor constraintEqualToConstant:130].active=YES;[row addArrangedSubview:f];self.fields[key]=f;[self.body addArrangedSubview:row];}
@@ -119,7 +119,8 @@ void projectTab(Runtime&r){P tab=target(r,tabRoot);if(!r.alive(tab))return;P txt
  }else{
   [self addToggle:@"autoplay" title:@"AutoPlay"];[self addToggle:@"fullScreen" title:@"Full Screen"];[self addToggle:@"noCombo" title:@"Accuracy"];[self addNumber:@"challenge" title:@"AP / FC: 0 Off, 1 AP, 2 FC"];
   [self.body addArrangedSubview:[self button:@"HP \u751f\u5b58\u89c4\u5219  \u203a" action:@selector(hp)]];[self addToggle:@"enabled" title:@"Custom judge"];[self addNumber:@"perfect" title:@"Perfect / ms"];[self addNumber:@"good" title:@"Good / ms"];[self addToggle:@"showShortcuts" title:@"\u9009\u66f2\u5feb\u6377\u6309\u94ae"];
-  [self.body addArrangedSubview:[self label:@"Noise / Unified / No Noise / Hold tuning: unavailable in this build; no placeholder switches." size:14]];
+  [self addToggle:@"noise" title:@"Noise"];[self addToggle:@"clearOriginalNoise" title:@"No Noise (remove original areas)"];[self addNumber:@"unified" title:@"Unified: 0 Off / 1 Tap / 2 Drag / 3 Hold / 4 Flick"];
+  [self addToggle:@"noiseVisual" title:@"Noise visuals"];[self addNumber:@"radius" title:@"Noise radius"];[self addNumber:@"noiseGrace" title:@"Noise grace / ms"];[self addNumber:@"holdGrace" title:@"Noise Hold grace / ms"];[self addNumber:@"holdFx" title:@"AutoPlay Hold FX / ms"];
  }
  [self layoutEditor];}
 - (void)hp{if([self collect]){self.page=1;[self render];}}
@@ -153,8 +154,13 @@ void selectorFrame(Runtime&r,P self){runtime=&r;if(modEditorOpen)settingsLeave(r
  visible=visible&&layoutReady;
  Color fill=r.unbox<Color>(r.call(mirror,"get_color")),fg=r.unbox<Color>(r.call(mirrorText,"get_color"));float alpha=mirrorGroup?r.unbox<float>(r.call(mirrorGroup,"get_alpha")):1;
  bool interactive=visible&&!r.get<bool>(self,"isMoving")&&r.unbox<bool>(r.call(mirrorButton,"get_interactable"))&&[[PMHookBackend status][@"ok"] boolValue];
- for(int i=0;i<7;++i){auto &it=items[i];bool supported=i!=1&&i!=2;active(r,target(r,it.root),visible);bool click=interactive&&supported;r.call(it.button,"set_interactable",{"System.Boolean"},{&click});if(it.group)r.call(it.group,"set_alpha",{"System.Single"},{&alpha});
+ for(int i=0;i<7;++i){auto &it=items[i];bool supported=true;active(r,target(r,it.root),visible);bool click=interactive&&supported;r.call(it.button,"set_interactable",{"System.Boolean"},{&click});if(it.group){r.call(it.group,"set_alpha",{"System.Single"},{&alpha});
+   bool interact=mirrorGroup?r.unbox<bool>(r.call(mirrorGroup,"get_interactable")):true;
+   bool raycasts=mirrorGroup?r.unbox<bool>(r.call(mirrorGroup,"get_blocksRaycasts")):true;
+   r.call(it.group,"set_interactable",{"System.Boolean"},{&interact});r.call(it.group,"set_blocksRaycasts",{"System.Boolean"},{&raycasts});}
   V3 pos{position.x+it.offset.x,position.y+it.offset.y,position.z},size{scale.x*it.fit,scale.y*it.fit,scale.z};setV3(r,it.tr,"set_localPosition",pos);setV3(r,it.tr,"set_localScale",size);
+  if(i==2){static const char*types[]={"Unified","Tap","Drag","Hold","Flick"};int type=[s[@"unified"] intValue];r.text(it.text,types[std::clamp(type,0,4)]);}
+  if(i==3){static const char*types[]={"AP / FC","AP","FC"};int type=[s[@"challenge"] intValue];r.text(it.text,types[std::clamp(type,0,2)]);}
   bool on=[s[keys[i]] doubleValue]!=0;Color bg=on?Color{1,1,1,fill.a}:Color{0,0,0,fill.a};Color text=on?Color{0,0,0,fg.a}:Color{1,1,1,fg.a};if(!supported){bg.a*=.35f;text.a*=.4f;}color(r,it.bg,bg);color(r,it.text,text);
   if(i==3){int mode=[s[@"challenge"] intValue];if(it.display!=mode){r.text(it.text,mode==1?"AP":mode==2?"FC":"AP / FC");it.display=mode;}}
  }
@@ -187,6 +193,18 @@ void settingsFrame(Runtime&r,P self){runtime=&r;
    tabFailed=true;tabButton=tabText=nullptr;dispose(r,tabRoot,true);throw;
   }
  }
+ // A disabled clone's CanvasGroup otherwise keeps rejecting raycasts even
+ // after Button.interactable is enabled. Mirror all three group properties.
+ P tabObject=target(r,tabRoot),source=r.arrayAt(r.get<P>(self,"tabAnimators"),2);
+ P ownGroups=r.children(tabObject,r.type("UnityEngine","CanvasGroup"));
+ P sourceGroups=r.children(go(r,source),r.type("UnityEngine","CanvasGroup"));
+ for(unsigned i=0;ownGroups&&i<r.array_length(ownGroups);++i){
+  P group=r.arrayAt(ownGroups,int(i));P from=sourceGroups&&i<r.array_length(sourceGroups)?r.arrayAt(sourceGroups,int(i)):nullptr;
+  float alpha=from?r.unbox<float>(r.call(from,"get_alpha")):1;
+  bool yes=true;r.call(group,"set_alpha",{"System.Single"},{&alpha});
+  r.call(group,"set_interactable",{"System.Boolean"},{&yes});r.call(group,"set_blocksRaycasts",{"System.Boolean"},{&yes});
+ }
+ bool enabled=r.get<float>(self,"leaveTime")<=0;r.call(tabButton,"set_interactable",{"System.Boolean"},{&enabled});
  r.text(tabText,"MOD");
  PMModEditor*editor=[PMModEditor shared];if(modEditorOpen&&editor.hidden){settingsLeave(r);return;}
  if(!modEditorOpen)return;
@@ -197,7 +215,8 @@ void settingsFrame(Runtime&r,P self){runtime=&r;
  }
  projectTab(r);[editor layoutEditor];
 }
-bool press(Runtime&r,P button){auto found=buttons.find(button);if(found!=buttons.end()){int i=found->second;if(i==1||i==2)return true;P owner=target(r,selectorRoot);if(!r.alive(owner)||r.get<bool>(owner,"exit")||r.get<bool>(owner,"isMoving"))return true;NSString*key=keys[i];NSInteger old=[[[PMSettings shared] value:key] integerValue];NSNumber*value=i==3?@((old+1)%3):@(!old);NSString*error=nil;[[PMSettings shared] setValue:value forKey:key error:&error];return true;}
+bool ownsButton(P button){return button&&(buttons.count(button)||button==tabButton);}
+bool press(Runtime&r,P button){auto found=buttons.find(button);if(found!=buttons.end()){int i=found->second;P owner=target(r,selectorRoot);if(!r.alive(owner)||r.get<bool>(owner,"exit")||r.get<bool>(owner,"isMoving"))return true;NSString*key=keys[i];NSInteger old=[[[PMSettings shared] value:key] integerValue];NSNumber*value=i==2?@((old+1)%5):i==3?@((old+1)%3):@(!old);NSString*error=nil;[[PMSettings shared] setValue:value forKey:key error:&error];return true;}
  if(button!=tabButton)return false;P self=target(r,settingRoot);if(!r.alive(self))return true;if(modEditorOpen)return true;
  int tab=2;r.call(self,"ChangeTab",{"System.Int32"},{&tab});modEditorOpen=true;
  try{P tabs=r.get<P>(self,"tabAnimators");for(unsigned i=0;i<r.array_length(tabs);++i)stash(r,animations,r.arrayAt(tabs,int(i)),"get_enabled","set_enabled",false);
@@ -207,6 +226,26 @@ bool press(Runtime&r,P button){auto found=buttons.find(button);if(found!=buttons
   projectTab(r);[[PMModEditor shared] begin];[PMModEditor shared].hidden=NO;
  }catch(...){settingsLeave(r);throw;}return true;
 }
-void hpFrame(float life,float max,bool visible){static UILabel*hud=nil;static UIView*edge=nil;UIWindow*w=window();if(!w)return;if(!hud){hud=[UILabel new];hud.textAlignment=NSTextAlignmentCenter;hud.font=[UIFont monospacedDigitSystemFontOfSize:18 weight:UIFontWeightBold];hud.backgroundColor=[UIColor colorWithWhite:0 alpha:.35];hud.layer.cornerRadius=8;hud.clipsToBounds=YES;edge=[UIView new];edge.userInteractionEnabled=NO;edge.layer.borderWidth=6;}
- if(hud.superview!=w){[w addSubview:edge];[w addSubview:hud];}NSDictionary*s=[[PMSettings shared] snapshot];float f=max>0?std::clamp(life/max,0.f,1.f):0;UIColor*c=f<[s[@"hpRed"] floatValue]/100.f?[UIColor colorWithRed:.9 green:.12 blue:.2 alpha:1]:f<[s[@"hpBlue"] floatValue]/100.f?[UIColor colorWithRed:.98 green:.7 blue:.2 alpha:1]:[UIColor colorWithRed:.2 green:.8 blue:1 alpha:1];hud.hidden=!visible||![s[@"hpTopEffect"] boolValue];hud.textColor=c;hud.text=[NSString stringWithFormat:@"%.0f / %.0f LIFE",life,max];hud.frame=CGRectMake(w.bounds.size.width*.5-115,MAX(10,w.safeAreaInsets.top),230,32);edge.frame=w.bounds;edge.layer.borderColor=c.CGColor;edge.alpha=f<[s[@"hpRed"] floatValue]/100.f?.6f:.15f;edge.hidden=!visible||![s[@"hpBackgroundEffect"] boolValue];}
+namespace {uint32_t recoveryRoot=0;UIAlertController*recoveryAlert=nil;}
+void clearRecovery(Runtime&r){if(recoveryAlert)[recoveryAlert dismissViewControllerAnimated:NO completion:nil];recoveryAlert=nil;if(recoveryRoot){r.gchandle_free(recoveryRoot);recoveryRoot=0;}}
+void resultRecovery(Runtime&r,P owner,const std::string&message){
+ if(recoveryAlert)return;UIWindow*w=window();UIViewController*vc=w.rootViewController;if(!vc)return;
+ while(vc.presentedViewController)vc=vc.presentedViewController;
+ recoveryRoot=r.gchandle_new(owner,false);Runtime*bridge=&r;
+ recoveryAlert=[UIAlertController alertControllerWithTitle:@"PhiMod result error" message:[NSString stringWithUTF8String:message.c_str()] preferredStyle:UIAlertControllerStyleAlert];
+ for(NSString*title in @[@"Retry",@"Back"]){bool retry=[title isEqualToString:@"Retry"];
+  [recoveryAlert addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(UIAlertAction*){
+   P target=recoveryRoot?bridge->gchandle_get_target(recoveryRoot):nullptr;
+   try{if(bridge->alive(target)){
+    // Direct navigation only; no stock reward, unlock or collection helper.
+    bridge->put(target,"_isRetry",retry);
+    P routine=bridge->call(target,"StartNextScene",{"System.String"},{bridge->string_new(retry?"Level":"Loading")});
+    bridge->call(target,"StartCoroutine",{"System.Collections.IEnumerator"},{routine});
+   }}catch(const std::exception&e){NSLog(@"[PhiMod] Recovery: %s",e.what());}
+   clearRecovery(*bridge);
+  }]];
+ }
+ [vc presentViewController:recoveryAlert animated:YES completion:nil];
+}
+
 }

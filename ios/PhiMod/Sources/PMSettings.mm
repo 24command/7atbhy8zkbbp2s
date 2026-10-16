@@ -35,7 +35,6 @@
  }
  if([values[@"perfect"] doubleValue]>[values[@"good"] doubleValue])message=@"Perfect must not exceed Good";
  if([values[@"hpRed"] doubleValue]>[values[@"hpBlue"] doubleValue])message=@"Red threshold must not exceed Blue";
- if([values[@"noise"] boolValue]||[values[@"unified"] intValue]!=0||[values[@"clearOriginalNoise"] boolValue])message=@"Noise / Unified / No Noise are not available in this build";
  if(message){if(error)*error=message;return NO;}return YES;
 }
 - (BOOL)replaceConfiguration:(NSDictionary *)values error:(NSString **)error {

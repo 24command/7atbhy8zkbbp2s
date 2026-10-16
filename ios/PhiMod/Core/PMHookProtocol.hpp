@@ -3,8 +3,8 @@
 #include <cstddef>
 namespace phimod::hooks {
 struct Slot { std::uint64_t callback; };
-static constexpr char magic[16]="PMGameplay-v1";
-static constexpr std::uint32_t version=1;
+static constexpr char magic[16]="PMGameplay-v2";
+static constexpr std::uint32_t version=2;
 enum Index : std::uint32_t {
  levelAwake=0,
  levelDestroy=1,
@@ -43,6 +43,23 @@ enum Index : std::uint32_t {
  LegacySaveInt=34,
  LegacySaveFloat=35,
  LegacySaveString=36,
+ buttonClick=37,
+ buttonSubmit=38,
+ lifeStart=39,
+ lifeNormalized=40,
+ lifeModStart=41,
+ hpBackgroundStart=42,
+ progressLevelOver=43,
+ lifeUpdate=44,
+ levelCodes=45,
+ levelInfo=46,
+ noteManager=47,
+ blocking=48,
+ blockLate=49,
+ holdMove=50,
+ clickMove=51,
+ dragMove=52,
+ flickMove=53,
  Count
 };
 struct Entry {std::uint32_t site,original;std::uint64_t gateway;};

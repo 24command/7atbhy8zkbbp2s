@@ -8,7 +8,7 @@ original function executes. Callback pointers are ordinary writable DATA.
 from pathlib import Path
 import argparse, hashlib, json, struct
 from patch_judge_windows import parse, align, branch, adrp, section
-MAGIC=b'PMGameplay-v1\0\0\0'
+MAGIC=b'PMGameplay-v2\0\0\0'
 TEXT_NAME=b'__pmghook';DATA_NAME=b'__pmgame'
 MANIFEST=Path(__file__).with_name('gameplay_hook_manifest.json')
 
@@ -36,7 +36,7 @@ def patch_binary(raw):
         if b[site:site+4]!=old:raise ValueError('Entry mismatch: '+e['name'])
     code=align(max(s[1]+s[2] for s in text['sections']));state=align(max(s[1]+s[2] for s in data['sections']));size=len(items)*8
     if state<data['vm']+data['fs'] or state+size>data['vm']+data['vs']:raise ValueError('No unused DATA VM tail')
-    descriptor=32+16*len(items);payload=bytearray(MAGIC+struct.pack('<IIQ',1,len(items),state));stubs=bytearray();patches=[];report=[]
+    descriptor=32+16*len(items);payload=bytearray(MAGIC+struct.pack('<IIQ',2,len(items),state));stubs=bytearray();patches=[];report=[]
     for i,e in enumerate(items):
         pc=code+descriptor+len(stubs);old=bytes.fromhex(e['bytes']);stub,gateway=entry_gate(pc,state+i*8,e['rva'],old)
         payload+=struct.pack('<IIQ',e['rva'],int.from_bytes(old,'little'),gateway);stubs+=stub
@@ -65,7 +65,7 @@ def patch_binary(raw):
     if newend>first or any(b[oldend:newend]):raise ValueError('No load-command padding')
     b[32:newend]=commands;struct.pack_into('<I',b,20,len(commands));b[code:code+len(payload)]=payload
     for site,word in patches:struct.pack_into('<I',b,site,word)
-    return bytes(b),{'version':1,'code':code,'code_size':len(payload),'state':state,'state_size':size,'hooks':report,'input_sha256':hashlib.sha256(raw).hexdigest(),'output_sha256':hashlib.sha256(b).hexdigest()}
+    return bytes(b),{'version':2,'code':code,'code_size':len(payload),'state':state,'state_size':size,'hooks':report,'input_sha256':hashlib.sha256(raw).hexdigest(),'output_sha256':hashlib.sha256(b).hexdigest()}
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('binary',type=Path);p.add_argument('--no-backup',action='store_true');a=p.parse_args()

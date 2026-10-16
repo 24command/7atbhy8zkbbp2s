@@ -104,11 +104,18 @@ class Session {
   if((active_.challenge==1&&rating!=Rating::Perfect)||(active_.challenge==2&&index>=2))retry_=true;
   return true;
  }
- Action takeAction(bool playing,bool leaving,bool breaking) {
+ // Peek does not consume a failure/retry before Unity accepts the coroutine.
+ Action pendingAction(bool playing,bool leaving,bool breaking) const {
   if(phase_!=Phase::Playing||failed_||leaving||breaking)return Action::None;
-  if(lost_){if(!playing||lostDispatched_)return Action::None;lostDispatched_=true;return Action::TrackLost;}
-  if(retry_){retry_=false;excluded_=true;return Action::Retry;}
-  return Action::None;
+  if(lost_)return playing&&!lostDispatched_?Action::TrackLost:Action::None;
+  return retry_?Action::Retry:Action::None;
+ }
+ void acknowledgeAction(Action action) {
+  if(action==Action::TrackLost)lostDispatched_=true;
+  if(action==Action::Retry){retry_=false;excluded_=true;}
+ }
+ Action takeAction(bool playing,bool leaving,bool breaking) {
+  Action action=pendingAction(playing,leaving,breaking);acknowledgeAction(action);return action;
  }
  // Only queues score credit, not note animation or synthetic Unity touches.
  bool deferHold(float code,float offset,std::array<float,3> position,bool hold,float now) {

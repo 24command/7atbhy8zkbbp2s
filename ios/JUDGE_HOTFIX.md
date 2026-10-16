@@ -1,4 +1,4 @@
-# Custom judge fix ? 2026-10-16
+# Custom judge fix - 2026-10-16
 
 > Historical framework6 judge-hotfix notes. The newer source also requires
 > the offline gameplay backend before enabling Custom judge, so the new build
@@ -33,7 +33,8 @@ It was overwritten by the next game frame. A timer cannot reliably solve this.
   as max(220 ms, G + 40 ms) each edit; expansions do not accumulate.
 - Stored enable/config resumes after game readiness (bounded startup retry).
 - Preview does NOT apply anything. It shows draft values and separately read
-  actual values/status. Other gameplay switches are still drafts.
+  actual values/status. Other gameplay switches were drafts in framework6;
+  the current v2 / 54-hook source connects them (see GAMEPLAY_UI_PORT.md).
 
 ## Build and package
 

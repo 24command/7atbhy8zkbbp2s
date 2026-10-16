@@ -4,6 +4,9 @@
 #include "PMIL2CPP.hpp"
 #include "PMOptions.hpp"
 #include "PMSceneUI.hpp"
+#include "PMHPLife.hpp"
+#include "PMChartModes.hpp"
+#include "../Core/PMFlowCore.hpp"
 #include "../Core/PMHookProtocol.hpp"
 #include "../Core/PMHookManifest.hpp"
 #include <atomic>
@@ -15,7 +18,8 @@ namespace {
 using pmbridge::P;
 using pmbridge::Runtime;
 namespace h=phimod::hooks;
-__attribute__((used)) static const char PMGameplayProtocol[16]="PMGameplay-v1";
+__attribute__((used)) static const char PMGameplayProtocol[16]="PMGameplay-v2";
+__attribute__((used)) static const char PMGameplayBuild[]="PMGameplay-contract-v2-54";
 struct V3{float x,y,z;};
 struct V2{float x,y;};
 struct Color{float r,g,b,a;};
@@ -24,6 +28,7 @@ P gateways[h::Count]{};
 std::unique_ptr<phimod::Session> attempt;
 std::atomic<bool> guard{false};
 bool ready=false,broken=false,inResult=false;
+phimod::Options frozenOptions;
 uint32_t progressRoot=0,scoreRoot=0;
 std::set<float> registered;
 std::string lastError="Backend not installed";
@@ -34,7 +39,7 @@ template<class T>T orig(h::Index i){return reinterpret_cast<T>(gateways[i]);}
 using VoidFn=void(*)(P,P);
 using JudgeFn=bool(*)(P,P);
 using PerfectFn=void(*)(P,float,float,V3,bool,P);
-void fault(const std::exception &e){lastError=e.what();broken=true;guard.store(true);if(attempt)attempt->failClosed();}
+void fault(const std::exception &e){NSLog(@"[PhiMod] Gameplay failure: %s",e.what());lastError=e.what();broken=true;guard.store(true);if(attempt)attempt->failClosed();}
 bool applying(){return ready&&!broken&&attempt&&attempt->shouldApplyGameplay();}
 P progress(){return progressRoot?R().gchandle_get_target(progressRoot):nullptr;}
 P score(){return scoreRoot?R().gchandle_get_target(scoreRoot):nullptr;}
@@ -50,10 +55,7 @@ void registerChart(P info){
  for(int i=0;i<count;++i)registerOne(r.at(list,i));
 }
 void begin(P p){
- auto &r=R();auto options=PMReadOptions([[PMSettings shared] snapshot]);
- // These two pipelines need independent chart/block coverage; never simulate
- // them by turning AutoPlay on or merely changing a label.
- if(options.noise||options.unified||options.clearNoise)throw std::runtime_error("Noise/Unified pipelines not yet verified; disable before playing");
+ auto &r=R();auto options=frozenOptions;
  release(progressRoot);release(scoreRoot);attempt.reset();registered.clear();
  if(!options.assisted()){lastError="Original gameplay: assistance off";return;}
  progressRoot=r.gchandle_new(p,false);scoreRoot=r.gchandle_new(r.get<P>(p,"scoreControl"),false);
@@ -73,13 +75,14 @@ void onAwake(P self,P mi){
  if(!broken){
   try{guard.store(PMReadOptions([[PMSettings shared] snapshot]).assisted());}catch(const std::exception &e){fault(e);}
  }
- try{release(progressRoot);release(scoreRoot);attempt.reset();registered.clear();pmscene::settingsLeave(R());}catch(const std::exception&e){fault(e);}
+ try{release(progressRoot);release(scoreRoot);attempt.reset();registered.clear();pmscene::settingsLeave(R());pmscene::clearRecovery(R());pmhp::clear(R());pmmodes::clear(R());}catch(const std::exception&e){fault(e);}
  inResult=false;
+ try{frozenOptions=PMReadOptions([[PMSettings shared] snapshot]);if(!broken){pmhp::prepare(R(),self,frozenOptions);pmmodes::prepare(R(),self,frozenOptions);}}catch(const std::exception&e){fault(e);}
  orig<VoidFn>(h::levelAwake)(self,mi);
 }
 void onDestroy(P self,P mi){
  if(attempt){attempt->result();if(attempt->excluded())guard.store(true);}
- try{pmscene::hpFrame(0,1,false);}catch(const std::exception&e){fault(e);}
+ try{pmhp::clear(R());pmmodes::clear(R());}catch(const std::exception&e){fault(e);}
  orig<VoidFn>(h::levelDestroy)(self,mi);
 }
 void onProgressStart(P self,P mi){
@@ -89,7 +92,11 @@ void onProgressStart(P self,P mi){
 void credit(P self,float code,float offset,V3 pos,bool hold,P mi){
  orig<PerfectFn>(h::perfect)(self,code,offset,pos,hold,mi);
 }
-void observe(float code,float offset,phimod::Rating rating){if(applying())attempt->observe(code,offset,rating);}
+void observe(float code,float offset,phimod::Rating rating){
+ if(!applying())return;
+ float before=attempt->hp();bool accepted=attempt->observe(code,offset,rating);
+ if(accepted&&attempt->options().hpEnabled){try{pmhp::frame(R(),attempt->hp());if(before!=attempt->hp())pmhp::flash(R());}catch(const std::exception&e){lastError=std::string("HP visuals: ")+e.what();}}
+}
 void onPerfect(P self,float code,float offset,V3 pos,bool hold,P mi){
  if(applying()&&attempt->options().autoplay){
   try{auto &r=R();if(attempt->deferHold(code,offset,{pos.x,pos.y,pos.z},hold,r.get<float>(progress(),"nowTime")))return;
@@ -115,23 +122,26 @@ void onProgressUpdate(P self,P mi){
    observe(c.code,c.offset,phimod::Rating::Perfect);
    credit(score(),c.code,c.offset,{c.position[0],c.position[1],c.position[2]},c.hold,nullptr);
   }
-  auto action=attempt->takeAction(playing,r.get<bool>(self,"leave"),r.get<bool>(self,"levelBreak"));
+  auto action=attempt->pendingAction(playing||pmhp::failing(),r.get<bool>(self,"leave"),r.get<bool>(self,"levelBreak"));
   P info=r.get<P>(self,"levelInformation");
   if(action==phimod::Action::Retry){
    guard.store(true);r.call(self,"LevelBreak",{"System.String"},{r.string_new("Level")});
-   r.put(info,"levelOver",true);r.put(info,"canPause",false);r.call(r.get<P>(self,"audioSource"),"Stop");
-  }else if(action==phimod::Action::TrackLost){
+   r.put(info,"levelOver",true);r.put(info,"canPause",false);r.call(r.get<P>(self,"audioSource"),"Stop");attempt->acknowledgeAction(action);
+  }else if(action==phimod::Action::TrackLost&&pmhp::failureReady(r,self)){
    r.call(score(),"FreezeScore");r.put(self,"isPlaying",false);r.put(info,"levelOver",true);r.put(info,"canLevelOver",true);
-   P routine=r.call(self,"LevelOver");r.call(self,"StartCoroutine",{"System.Collections.IEnumerator"},{routine});
+   P routine=r.call(self,"LevelOver");r.call(self,"StartCoroutine",{"System.Collections.IEnumerator"},{routine});attempt->acknowledgeAction(action);r.call(r.get<P>(self,"audioSource"),"Stop");
   }
-  pmscene::hpFrame(attempt->hp(),attempt->options().hpMax,attempt->options().hpEnabled&&!r.get<bool>(self,"leave"));
- }catch(const std::exception&e){fault(e);}
+  if(r.get<bool>(info,"levelOver"))pmhp::finish(r);
+  pmhp::frame(r,attempt->hp());
+ }catch(const std::exception&e){lastError=std::string("Transition pending: ")+e.what();NSLog(@"[PhiMod] %s",lastError.c_str());}
 }
 bool noteJudge(P self,P mi,h::Index index,bool hold){
  if(!applying())return orig<JudgeFn>(index)(self,mi);
  auto &r=R();P clock=nullptr,note=nullptr;bool restoreClock=false,restoreX=false;float now=0,oldX=0;
  bool called=false,result=false;
+ std::unique_ptr<pmmodes::HoldScope> holdScope;
  try{
+  if(hold)holdScope=std::make_unique<pmmodes::HoldScope>(r,self);
   note=r.get<P>(self,"noteInfor");clock=r.get<P>(self,"progressControl");registerOne(note);
   if(attempt->options().autoplay){
    bool playing=r.get<bool>(clock,"isPlaying");now=r.get<float>(clock,"nowTime");float time=r.get<float>(note,"realTime");
@@ -148,7 +158,10 @@ bool noteJudge(P self,P mi,h::Index index,bool hold){
    if(n>0&&fingers&&r.array_length(fingers)>0){oldX=r.get<float>(note,"positionX");float x=r.unbox<float>(r.arrayAt(fingers,0));restoreX=true;r.put(note,"positionX",x);}
   }
   called=true;result=orig<JudgeFn>(index)(self,mi);
+  if(result)pmmodes::completed(r,self);
  }catch(const std::exception&e){fault(e);}
+ try{if(holdScope)holdScope->finish();}catch(const std::exception&e){fault(e);}
+ holdScope.reset();
  // Restore temporary game clock and note position even if a managed operation
  // failed. No 'retry original' after an original call has already happened.
  try{if(restoreClock)r.put(clock,"nowTime",now);if(restoreX)r.put(note,"positionX",oldX);}catch(const std::exception&e){fault(e);}
@@ -165,7 +178,7 @@ void onScoreUpdate(P self,P mi){
  if(!applying())return;
  try{auto &r=R();auto o=attempt->options();
   if(o.accuracyOnly){float value=accuracy(self);r.put(self,"_score",value);char digits[32];snprintf(digits,sizeof(digits),"%07d",int(std::round(value)));r.text(r.get<P>(self,"score"),digits);}
-  if(o.hpEnabled){r.text(r.get<P>(self,"comboText"),"LIFE");r.text(r.get<P>(self,"combo"),std::to_string(int(std::ceil(attempt->hp()))).c_str());}
+  if(o.hpEnabled){pmhp::scoreFrame(r,self);r.text(r.get<P>(self,"comboText"),"LIFE");r.text(r.get<P>(self,"combo"),std::to_string(int(std::ceil(attempt->hp()))).c_str());}
   else if(o.autoplay)r.text(r.get<P>(self,"comboText"),"AUTOPLAY");
  }catch(const std::exception&e){fault(e);}
 }
@@ -185,36 +198,118 @@ template<h::Index I>void saveString(P key,P value,P mi){if(!guard.load())orig<vo
 void onSaveDate(P key,uint64_t value,P mi){if(!guard.load())orig<void(*)(P,uint64_t,P)>(h::SaveDate)(key,value,mi);}
 void renderPracticeResult(P self){
  auto &r=R();P gi=r.mainGame(),info=r.get<P>(gi,"levelStartInfo"),result=r.get<P>(gi,"levelResultInfo");
+ if(!info||!result)throw std::runtime_error("Result data missing after LevelOver");
  r.put(self,"_gameInformation",gi);r.put(self,"_levelStartInfo",info);r.put(self,"levelResultInfo",result);
  P mask=r.get<P>(gi,"sceneSwitchMask");r.call(mask,"set_texture",{"UnityEngine.Texture"},{nullptr});Color clear{0,0,0,0};r.call(mask,"set_color",{"UnityEngine.Color"},{&clear});
- float volume=1;r.stat(r.klass("GameInformation"),"set_ListenerVolume",{"System.Single"},{&volume});
- // Whitelist only presentation helpers. Never run the stock iterator or its
- // first-run/tutorial/unlock/reward/record helpers on an assisted result.
+ std::string warnings;
+ auto present=[&](const char*stage,auto fn){try{fn();}catch(const std::exception&e){warnings+=std::string(stage)+": "+e.what()+"; ";NSLog(@"[PhiMod] Result %s: %s",stage,e.what());}};
+ // Optional audio/cover/name replacements must never prevent the canvas from
+ // becoming visible. Each presentation helper has its own failure boundary.
+ present("listener",[&]{float volume=1;r.stat(r.klass("GameInformation"),"set_ListenerVolume",{"System.Single"},{&volume});});
  P ctx=r.object_new(r.nested(r.klass("LevelOverControl"),"<>c__DisplayClass43_0"));uint32_t root=r.gchandle_new(ctx,false);
  try{
   r.call(ctx,".ctor");r.put(ctx,"<>4__this",self);P record=r.object_new(r.klass("LevelRecord"));uint32_t rr=r.gchandle_new(record,false);
   try{r.call(record,".ctor");r.put(ctx,"record",record);}catch(...){r.gchandle_free(rr);throw;}r.gchandle_free(rr);
-  r.call(ctx,"<Start>g__SetResultAudio|1");r.call(ctx,"<Start>g__SetResultInfo|2");
-  int value=r.get<int>(result,"<IntScore>k__BackingField");bool fc=r.unbox<bool>(r.call(result,"get_FullCombo"));
-  r.call(ctx,"<Start>g__SetRatingWithScore|3",{"System.Int32","System.Boolean"},{&value,&fc});
-  r.text(r.get<P>(self,"best"),"PHIMOD PRACTICE - Scores / RKS / unlocks not saved");
-  r.call(r.get<P>(self,"cover"),"set_Code",{"System.String"},{r.get<P>(info,"illustrationKey")});
-  r.call(ctx,"<Start>g__SetScreenRatio|23");r.call(ctx,"<Start>g__EnableResultCanvas|21");r.call(ctx,"<Start>g__PlayResultBGM|22");
+  present("audio prepare",[&]{float zero=0;r.call(r.get<P>(self,"audioSource"),"set_Volume",{"System.Single"},{&zero});});
+  present("audio key",[&]{r.call(ctx,"<Start>g__SetResultAudio|1");});
+  present("result info",[&]{r.call(ctx,"<Start>g__SetResultInfo|2");});
+  present("rating",[&]{int value=r.get<int>(result,"<IntScore>k__BackingField");bool fc=r.unbox<bool>(r.call(result,"get_FullCombo"));r.call(ctx,"<Start>g__SetRatingWithScore|3",{"System.Int32","System.Boolean"},{&value,&fc});});
+  present("cover",[&]{r.call(r.get<P>(self,"cover"),"set_Code",{"System.String"},{r.get<P>(info,"illustrationKey")});});
+  present("screen ratio",[&]{r.call(ctx,"<Start>g__SetScreenRatio|23");});
+  // Critical: independently enable the game canvas even if audio or an
+  // optional song-name helper failed. No null Start or silent black screen.
+  r.call(ctx,"<Start>g__EnableResultCanvas|21");
+  present("BGM",[&]{r.call(ctx,"<Start>g__PlayResultBGM|22");});
+  present("practice label",[&]{
+    bool lost=attempt&&attempt->options().hpEnabled&&attempt->hp()<=0;
+    r.text(r.get<P>(self,"best"),lost?"PHIMOD PRACTICE / TRACK LOST - Not saved":warnings.empty()?"PHIMOD PRACTICE - Scores / RKS / unlocks not saved":"PHIMOD PRACTICE - presentation warning (see status)");
+   });
  }catch(...){r.gchandle_free(root);throw;}r.gchandle_free(root);
+ lastError=warnings.empty()?"Practice result displayed; saves remain blocked":warnings;
 }
 P onResultStart(P self,P mi){
- if(!guard.load())return orig<P(*)(P,P)>(h::resultStart)(self,mi);
- inResult=true;if(attempt)attempt->result();
- try{renderPracticeResult(self);}catch(const std::exception&e){fault(e);}
- inResult=false;return nullptr; // NEVER fall back to saving/unlocking coroutine
+ // IDA: Start only allocates <Start>d__43. All mutation is in MoveNext,
+ // which is intercepted below. Returning a real iterator lets Unity perform
+ // the normal lifecycle instead of a null coroutine plus blanket false.
+ if(guard.load()){inResult=true;if(attempt)attempt->result();}
+ return orig<P(*)(P,P)>(h::resultStart)(self,mi);
 }
-bool onResultMove(P self,P mi){if(guard.load())return false;return orig<JudgeFn>(h::resultMove)(self,mi);}
+bool onResultMove(P iterator,P mi){
+ if(!guard.load())return orig<JudgeFn>(h::resultMove)(iterator,mi);
+ P self=nullptr;
+ try{
+  auto&r=R();self=r.get<P>(iterator,"<>4__this");int state=r.get<int>(iterator,"<>1__state");
+  int step=phimod::resultStep(state);r.put<P>(iterator,"<>2__current",nullptr);
+  if(step==1){r.put(iterator,"<>1__state",1);return true;}
+  r.put(iterator,"<>1__state",-1);if(step==2)renderPracticeResult(self);
+ }catch(const std::exception&e){
+  lastError=std::string("Practice result: ")+e.what();NSLog(@"[PhiMod] %s",lastError.c_str());
+  // Fail visibly with rooted, navigation-only recovery; NEVER execute the
+  // original reward/unlock iterator as an error fallback.
+  if(self)try{pmscene::resultRecovery(R(),self,lastError);}catch(const std::exception&nested){lastError+=std::string("; recovery: ")+nested.what();}
+ }
+ inResult=false;return false;
+}
+void onLifeStart(P self,P mi){if(!pmhp::active()){orig<VoidFn>(h::lifeStart)(self,mi);return;}try{pmhp::barStart(R(),self);}catch(const std::exception&e){lastError=std::string("Native HP bar: ")+e.what();}}
+float onLifeNormalized(P self,P game,P mi){
+ try{if(pmhp::ownsBar(R(),self))return pmhp::normalized();}
+ catch(const std::exception&e){lastError=std::string("Native HP normalized: ")+e.what();if(pmhp::active())return pmhp::normalized();}
+ return orig<float(*)(P,P,P)>(h::lifeNormalized)(self,game,mi);
+}
+void onLifeModStart(P self,P mi){if(!pmhp::active()){orig<VoidFn>(h::lifeModStart)(self,mi);return;}try{pmhp::modStart(R(),self);}catch(const std::exception&e){fault(e);}}
+void onHPBackgroundStart(P self,P mi){try{pmhp::backgroundBefore(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::hpBackgroundStart)(self,mi);try{if(pmhp::active())pmhp::frame(R(),attempt?attempt->hp():frozenOptions.hpMax);}catch(const std::exception&e){lastError=e.what();}}
+void onLifeUpdate(P self,P mi){
+ try{if(pmhp::ownsBar(R(),self)){pmhp::barUpdate(R(),self);return;}}
+ catch(const std::exception&e){lastError=std::string("Native HP update: ")+e.what();return;}
+ orig<VoidFn>(h::lifeUpdate)(self,mi);
+}
+P onProgressLevelOver(P self,P mi){try{pmhp::finish(R());}catch(const std::exception&e){lastError=e.what();}return orig<P(*)(P,P)>(h::progressLevelOver)(self,mi);}
+void onLevelCodes(P self,P mi){
+ if(!broken)try{pmmodes::beforeCodes(R(),self);}catch(const std::exception&e){fault(e);}
+ orig<VoidFn>(h::levelCodes)(self,mi);
+}
+void onLevelInformation(P self,P mi){
+ orig<VoidFn>(h::levelInfo)(self,mi);
+ if(!broken)try{pmmodes::afterInformation(R(),self);}catch(const std::exception&e){fault(e);}
+}
+void onNoteManager(P self,P mi){
+ if(applying())try{pmmodes::beginFrame(R(),self);}catch(const std::exception&e){fault(e);}
+ orig<VoidFn>(h::noteManager)(self,mi);
+ if(applying())try{pmmodes::frame(R(),self);}catch(const std::exception&e){fault(e);}
+}
+bool onBlocking(P self,V2 point,P*out,P mi){
+ if(applying())try{bool handled=false;bool value=pmmodes::blocking(R(),{point.x,point.y},out,handled);if(handled)return value;}catch(const std::exception&e){fault(e);}
+ return orig<bool(*)(P,V2,P*,P)>(h::blocking)(self,point,out,mi);
+}
+void onBlockLate(P self,P mi){orig<VoidFn>(h::blockLate)(self,mi);if(applying())try{pmmodes::late(R(),self);}catch(const std::exception&e){fault(e);}}
+void onHoldMove(P self,P mi){
+ // Native NoteMove reads missed/timeOfJudge to fade and emit Hold effects.
+ // Set them BEFORE the original, as in Android; sample the hole afterwards.
+ if(applying())try{pmmodes::holdMove(R(),self);}catch(const std::exception&e){fault(e);}
+ orig<VoidFn>(h::holdMove)(self,mi);
+ if(applying())try{pmmodes::moved(R(),self,true);}catch(const std::exception&e){fault(e);}
+}
+template<h::Index i>void onNoteMove(P self,P mi){orig<VoidFn>(i)(self,mi);if(applying())try{pmmodes::moved(R(),self);}catch(const std::exception&e){fault(e);}}
 void onSelector(P self,P mi){orig<VoidFn>(h::selector)(self,mi);try{pmscene::selectorFrame(R(),self);}catch(const std::exception&e){lastError=e.what();}}
 void onSelectorOff(P self,P mi){try{pmscene::selectorOff(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::selectorOff)(self,mi);}
 void onSetting(P self,P mi){orig<VoidFn>(h::setting)(self,mi);try{pmscene::settingsFrame(R(),self);}catch(const std::exception&e){lastError=e.what();}}
 void onSettingTab(P self,int index,P mi){try{pmscene::settingsLeave(R());}catch(const std::exception&e){lastError=e.what();}orig<void(*)(P,int,P)>(h::settingTab)(self,index,mi);}
 void onSettingBack(P self,P mi){try{pmscene::settingsLeave(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::settingBack)(self,mi);}
-void onPress(P self,P mi){try{if(pmscene::press(R(),self))return;}catch(const std::exception&e){lastError=e.what();return;}orig<VoidFn>(h::button)(self,mi);}
+bool dispatchModButton(P self){
+ if(!pmscene::ownsButton(self))return false;
+ try{auto&r=R();if(!r.unbox<bool>(r.call(self,"IsActive"))||!r.unbox<bool>(r.call(self,"IsInteractable")))return true;pmscene::press(r,self);}
+ catch(const std::exception&e){lastError=std::string("MOD button: ")+e.what();NSLog(@"[PhiMod] %s",lastError.c_str());}
+ return true; // Only an owned clone is consumed. All game buttons pass through.
+}
+void onPress(P self,P mi){if(!dispatchModButton(self))orig<VoidFn>(h::button)(self,mi);}
+void onPointerClick(P self,P event,P mi){
+ if(pmscene::ownsButton(self)){
+  try{P value=R().call(event,"get_button");int button=0;P raw=R().object_unbox(value);if(!raw)throw std::runtime_error("Invalid pointer button");memcpy(&button,raw,sizeof(button));if(button==0)dispatchModButton(self);}
+  catch(const std::exception&e){lastError=e.what();}return;
+ }
+ orig<void(*)(P,P,P)>(h::buttonClick)(self,event,mi);
+}
+void onSubmit(P self,P event,P mi){if(!dispatchModButton(self))orig<void(*)(P,P,P)>(h::buttonSubmit)(self,event,mi);}
 void onCheck(P self,int finger,P mi,h::Index i){
  // Fullscreen positional scope for initial Tap/Flick candidate collection.
  auto fn=orig<void(*)(P,int,P)>(i);if(!applying()||!attempt->options().fullscreen){fn(self,finger,mi);return;}
@@ -254,7 +349,7 @@ void onCheckFlick(P s,int f,P m){onCheck(s,f,m,h::checkFlick);}
   if(!code||!data||code->size!=32+(sizeof(h::Entry)+48)*h::Count||data->size!=sizeof(h::Slot)*h::Count)throw std::runtime_error("Gameplay hooks absent: compile and repackage with NEW tools");
   auto base=reinterpret_cast<const uint8_t*>(r.imageHeader);auto desc=base+code->addr;uint32_t ver,count;uint64_t state;
   memcpy(&ver,desc+16,4);memcpy(&count,desc+20,4);memcpy(&state,desc+24,8);
-  if(memcmp(desc,PMGameplayProtocol,16)||ver!=1||count!=h::Count||state!=data->addr)throw std::runtime_error("Gameplay protocol mismatch");
+  if(memcmp(desc,PMGameplayProtocol,16)||ver!=h::version||count!=h::Count||state!=data->addr)throw std::runtime_error("Gameplay protocol mismatch");
   auto entries=reinterpret_cast<const h::Entry*>(desc+32);
   for(uint32_t i=0;i<h::Count;++i){
    auto e=entries[i];uint64_t gate=code->addr+32+sizeof(h::Entry)*h::Count+48*i;
@@ -368,11 +463,17 @@ void onCheckFlick(P s,int f,P m){onCheck(s,f,m,h::checkFlick);}
   P ctx=r.nested(r.klass("LevelOverControl"),"<>c__DisplayClass43_0");
   for(auto name:{"<Start>g__SetResultAudio|1","<Start>g__SetResultInfo|2","<Start>g__SetScreenRatio|23","<Start>g__EnableResultCanvas|21","<Start>g__PlayResultBGM|22"})r.resolve(ctx,name);
   r.resolve(ctx,"<Start>g__SetRatingWithScore|3",{"System.Int32","System.Boolean"});
+  P resultIterator=r.nested(r.klass("LevelOverControl"),"<Start>d__43");
+  r.field(resultIterator,"<>1__state","System.Int32",false);
+  r.field(resultIterator,"<>2__current","System.Object",false);
+  r.field(resultIterator,"<>4__this","LevelOverControl",false);
+  r.resolve(r.klass("AddressableAudioSource"),"set_Volume",{"System.Single"});
+  pmhp::validate(r);pmmodes::validate(r);
   rt=std::move(candidate);
-  P callbacks[h::Count]={reinterpret_cast<P>(onAwake),reinterpret_cast<P>(onDestroy),reinterpret_cast<P>(onProgressStart),reinterpret_cast<P>(onProgressUpdate),reinterpret_cast<P>(onMiss),reinterpret_cast<P>(onBad),reinterpret_cast<P>(onGood),reinterpret_cast<P>(onPerfect),reinterpret_cast<P>(onScoreUpdate),reinterpret_cast<P>(onResultInfo),reinterpret_cast<P>(onClick),reinterpret_cast<P>(onDrag),reinterpret_cast<P>(onHold),reinterpret_cast<P>(onFlick),reinterpret_cast<P>(onRecord),reinterpret_cast<P>(onSetRecord),reinterpret_cast<P>(onRanking),reinterpret_cast<P>(onResultStart),reinterpret_cast<P>(onResultMove),reinterpret_cast<P>(onSelector),reinterpret_cast<P>(onSelectorOff),reinterpret_cast<P>(onSetting),reinterpret_cast<P>(onSettingTab),reinterpret_cast<P>(onSettingBack),reinterpret_cast<P>(onPress),reinterpret_cast<P>(onCheckNote),reinterpret_cast<P>(onCheckFlick),reinterpret_cast<P>(onDelete),reinterpret_cast<P>(saveBool<h::SaveBool>),reinterpret_cast<P>(saveInt<h::SaveInt>),reinterpret_cast<P>(saveFloat<h::SaveFloat>),reinterpret_cast<P>(onSaveDate),reinterpret_cast<P>(saveString<h::SaveString>),reinterpret_cast<P>(saveBool<h::LegacySaveBool>),reinterpret_cast<P>(saveInt<h::LegacySaveInt>),reinterpret_cast<P>(saveFloat<h::LegacySaveFloat>),reinterpret_cast<P>(saveString<h::LegacySaveString>)};
+  P callbacks[h::Count]={reinterpret_cast<P>(onAwake),reinterpret_cast<P>(onDestroy),reinterpret_cast<P>(onProgressStart),reinterpret_cast<P>(onProgressUpdate),reinterpret_cast<P>(onMiss),reinterpret_cast<P>(onBad),reinterpret_cast<P>(onGood),reinterpret_cast<P>(onPerfect),reinterpret_cast<P>(onScoreUpdate),reinterpret_cast<P>(onResultInfo),reinterpret_cast<P>(onClick),reinterpret_cast<P>(onDrag),reinterpret_cast<P>(onHold),reinterpret_cast<P>(onFlick),reinterpret_cast<P>(onRecord),reinterpret_cast<P>(onSetRecord),reinterpret_cast<P>(onRanking),reinterpret_cast<P>(onResultStart),reinterpret_cast<P>(onResultMove),reinterpret_cast<P>(onSelector),reinterpret_cast<P>(onSelectorOff),reinterpret_cast<P>(onSetting),reinterpret_cast<P>(onSettingTab),reinterpret_cast<P>(onSettingBack),reinterpret_cast<P>(onPress),reinterpret_cast<P>(onCheckNote),reinterpret_cast<P>(onCheckFlick),reinterpret_cast<P>(onDelete),reinterpret_cast<P>(saveBool<h::SaveBool>),reinterpret_cast<P>(saveInt<h::SaveInt>),reinterpret_cast<P>(saveFloat<h::SaveFloat>),reinterpret_cast<P>(onSaveDate),reinterpret_cast<P>(saveString<h::SaveString>),reinterpret_cast<P>(saveBool<h::LegacySaveBool>),reinterpret_cast<P>(saveInt<h::LegacySaveInt>),reinterpret_cast<P>(saveFloat<h::LegacySaveFloat>),reinterpret_cast<P>(saveString<h::LegacySaveString>),reinterpret_cast<P>(onPointerClick),reinterpret_cast<P>(onSubmit),reinterpret_cast<P>(onLifeStart),reinterpret_cast<P>(onLifeNormalized),reinterpret_cast<P>(onLifeModStart),reinterpret_cast<P>(onHPBackgroundStart),reinterpret_cast<P>(onProgressLevelOver),reinterpret_cast<P>(onLifeUpdate),reinterpret_cast<P>(onLevelCodes),reinterpret_cast<P>(onLevelInformation),reinterpret_cast<P>(onNoteManager),reinterpret_cast<P>(onBlocking),reinterpret_cast<P>(onBlockLate),reinterpret_cast<P>(onHoldMove),reinterpret_cast<P>(onNoteMove<h::clickMove>),reinterpret_cast<P>(onNoteMove<h::dragMove>),reinterpret_cast<P>(onNoteMove<h::flickMove>)};
   auto slots=reinterpret_cast<h::Slot*>(const_cast<uint8_t*>(base)+state);
   for(uint32_t i=0;i<h::Count;++i)__atomic_store_n(&slots[i].callback,reinterpret_cast<uint64_t>(callbacks[i]),__ATOMIC_RELEASE);
-  ready=true;lastError="37 offline entry hooks installed; verify on device";return [self status];
+  ready=true;lastError="54 offline entry hooks v2 installed; verify on device";return [self status];
  }catch(const std::exception&e){lastError=e.what();return [self status];}
 }
 + (BOOL)protectJudgeChange {
@@ -381,6 +482,6 @@ void onCheckFlick(P s,int f,P m){onCheck(s,f,m,h::checkFlick);}
  return YES;
 }
 + (NSDictionary *)status {
- return @{ @"ok":@(ready&&!broken),@"ready":@(ready),@"failedClosed":@(broken),@"saveGuard":@(guard.load()),@"hookCount":@(ready?h::Count:0),@"autoplay":@(applying()&&attempt->options().autoplay),@"hp":@(attempt?attempt->hp():0),@"noiseReady":@NO,@"unifiedReady":@NO,@"message":[NSString stringWithUTF8String:lastError.c_str()] ?: @"Backend error" };
+ return @{ @"ok":@(ready&&!broken),@"ready":@(ready),@"failedClosed":@(broken),@"saveGuard":@(guard.load()),@"hookCount":@(ready?h::Count:0),@"autoplay":@(applying()&&attempt->options().autoplay),@"hp":@(attempt?attempt->hp():0),@"noiseReady":@(ready&&!broken),@"unifiedReady":@(ready&&!broken),@"message":[NSString stringWithUTF8String:lastError.c_str()] ?: @"Backend error" };
 }
 @end

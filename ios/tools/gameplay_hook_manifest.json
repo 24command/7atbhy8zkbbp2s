@@ -294,5 +294,141 @@
     "args": "string keyName, string value",
     "bytes": "f657bda9",
     "instruction": "STP             X22, X21, [SP,#-0x10+var_20]!"
+  },
+  {
+    "id": "buttonClick",
+    "name": "Button.OnPointerClick",
+    "args": "PointerEventData eventData",
+    "rva": 61089460,
+    "bytes": "f44fbea9",
+    "instruction": "Audited position-independent stack prologue"
+  },
+  {
+    "id": "buttonSubmit",
+    "name": "Button.OnSubmit",
+    "args": "BaseEventData eventData",
+    "rva": 61089628,
+    "bytes": "f657bda9",
+    "instruction": "Audited position-independent stack prologue"
+  },
+  {
+    "id": "lifeStart",
+    "name": "SecretChallengeLifeBar.Start",
+    "args": "",
+    "rva": 21857720,
+    "bytes": "f657bda9",
+    "instruction": "Audited position-independent stack prologue"
+  },
+  {
+    "id": "lifeNormalized",
+    "name": "SecretChallengeLifeBar.GetNormalizedLife",
+    "args": "GameInformation gameInformation",
+    "rva": 21859048,
+    "bytes": "f657bda9",
+    "instruction": "Audited position-independent stack prologue"
+  },
+  {
+    "id": "lifeModStart",
+    "name": "SecretChallengeLifeMod.Start",
+    "args": "",
+    "rva": 21860996,
+    "bytes": "f85fbca9",
+    "instruction": "Audited position-independent stack prologue"
+  },
+  {
+    "id": "hpBackgroundStart",
+    "name": "HPDisplayControl.Start",
+    "args": "",
+    "rva": 22499136,
+    "bytes": "f657bda9",
+    "instruction": "Audited position-independent stack prologue"
+  },
+  {
+    "id": "progressLevelOver",
+    "name": "ProgressControl.LevelOver",
+    "args": "",
+    "rva": 22622680,
+    "bytes": "f657bda9",
+    "instruction": "Audited position-independent stack prologue"
+  },
+  {
+    "rva": 21859692,
+    "bytes": "eb2bbb6d",
+    "id": "lifeUpdate",
+    "name": "SecretChallengeLifeBar.Update",
+    "args": "",
+    "instruction": "Audited position-independent stack prologue"
+  },
+  {
+    "id": "levelCodes",
+    "name": "LevelControl.SetCodeForNote",
+    "rva": 22548496,
+    "args": "",
+    "bytes": "fc6fbaa9",
+    "instruction": "IDA-verified relocatable stack prologue"
+  },
+  {
+    "id": "levelInfo",
+    "name": "LevelControl.SetInformation",
+    "rva": 22549752,
+    "args": "",
+    "bytes": "ef3bb66d",
+    "instruction": "IDA-verified relocatable stack prologue"
+  },
+  {
+    "id": "noteManager",
+    "name": "NoteUpdateManager.Update",
+    "rva": 22612644,
+    "args": "",
+    "bytes": "eb2bb86d",
+    "instruction": "IDA-verified relocatable stack prologue"
+  },
+  {
+    "id": "blocking",
+    "name": "JudgeControl.TryGetBlockingBlock",
+    "rva": 22533736,
+    "args": "UnityEngine.Vector2,PreviewBlockControl&",
+    "bytes": "ff8302d1",
+    "instruction": "IDA-verified relocatable stack prologue"
+  },
+  {
+    "id": "blockLate",
+    "name": "BlockRender.LateUpdate",
+    "rva": 22513896,
+    "args": "",
+    "bytes": "f657bda9",
+    "instruction": "IDA-verified relocatable stack prologue"
+  },
+  {
+    "id": "holdMove",
+    "name": "HoldControl.NoteMove",
+    "rva": 22608352,
+    "args": "",
+    "bytes": "ed33ba6d",
+    "instruction": "IDA-verified relocatable stack prologue"
+  },
+  {
+    "id": "clickMove",
+    "name": "ClickControl.NoteMove",
+    "rva": 22602424,
+    "args": "",
+    "bytes": "eb2bbb6d",
+    "instruction": "IDA-verified STP D11, D10 stack prologue"
+  },
+  {
+    "id": "dragMove",
+    "name": "DragControl.NoteMove",
+    "rva": 22604600,
+    "args": "",
+    "bytes": "eb2bbb6d",
+    "instruction": "IDA-verified STP D11, D10 stack prologue"
+  },
+  {
+    "id": "flickMove",
+    "name": "FlickControl.NoteMove",
+    "rva": 22606484,
+    "args": "",
+    "bytes": "eb2bbb6d",
+    "instruction": "IDA-verified STP D11, D10 stack prologue"
   }
 ]

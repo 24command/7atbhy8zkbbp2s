@@ -47,6 +47,7 @@ struct Runtime {
     P (*method_get_return_type)(P) = nullptr;
     P (*runtime_invoke)(P, P, P *, P *) = nullptr;
     P (*object_unbox)(P) = nullptr;
+    P (*value_box)(P,P) = nullptr;
     void (*runtime_class_init)(P) = nullptr;
 
     P (*class_from_type)(P)=nullptr;
@@ -117,7 +118,7 @@ struct Runtime {
         load(free_memory,"il2cpp_free");
         PM_API(class_get_methods); PM_API(method_get_name); PM_API(method_get_param_count);
         PM_API(method_get_flags); PM_API(method_get_param); PM_API(method_get_return_type);
-        PM_API(runtime_invoke); PM_API(object_unbox); PM_API(runtime_class_init);
+        PM_API(runtime_invoke); PM_API(value_box); PM_API(object_unbox); PM_API(runtime_class_init);
         PM_API(class_from_type); PM_API(class_is_valuetype); PM_API(class_value_size);
         PM_API(object_get_class); PM_API(class_get_parent); PM_API(class_get_nested_types);
         PM_API(class_get_name); PM_API(class_get_type); PM_API(type_get_object);
@@ -286,7 +287,11 @@ struct Runtime {
     P invokeOn(P method,P self,std::initializer_list<P> args={}) {
         std::vector<P> a(args);P ex=nullptr;
         P value=runtime_invoke(method,self,a.empty()?nullptr:a.data(),&ex);
-        if(ex)throw std::runtime_error("Managed call failed");return value;
+        if(ex){
+            const char *methodName=method_get_name(method);
+            P c=object_get_class(ex);const char *exceptionName=c?class_get_name(c):nullptr;
+            throw std::runtime_error(std::string("Managed call failed: ")+(methodName?methodName:"?")+" ["+(exceptionName?exceptionName:"exception")+"]");
+        }return value;
     }
     P call(P self,const char *name,std::initializer_list<const char*> params={},std::initializer_list<P> args={}) {
         if(!self)throw std::runtime_error(std::string("Null call: ")+name);
@@ -299,6 +304,14 @@ struct Runtime {
     int count(P list){return list?unbox<int>(call(list,"get_Count")):0;}
     P at(P list,int index){return call(list,"get_Item",{"System.Int32"},{&index});}
     P arrayAt(P array,int index){return invokeOn(resolve(type("System","Array"),"GetValue",{"System.Int32"}),array,{&index});}
+    void arrayPutFloat(P array,int index,float value) {
+        if(!array||index<0||uintptr_t(index)>=array_length(array))throw std::runtime_error("Array write outside bounds");
+        P boxed=value_box(type("System","Single"),&value);
+        if(!boxed)throw std::runtime_error("Float boxing failed");
+        uint32_t root=gchandle_new(boxed,false);
+        try{invokeOn(resolve(type("System","Array"),"SetValue",{"System.Object","System.Int32"}),array,{boxed,&index});}
+        catch(...){gchandle_free(root);throw;}gchandle_free(root);
+    }
     P component(P obj,P c){return call(obj,"GetComponent",{"System.Type"},{type_get_object(class_get_type(c))});}
     P children(P obj,P c){bool all=true;return call(obj,"GetComponentsInChildren",{"System.Type","System.Boolean"},{type_get_object(class_get_type(c)),&all});}
     bool alive(P obj) {return obj && unbox<bool>(stat(type("UnityEngine","Object"),"op_Implicit",{"UnityEngine.Object"},{obj}));}

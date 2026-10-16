@@ -61,6 +61,10 @@ def main() -> None:
     if not (args.framework / "PhiMod").is_file():
         raise RuntimeError(f"missing framework executable: {args.framework / 'PhiMod'}")
 
+    binary = (args.framework / "PhiMod").read_bytes()
+    if b"PMGameplay-v1" in binary or any(marker not in binary for marker in (b"PMJudgeHook-v1", b"PMGameplay-v2", b"PMGameplay-contract-v2-54")):
+        raise RuntimeError("Stale framework: requires PMGameplay-v2 with all 54 gates; rebuild the new sources first")
+
     tools = Path(__file__).resolve().parent
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="phimod-ipa-", dir=args.output.parent) as temporary:
@@ -85,7 +89,7 @@ def main() -> None:
         subprocess.run([sys.executable, str(tools / "inject_load_dylib.py"), str(unity), DEPENDENCY, "--no-backup"], check=True)
         if b"PMJudgeHook-v1" in (destination / "PhiMod").read_bytes():
             subprocess.run([sys.executable, str(tools / "patch_judge_windows.py"), str(unity), "--no-backup"], check=True)
-        if b"PMGameplay-v1" in (destination / "PhiMod").read_bytes():
+        if b"PMGameplay-v2" in (destination / "PhiMod").read_bytes():
             subprocess.run([sys.executable, str(tools / "patch_gameplay_hooks.py"), str(unity), "--no-backup"], check=True)
         strip_signatures(app)
         zip_tree(stage, args.output)
