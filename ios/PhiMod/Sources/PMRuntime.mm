@@ -1,4 +1,5 @@
 #import "PMRuntime.h"
+#include "../Core/PMJudgeCore.hpp"
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
@@ -9,9 +10,11 @@
 #include <string>
 
 namespace {
+__attribute__((used)) static const char PMJudgeProtocol[16]="PMJudgeHook-v1";
 // Deliberately opaque. Never dereference MethodInfo/Il2CppClass or Android layouts.
 using P = void *;
 struct Runtime {
+    const mach_header_64 *imageHeader = nullptr;
     P handle = nullptr;
     P ownedThread = nullptr;
     P domain = nullptr;
@@ -39,6 +42,7 @@ struct Runtime {
     P (*method_get_return_type)(P) = nullptr;
     P (*runtime_invoke)(P, P, P *, P *) = nullptr;
     P (*object_unbox)(P) = nullptr;
+    void (*runtime_class_init)(P) = nullptr;
 
     Runtime() = default;
     Runtime(const Runtime &) = delete;
@@ -76,6 +80,7 @@ struct Runtime {
             cursor+=cmd->cmdsize;
         }
         if (!matched) throw std::runtime_error("Unsupported UnityFramework UUID (expected supplied iOS 4.0.1)");
+        imageHeader=header;
         handle=dlopen(path,RTLD_LAZY|RTLD_NOLOAD);
         if (!handle) throw std::runtime_error("Cannot open loaded UnityFramework");
 #define PM_API(name) load(name,"il2cpp_" #name)
@@ -87,7 +92,7 @@ struct Runtime {
         load(free_memory,"il2cpp_free");
         PM_API(class_get_methods); PM_API(method_get_name); PM_API(method_get_param_count);
         PM_API(method_get_flags); PM_API(method_get_param); PM_API(method_get_return_type);
-        PM_API(runtime_invoke); PM_API(object_unbox);
+        PM_API(runtime_invoke); PM_API(object_unbox); PM_API(runtime_class_init);
 #undef PM_API
         domain=domain_get();
         if (!domain) throw std::runtime_error("IL2CPP domain not ready; retry after title screen");
@@ -107,6 +112,42 @@ struct Runtime {
             if (c) return c;
         }
         throw std::runtime_error(std::string("Missing Assembly-CSharp type: ")+name);
+    }
+    phimod::judge::PatchState *judgePatch(bool required) {
+        const section_64 *code=nullptr,*data=nullptr;
+        auto cursor=reinterpret_cast<const uint8_t *>(imageHeader+1);
+        const auto end=cursor+imageHeader->sizeofcmds;
+        for (uint32_t i=0;i<imageHeader->ncmds;++i) {
+            if (cursor+sizeof(load_command)>end) throw std::runtime_error("Invalid load commands");
+            auto cmd=reinterpret_cast<const load_command *>(cursor);
+            if (cmd->cmdsize<sizeof(load_command) || cmd->cmdsize>size_t(end-cursor))
+                throw std::runtime_error("Invalid command size");
+            if (cmd->cmd==LC_SEGMENT_64 && cmd->cmdsize>=sizeof(segment_command_64)) {
+                auto seg=reinterpret_cast<const segment_command_64 *>(cmd);
+                if (seg->nsects>(cmd->cmdsize-sizeof(*seg))/sizeof(section_64))
+                    throw std::runtime_error("Invalid section table");
+                auto sections=reinterpret_cast<const section_64 *>(seg+1);
+                for(uint32_t k=0;k<seg->nsects;++k) {
+                    auto sec=&sections[k];
+                    if (!strncmp(sec->sectname,"__pmjhook",16) && !strncmp(seg->segname,"__TEXT",16)) code=sec;
+                    if (!strncmp(sec->sectname,"__pmjudge",16) && !strncmp(seg->segname,"__DATA",16)) data=sec;
+                    if ((code==sec || data==sec) && (sec->addr<seg->vmaddr || sec->size>seg->vmsize || sec->addr-seg->vmaddr>seg->vmsize-sec->size))
+                        throw std::runtime_error("Judge patch section outside segment");
+                }
+            }
+            cursor+=cmd->cmdsize;
+        }
+        if (!code && !data && !required) return nullptr;
+        if (!code || !data || code->size<32 || data->size!=sizeof(phimod::judge::PatchState))
+            throw std::runtime_error("Judge hook missing: rebuild framework AND repackage IPA with updated tools");
+        // UUID-gated binary has __TEXT.vmaddr=0. Section addresses are RVAs.
+        auto base=reinterpret_cast<const uint8_t *>(imageHeader);
+        auto descriptor=base+code->addr;
+        uint32_t version=0,size=0; uint64_t stateAddress=0;
+        memcpy(&version,descriptor+16,4);memcpy(&size,descriptor+20,4);memcpy(&stateAddress,descriptor+24,8);
+        if (memcmp(descriptor,PMJudgeProtocol,16) || version!=1 || size!=sizeof(phimod::judge::PatchState) || stateAddress!=data->addr)
+            throw std::runtime_error("Incompatible judge hook protocol");
+        return reinterpret_cast<phimod::judge::PatchState *>(const_cast<uint8_t *>(base)+data->addr);
     }
     bool typeIs(P type,const char *expected) {
         char *name=type ? type_get_name(type) : nullptr;
@@ -182,6 +223,7 @@ NSDictionary *failure(const std::exception &e) {return @{ @"ok":@NO, @"message":
         P languageClass=r.klass("MultiLanguageManager");
         int32_t language=r.language(r.method(languageClass,"GetCurrentLanguage","UnityEngine.SystemLanguage"));
         P judge=r.klass("JudgeControl");
+        r.runtime_class_init(judge);
         float p=r.staticValue<float>(judge,"PerfectTimeRange","System.Single");
         float g=r.staticValue<float>(judge,"GoodTimeRange","System.Single");
         float b=r.staticValue<float>(judge,"BadTimeRange","System.Single");
@@ -190,7 +232,12 @@ NSDictionary *failure(const std::exception &e) {return @{ @"ok":@NO, @"message":
         r.field_get_value(main,r.field(r.klass("GameInformation"),"<RankingScore>k__BackingField","System.Single",false),&rks);
         if (!std::isfinite(p)||!std::isfinite(g)||!std::isfinite(b)||!std::isfinite(rks))
             throw std::runtime_error("Game returned non-finite values");
-        return @{ @"ok":@YES,@"language":@(language),@"perfectMs":@(p*1000),@"goodMs":@(g*1000),
+        auto patch=r.judgePatch(false);
+        bool active=patch && patch->enabled;
+        bool verified=active && phimod::judge::matches({p,g,b},phimod::judge::configured(*patch));
+        return @{ @"judgeHookReady":@(patch!=nullptr),@"judgeEnabled":@(active),@"judgeVerified":@(verified),
+                  @"judgeStatus": active ? (verified ? @"Custom judge verified" : @"Judge readback mismatch") : @"Original judge",
+                  @"ok":@YES,@"language":@(language),@"perfectMs":@(p*1000),@"goodMs":@(g*1000),
                   @"badMs":@(b*1000),@"challenge":@(challenge),@"rks":@(rks),
                   @"message":@"读取成功（瞬时快照；不代表草案已经应用）" };
     } catch (const std::exception &e) { return failure(e); }
@@ -216,25 +263,33 @@ NSDictionary *failure(const std::exception &e) {return @{ @"ok":@NO, @"message":
     }
 }
 + (NSDictionary<NSString *,id> *)applyJudgeSettings:(BOOL)enabled perfectMs:(double)perfectMs goodMs:(double)goodMs {
+    phimod::judge::PatchState *activePatch=nullptr;
     try {
-        if (!std::isfinite(perfectMs) || !std::isfinite(goodMs) || perfectMs < 1 || goodMs < perfectMs || goodMs > 2000)
-            return @{ @"ok":@NO, @"message":@"Judge window range invalid" };
-        Runtime r; r.open(); r.mainGame(); P judge=r.klass("JudgeControl");
+        // Validate before any managed call or modification. Disabled edits do
+        // not initialize/capture a baseline (Bootstrap doesn't call us for them).
+        if (enabled) (void)phimod::judge::target(perfectMs,goodMs);
+        Runtime r; r.open();
+        auto patch=r.judgePatch(true); activePatch=patch;
+        r.mainGame(); // never pretend an old IPA supports this
+        P judge=r.klass("JudgeControl");
+        r.runtime_class_init(judge); // .cctor must run BEFORE any window write
         P pf=r.field(judge,"PerfectTimeRange","System.Single",true);
         P gf=r.field(judge,"GoodTimeRange","System.Single",true);
         P bf=r.field(judge,"BadTimeRange","System.Single",true);
-        float oldP=0,oldG=0,oldB=0; r.field_static_get_value(pf,&oldP); r.field_static_get_value(gf,&oldG); r.field_static_get_value(bf,&oldB);
-        static bool saved=false; static float savedP=0,savedG=0,savedB=0;
-        if (!saved) { saved=true; savedP=oldP; savedG=oldG; savedB=oldB; }
-        if (enabled) {
-            float p=static_cast<float>(perfectMs/1000.0), g=static_cast<float>(goodMs/1000.0);
-            float b=std::max(oldB,g+0.04f);
-            r.field_static_set_value(pf,&p); r.field_static_set_value(gf,&g); r.field_static_set_value(bf,&b);
-        } else {
-            r.field_static_set_value(pf,&savedP); r.field_static_set_value(gf,&savedG); r.field_static_set_value(bf,&savedB);
-        }
-        float p=0,g=0,b=0; r.field_static_get_value(pf,&p); r.field_static_get_value(gf,&g); r.field_static_get_value(bf,&b);
-        return @{ @"ok":@YES, @"enabled":@(enabled), @"perfectMs":@(p*1000), @"goodMs":@(g*1000), @"badMs":@(b*1000), @"message":enabled ? @"Judge window applied and read back" : @"Judge window restored" };
-    } catch (const std::exception &e) { return failure(e); }
+        auto read=[&]() {
+            phimod::judge::Windows w{};
+            r.field_static_get_value(pf,&w.perfect); r.field_static_get_value(gf,&w.good); r.field_static_get_value(bf,&w.bad);
+            return w;
+        };
+        auto write=[&](phimod::judge::Windows w) {
+            r.field_static_set_value(pf,&w.perfect); r.field_static_set_value(gf,&w.good); r.field_static_set_value(bf,&w.bad);
+        };
+        static phimod::judge::Controller controller;
+        auto actual=controller.apply(*patch,enabled,perfectMs,goodMs,read,write);
+        return @{ @"ok":@YES,@"enabled":@(enabled),@"hookReady":@YES,
+                  @"perfectMs":@(actual.perfect*1000),@"goodMs":@(actual.good*1000),@"badMs":@(actual.bad*1000),
+                  @"message":[NSString stringWithFormat:enabled ? @"Judge verified P %.0f/G %.0f/B %.0f ms (frame hook)" : @"Original judge restored P %.0f/G %.0f/B %.0f ms",
+                              actual.perfect*1000,actual.good*1000,actual.bad*1000] };
+    } catch (const std::exception &e) { if(activePatch) activePatch->enabled=0; return failure(e); }
 }
 @end

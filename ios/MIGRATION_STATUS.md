@@ -1,3 +1,14 @@
+# Custom judge hotfix (2026-10-16) ? current status
+
+- Found actual per-frame reset in ProgressControl.Update at RVA 0x1592808 / 0x159287C / 0x1592890. The previous one-shot setter and unconditional success message were incorrect.
+- Added version-gated offline conditional store trampolines + main-thread IL2CPP apply/readback/rollback. The engine baseline is recorded even while the override is on, so disable restores the latest normal/challenge values.
+- Added PMJudgeCore.hpp, controller tests, Unicorn execution tests against both a synthetic fixture and the supplied real binary, and updated packaging/CI. The original Payload/IDB are not modified.
+- Custom judge source and offline hook are implemented, but the new Objective-C++ Apple build and iPad test are still pending. Other gameplay/save/result hooks remain uninstalled; do not claim score protection or ordinary-signing compatibility is verified.
+- Preview remains side-effect-free and now also shows a separately read actual judge status. The Custom judge switch is no longer labeled unconditionally active.
+- See JUDGE_HOTFIX.md. Earlier notes below are historical, NOT the current judge implementation.
+
+---
+
 # iOS 迁移状态（2026-10-15）
 
 ## 本轮交付

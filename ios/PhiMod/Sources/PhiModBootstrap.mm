@@ -38,6 +38,7 @@ static NSString * const PMBubbleYKey = @"phimod.ios.bubble.y";
 @property(nonatomic, assign) BOOL open;
 + (instancetype)shared;
 - (void)install;
+- (void)resumeJudgeAttempt:(NSInteger)attempt;
 @end
 
 @implementation PMOverlayController
@@ -104,8 +105,18 @@ static UIColor *PMColor(uint32_t argb) {
     [self.root removeFromSuperview];
     self.window = window;
     [self buildInWindow:window];
+    [self resumeJudgeAttempt:0];
 }
 
+- (void)resumeJudgeAttempt:(NSInteger)attempt {
+    NSDictionary *s=[[PMSettings shared] snapshot];
+    if (![s[@"enabled"] boolValue]) return;
+    NSDictionary *r=[PMRuntime applyJudgeSettings:YES perfectMs:[s[@"perfect"] doubleValue] goodMs:[s[@"good"] doubleValue]];
+    self.statusLabel.text=r[@"message"];
+    // Retry startup readiness only, never race Unity's frame loop with writes.
+    if (![r[@"ok"] boolValue] && attempt<30)
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)NSEC_PER_SEC),dispatch_get_main_queue(),^{ [self resumeJudgeAttempt:attempt+1]; });
+}
 - (void)buildInWindow:(UIWindow *)window {
     self.root = [[PMPassthroughView alloc] initWithFrame:window.bounds];
     __weak PMOverlayController *weakSelf = self;
@@ -157,7 +168,7 @@ static UIColor *PMColor(uint32_t argb) {
     close.tag = 102;
     [self.panelHeader addSubview:close];
 
-    self.statusLabel = [self label:@"iOS UI 预览 · 功能尚未接入" size:11 color:PMColor(0xff92a2b9)];
+    self.statusLabel = [self label:@"Judge hotfix v1 | read game state to verify" size:11 color:PMColor(0xff92a2b9)];
     [self.panel addSubview:self.statusLabel];
 
     self.tabBar = [[UIStackView alloc] init];
@@ -217,9 +228,9 @@ static UIColor *PMColor(uint32_t argb) {
     UIView *close = [self.panelHeader viewWithTag:102];
     close.frame = CGRectMake(CGRectGetWidth(self.panelHeader.bounds) - 68, 1, 68, 34);
     title.frame = CGRectMake(0, 0, CGRectGetMinX(close.frame) - 8, 36);
-    self.statusLabel.frame = CGRectMake(inner + 4, 50, panelWidth - inner * 2 - 8, 18);
-    self.tabBar.frame = CGRectMake(inner, 72, panelWidth - inner * 2, 40);
-    self.scroll.frame = CGRectMake(inner, 124, panelWidth - inner * 2, MAX(1, panelHeight - 140));
+    self.statusLabel.frame = CGRectMake(inner + 4, 50, panelWidth - inner * 2 - 8, 38);
+    self.tabBar.frame = CGRectMake(inner, 94, panelWidth - inner * 2, 40);
+    self.scroll.frame = CGRectMake(inner, 146, panelWidth - inner * 2, MAX(1, panelHeight - 162));
     [self clampBubble];
 }
 
@@ -230,15 +241,15 @@ static UIColor *PMColor(uint32_t argb) {
  else {UITextField *field=[UITextField new];field.accessibilityIdentifier=key;field.text=[[[PMSettings shared] value:key] description];field.textColor=PMColor(0xff71e1cf);field.borderStyle=UITextBorderStyleRoundedRect;field.keyboardType=UIKeyboardTypeNumbersAndPunctuation;field.returnKeyType=UIReturnKeyDone;[field.widthAnchor constraintEqualToConstant:100].active=YES;[field addTarget:self action:@selector(settingNumber:) forControlEvents:UIControlEventEditingDidEnd];[field addTarget:field action:@selector(resignFirstResponder) forControlEvents:UIControlEventEditingDidEndOnExit];[row addArrangedSubview:field];}
  [self.body addArrangedSubview:row];
 }
-- (void)settingSwitch:(UISwitch *)sender {NSString *error=nil;BOOL ok=[[PMSettings shared] setValue:@(sender.on) forKey:sender.accessibilityIdentifier error:&error];if(!ok)sender.on=[[[PMSettings shared] value:sender.accessibilityIdentifier] boolValue];self.statusLabel.text=ok?@"Saved; not applied":error;
- if(ok && [sender.accessibilityIdentifier isEqualToString:@"enabled"]) { NSDictionary *s=[[PMSettings shared] snapshot]; NSDictionary *r=[PMRuntime applyJudgeSettings:[s[@"enabled"] boolValue] perfectMs:[s[@"perfect"] doubleValue] goodMs:[s[@"good"] doubleValue]]; self.statusLabel.text=r[@"message"] ?: @"Judge apply failed"; }
+- (void)settingSwitch:(UISwitch *)sender {[self.root endEditing:YES];NSString *error=nil;BOOL ok=[[PMSettings shared] setValue:@(sender.on) forKey:sender.accessibilityIdentifier error:&error];if(!ok)sender.on=[[[PMSettings shared] value:sender.accessibilityIdentifier] boolValue];self.statusLabel.text=ok?@"Saved; not applied":error;
+ if(ok && [sender.accessibilityIdentifier isEqualToString:@"enabled"]) { NSDictionary *s=[[PMSettings shared] snapshot]; NSDictionary *r=[PMRuntime applyJudgeSettings:[s[@"enabled"] boolValue] perfectMs:[s[@"perfect"] doubleValue] goodMs:[s[@"good"] doubleValue]]; self.statusLabel.text=r[@"message"] ?: @"Judge apply failed"; if(![r[@"ok"] boolValue]){[[PMSettings shared] setValue:@NO forKey:@"enabled" error:nullptr]; [self renderPage];} }
 }
 - (void)settingNumber:(UITextField *)sender {
  NSScanner *scanner=[NSScanner scannerWithString:sender.text ?: @""];scanner.locale=[NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];double number=0;NSString *error=nil;
  BOOL parsed=[scanner scanDouble:&number] && scanner.isAtEnd;
  BOOL ok=parsed && [[PMSettings shared] setValue:@(number) forKey:sender.accessibilityIdentifier error:&error];
  sender.text=[[[PMSettings shared] value:sender.accessibilityIdentifier] description];self.statusLabel.text=ok?@"Saved; not applied":(error ?: @"Enter a valid number");
- if(ok && ([sender.accessibilityIdentifier isEqualToString:@"perfect"] || [sender.accessibilityIdentifier isEqualToString:@"good"])) { NSDictionary *s=[[PMSettings shared] snapshot]; NSDictionary *r=[PMRuntime applyJudgeSettings:[s[@"enabled"] boolValue] perfectMs:[s[@"perfect"] doubleValue] goodMs:[s[@"good"] doubleValue]]; self.statusLabel.text=r[@"message"] ?: @"Judge apply failed"; }
+ if(ok && [[[PMSettings shared] value:@"enabled"] boolValue] && ([sender.accessibilityIdentifier isEqualToString:@"perfect"] || [sender.accessibilityIdentifier isEqualToString:@"good"])) { NSDictionary *s=[[PMSettings shared] snapshot]; NSDictionary *r=[PMRuntime applyJudgeSettings:[s[@"enabled"] boolValue] perfectMs:[s[@"perfect"] doubleValue] goodMs:[s[@"good"] doubleValue]]; self.statusLabel.text=r[@"message"] ?: @"Judge apply failed"; if(![r[@"ok"] boolValue]){[[PMSettings shared] setValue:@NO forKey:@"enabled" error:nullptr]; [self renderPage];} }
  if(ok && [sender.accessibilityIdentifier isEqualToString:@"opacity"])self.bubble.alpha=number*(self.open?0.65:1);
 }
 - (void)probeRuntime {self.statusLabel.text=[PMRuntime probe];}
@@ -247,7 +258,7 @@ static UIColor *PMColor(uint32_t argb) {
 - (void)readGameSnapshot {
  NSDictionary *s=[PMRuntime gameSnapshot];
  if(![s[@"ok"] boolValue]){self.statusLabel.text=[@"读取失败：" stringByAppendingString:(s[@"message"] ?: @"未知错误")];return;}
- self.statusLabel.text=[NSString stringWithFormat:@"语言 %@ · P %.0f/G %.0f/B %.0f ms · RKS %.3f",s[@"language"], [s[@"perfectMs"] doubleValue],[s[@"goodMs"] doubleValue],[s[@"badMs"] doubleValue],[s[@"rks"] doubleValue]];
+ self.statusLabel.text=[NSString stringWithFormat:@"P %.0f/G %.0f/B %.0f ms | %@%@",[s[@"perfectMs"] doubleValue],[s[@"goodMs"] doubleValue],[s[@"badMs"] doubleValue],s[@"judgeStatus"],[s[@"judgeHookReady"] boolValue]?@"":@" (hook missing)"];
 }
 - (void)setChinese {NSDictionary *r=[PMRuntime setGameLanguage:6];self.statusLabel.text=r[@"message"] ?: @"完成";}
 - (void)setEnglish {NSDictionary *r=[PMRuntime setGameLanguage:10];self.statusLabel.text=r[@"message"] ?: @"完成";}
@@ -255,9 +266,9 @@ static UIColor *PMColor(uint32_t argb) {
  for(UIView *view in self.body.arrangedSubviews.copy){[self.body removeArrangedSubview:view];[view removeFromSuperview];}
  NSArray *names=@[@"谱库",@"章节",@"判定",@"模式",@"设置"];
  [self.body addArrangedSubview:[self label:names[self.selectedTab] size:18 color:PMColor(0xfff1f5fa)]];
- [self.body addArrangedSubview:[self label:@"设置页已接入游戏语言切换与状态读取（待真机验证）。判定／模式开关仍仅保存草案。" size:12 color:PMColor(0xff92a2b9)]];
+ [self.body addArrangedSubview:[self label:@"Custom judge uses the packaged frame hook. Other gameplay modes remain drafts. Back up saves; score protection is not installed." size:12 color:PMColor(0xff92a2b9)]];
  if(self.selectedTab==0 || self.selectedTab==1){[self.body addArrangedSubview:[self label:@"等待移植谱面存储、导入和游戏导航；不会修改原版曲库。" size:13 color:PMColor(0xff92a2b9)]];}
- if(self.selectedTab==2){[self addSetting:@"enabled" title:@"Custom judge (active)" boolean:YES];[self addSetting:@"perfect" title:@"Perfect / ms" boolean:NO];[self addSetting:@"good" title:@"Good / ms" boolean:NO];[self addSetting:@"holdGrace" title:@"Hold grace / ms" boolean:NO];}
+ if(self.selectedTab==2){[self addSetting:@"enabled" title:@"Custom judge (apply to game)" boolean:YES];[self addSetting:@"perfect" title:@"Perfect / ms" boolean:NO];[self addSetting:@"good" title:@"Good / ms" boolean:NO];[self addSetting:@"holdGrace" title:@"Hold grace / ms (draft only)" boolean:NO];}
  if(self.selectedTab==3){
  NSArray *flags=@[@[@"autoplay",@"AutoPlay"],@[@"noise",@"噪域"],@[@"clearOriginalNoise",@"清除原噪域"],@[@"fullScreen",@"全屏判定"],@[@"noCombo",@"隐藏 Combo"],@[@"hpEnabled",@"HP 生存"],@[@"noiseVisual",@"噪域视觉"],@[@"hpTopEffect",@"顶部 HP 特效"],@[@"hpBackgroundEffect",@"背景 HP 特效"]];
  for(NSArray *p in flags)[self addSetting:p[0] title:p[1] boolean:YES];

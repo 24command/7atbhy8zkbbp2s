@@ -2,17 +2,27 @@
 
 This directory contains the UIKit overlay, a version-gated IL2CPP bridge for
 language switching/read-only snapshots, and tested portable gameplay/chart rules.
-Gameplay hooks and save/result interception are NOT installed: gameplay toggles
-remain drafts. See MIGRATION_STATUS.md for the source/runtime feature matrix.
+Custom judge now has an offline frame-store hook for the supplied 4.0.1 binary.
+Other gameplay hooks and save/result interception are NOT installed. See
+JUDGE_HOTFIX.md and MIGRATION_STATUS.md for limitations and test instructions.
 
 ## What is modified
 
-The original `UnityFramework` code is not overwritten. The packaging helper adds
-one `LC_LOAD_DYLIB` dependency:
+The source Payload is never modified. Inside a temporary staging copy, the
+packaging helper adds one `LC_LOAD_DYLIB` dependency:
 
 ```text
 @loader_path/../PhiMod.framework/PhiMod
 ```
+
+For frameworks containing `PMJudgeHook-v1`, packaging also invokes
+`tools/patch_judge_windows.py`: three exact, UUID-gated ARM64 stores in
+ProgressControl.Update branch to RX stubs in unused TEXT padding. A new
+zero-fill section in unused DATA VM padding holds the desired values and
+latest engine baseline. No runtime code-page writes or external hook library
+are used. With the override disabled the original stores execute unchanged.
+Rebuild AND repackage; replacing only the framework in an older IPA is not enough.
+
 
 and embeds `PhiMod.framework` under `Phigros.app/Frameworks`. The framework's
 constructor installs the overlay after the application becomes active.
