@@ -6,6 +6,7 @@ on:
       - 'ios/PhiMod/**'
       - 'ios/build_unsigned.sh'
       - 'ios/tests/**'
+      - 'ios/tools/**'
       - '.github/workflows/build-ios.yml'
 permissions:
   contents: read
@@ -17,6 +18,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Test portable gameplay core
         run: bash ios/tests/run_core_tests.sh
+      - name: Test generated arm64 judge trampolines
+        run: |
+          python3 -m venv "$RUNNER_TEMP/judge-tests"
+          "$RUNNER_TEMP/judge-tests/bin/pip" install --disable-pip-version-check unicorn==2.1.4
+          "$RUNNER_TEMP/judge-tests/bin/python" ios/tests/test_judge_patch.py
+      - name: Test gameplay gates and protocol
+        run: |
+          "$RUNNER_TEMP/judge-tests/bin/python" ios/tests/test_gameplay_hooks.py
+          "$RUNNER_TEMP/judge-tests/bin/python" ios/tests/test_source_contracts.py
       - name: Build arm64 framework
         run: bash ios/build_unsigned.sh "$RUNNER_TEMP/out"
       - name: Verify and archive
