@@ -3,6 +3,7 @@
 #import "PMSettings.h"
 #import "PMRuntime.h"
 #import "PMGameplay.h"
+#import "PMHookBackend.h"
 
 static const NSInteger PMOverlayRootTag = 0x50484D4F;
 static NSString * const PMBubbleXKey = @"phimod.ios.bubble.x";
@@ -109,13 +110,17 @@ static UIColor *PMColor(uint32_t argb) {
 }
 
 - (void)resumeJudgeAttempt:(NSInteger)attempt {
+    NSDictionary *backend=[PMHookBackend install];
+    if (![backend[@"ok"] boolValue]) {
+        self.statusLabel.text=backend[@"message"];
+        if(attempt<60 && ![backend[@"failedClosed"] boolValue])
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)NSEC_PER_SEC),dispatch_get_main_queue(),^{ [self resumeJudgeAttempt:attempt+1]; });
+        return;
+    }
     NSDictionary *s=[[PMSettings shared] snapshot];
-    if (![s[@"enabled"] boolValue]) return;
+    if (![s[@"enabled"] boolValue]) { self.statusLabel.text=backend[@"message"]; return; }
     NSDictionary *r=[PMRuntime applyJudgeSettings:YES perfectMs:[s[@"perfect"] doubleValue] goodMs:[s[@"good"] doubleValue]];
     self.statusLabel.text=r[@"message"];
-    // Retry startup readiness only, never race Unity's frame loop with writes.
-    if (![r[@"ok"] boolValue] && attempt<30)
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)NSEC_PER_SEC),dispatch_get_main_queue(),^{ [self resumeJudgeAttempt:attempt+1]; });
 }
 - (void)buildInWindow:(UIWindow *)window {
     self.root = [[PMPassthroughView alloc] initWithFrame:window.bounds];
@@ -168,7 +173,7 @@ static UIColor *PMColor(uint32_t argb) {
     close.tag = 102;
     [self.panelHeader addSubview:close];
 
-    self.statusLabel = [self label:@"Judge hotfix v1 | read game state to verify" size:11 color:PMColor(0xff92a2b9)];
+    self.statusLabel = [self label:@"PhiMod gameplay v1 | verify hooks and back up saves" size:11 color:PMColor(0xff92a2b9)];
     [self.panel addSubview:self.statusLabel];
 
     self.tabBar = [[UIStackView alloc] init];
@@ -235,20 +240,21 @@ static UIColor *PMColor(uint32_t argb) {
 }
 
 - (void)addSetting:(NSString *)key title:(NSString *)title boolean:(BOOL)boolean {
- UIStackView *row=[UIStackView new];row.axis=UILayoutConstraintAxisHorizontal;row.spacing=8;row.alignment=UIStackViewAlignmentCenter;
+ BOOL supported=![@[@"noise",@"unified",@"clearOriginalNoise",@"noiseVisual",@"noiseGrace",@"radius",@"holdGrace",@"holdFx"] containsObject:key];
+ UIStackView *row=[UIStackView new];row.alpha=supported?1:.4;row.userInteractionEnabled=supported;row.axis=UILayoutConstraintAxisHorizontal;row.spacing=8;row.alignment=UIStackViewAlignmentCenter;
  UILabel *label=[self label:title size:13 color:PMColor(0xfff1f5fa)];[row addArrangedSubview:label];
  if(boolean){UISwitch *control=[UISwitch new];control.accessibilityIdentifier=key;control.on=[[[PMSettings shared] value:key] boolValue];[control addTarget:self action:@selector(settingSwitch:) forControlEvents:UIControlEventValueChanged];[row addArrangedSubview:control];}
  else {UITextField *field=[UITextField new];field.accessibilityIdentifier=key;field.text=[[[PMSettings shared] value:key] description];field.textColor=PMColor(0xff71e1cf);field.borderStyle=UITextBorderStyleRoundedRect;field.keyboardType=UIKeyboardTypeNumbersAndPunctuation;field.returnKeyType=UIReturnKeyDone;[field.widthAnchor constraintEqualToConstant:100].active=YES;[field addTarget:self action:@selector(settingNumber:) forControlEvents:UIControlEventEditingDidEnd];[field addTarget:field action:@selector(resignFirstResponder) forControlEvents:UIControlEventEditingDidEndOnExit];[row addArrangedSubview:field];}
  [self.body addArrangedSubview:row];
 }
-- (void)settingSwitch:(UISwitch *)sender {[self.root endEditing:YES];NSString *error=nil;BOOL ok=[[PMSettings shared] setValue:@(sender.on) forKey:sender.accessibilityIdentifier error:&error];if(!ok)sender.on=[[[PMSettings shared] value:sender.accessibilityIdentifier] boolValue];self.statusLabel.text=ok?@"Saved; not applied":error;
+- (void)settingSwitch:(UISwitch *)sender {[self.root endEditing:YES];NSString *error=nil;BOOL ok=[[PMSettings shared] setValue:@(sender.on) forKey:sender.accessibilityIdentifier error:&error];if(!ok)sender.on=[[[PMSettings shared] value:sender.accessibilityIdentifier] boolValue];self.statusLabel.text=ok?@"Saved; gameplay modes apply next chart":error;
  if(ok && [sender.accessibilityIdentifier isEqualToString:@"enabled"]) { NSDictionary *s=[[PMSettings shared] snapshot]; NSDictionary *r=[PMRuntime applyJudgeSettings:[s[@"enabled"] boolValue] perfectMs:[s[@"perfect"] doubleValue] goodMs:[s[@"good"] doubleValue]]; self.statusLabel.text=r[@"message"] ?: @"Judge apply failed"; if(![r[@"ok"] boolValue]){[[PMSettings shared] setValue:@NO forKey:@"enabled" error:nullptr]; [self renderPage];} }
 }
 - (void)settingNumber:(UITextField *)sender {
  NSScanner *scanner=[NSScanner scannerWithString:sender.text ?: @""];scanner.locale=[NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];double number=0;NSString *error=nil;
  BOOL parsed=[scanner scanDouble:&number] && scanner.isAtEnd;
  BOOL ok=parsed && [[PMSettings shared] setValue:@(number) forKey:sender.accessibilityIdentifier error:&error];
- sender.text=[[[PMSettings shared] value:sender.accessibilityIdentifier] description];self.statusLabel.text=ok?@"Saved; not applied":(error ?: @"Enter a valid number");
+ sender.text=[[[PMSettings shared] value:sender.accessibilityIdentifier] description];self.statusLabel.text=ok?@"Saved; gameplay modes apply next chart":(error ?: @"Enter a valid number");
  if(ok && [[[PMSettings shared] value:@"enabled"] boolValue] && ([sender.accessibilityIdentifier isEqualToString:@"perfect"] || [sender.accessibilityIdentifier isEqualToString:@"good"])) { NSDictionary *s=[[PMSettings shared] snapshot]; NSDictionary *r=[PMRuntime applyJudgeSettings:[s[@"enabled"] boolValue] perfectMs:[s[@"perfect"] doubleValue] goodMs:[s[@"good"] doubleValue]]; self.statusLabel.text=r[@"message"] ?: @"Judge apply failed"; if(![r[@"ok"] boolValue]){[[PMSettings shared] setValue:@NO forKey:@"enabled" error:nullptr]; [self renderPage];} }
  if(ok && [sender.accessibilityIdentifier isEqualToString:@"opacity"])self.bubble.alpha=number*(self.open?0.65:1);
 }
@@ -266,7 +272,7 @@ static UIColor *PMColor(uint32_t argb) {
  for(UIView *view in self.body.arrangedSubviews.copy){[self.body removeArrangedSubview:view];[view removeFromSuperview];}
  NSArray *names=@[@"谱库",@"章节",@"判定",@"模式",@"设置"];
  [self.body addArrangedSubview:[self label:names[self.selectedTab] size:18 color:PMColor(0xfff1f5fa)]];
- [self.body addArrangedSubview:[self label:@"Custom judge uses the packaged frame hook. Other gameplay modes remain drafts. Back up saves; score protection is not installed." size:12 color:PMColor(0xff92a2b9)]];
+ [self.body addArrangedSubview:[self label:@"Practice hooks + original-style song shortcuts / MOD tab. Back up saves. Noise / Unified / Hold tuning are disabled; device verification pending." size:12 color:PMColor(0xff92a2b9)]];
  if(self.selectedTab==0 || self.selectedTab==1){[self.body addArrangedSubview:[self label:@"等待移植谱面存储、导入和游戏导航；不会修改原版曲库。" size:13 color:PMColor(0xff92a2b9)]];}
  if(self.selectedTab==2){[self addSetting:@"enabled" title:@"Custom judge (apply to game)" boolean:YES];[self addSetting:@"perfect" title:@"Perfect / ms" boolean:NO];[self addSetting:@"good" title:@"Good / ms" boolean:NO];[self addSetting:@"holdGrace" title:@"Hold grace / ms (draft only)" boolean:NO];}
  if(self.selectedTab==3){

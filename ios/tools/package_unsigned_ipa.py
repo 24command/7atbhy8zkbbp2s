@@ -68,7 +68,7 @@ def main() -> None:
         shutil.copytree(source_payload, stage / "Payload", symlinks=True,
                         ignore=shutil.ignore_patterns("UnityFramework.id0", "UnityFramework.id1",
                             "UnityFramework.id2", "UnityFramework.nam", "UnityFramework.til",
-                            "UnityFramework.i64", "UnityFramework.idb", "*.before-phimod", "*.before-judge"))
+                            "UnityFramework.i64", "UnityFramework.idb", "*.before-phimod", "*.before-judge", "*.before-gameplay"))
         app = find_app(stage / "Payload")
         info = plistlib.loads((app / "Info.plist").read_bytes())
         if info.get("MinimumOSVersion") and float(info["MinimumOSVersion"].split(".")[0]) < 15:
@@ -85,6 +85,8 @@ def main() -> None:
         subprocess.run([sys.executable, str(tools / "inject_load_dylib.py"), str(unity), DEPENDENCY, "--no-backup"], check=True)
         if b"PMJudgeHook-v1" in (destination / "PhiMod").read_bytes():
             subprocess.run([sys.executable, str(tools / "patch_judge_windows.py"), str(unity), "--no-backup"], check=True)
+        if b"PMGameplay-v1" in (destination / "PhiMod").read_bytes():
+            subprocess.run([sys.executable, str(tools / "patch_gameplay_hooks.py"), str(unity), "--no-backup"], check=True)
         strip_signatures(app)
         zip_tree(stage, args.output)
 

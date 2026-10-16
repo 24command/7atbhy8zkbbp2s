@@ -1,10 +1,11 @@
 ﻿# PhiMod iOS bootstrap
 
-This directory contains the UIKit overlay, a version-gated IL2CPP bridge for
-language switching/read-only snapshots, and tested portable gameplay/chart rules.
-Custom judge now has an offline frame-store hook for the supplied 4.0.1 binary.
-Other gameplay hooks and save/result interception are NOT installed. See
-JUDGE_HOTFIX.md and MIGRATION_STATUS.md for limitations and test instructions.
+This directory contains the overlay, IL2CPP bridge, portable gameplay rules,
+and a new offline entry-hook backend with song shortcuts / a Settings MOD tab.
+The newer source has not yet been compiled with the Apple SDK or device-tested.
+Downloaded framework6 only contains the preceding judge-hotfix version.
+Read [GAMEPLAY_UI_PORT.md](GAMEPLAY_UI_PORT.md) for exact capability and safety
+boundaries. Noise/Unified are unavailable, not silently simulated by AutoPlay.
 
 ## What is modified
 
@@ -24,7 +25,12 @@ are used. With the override disabled the original stores execute unchanged.
 Rebuild AND repackage; replacing only the framework in an older IPA is not enough.
 
 
-and embeds `PhiMod.framework` under `Phigros.app/Frameworks`. The framework's
+For frameworks containing `PMGameplay-v1`, packaging also installs 37 exact
+entry gates with `patch_gameplay_hooks.py`. These call PhiMod through RW callback
+slots or transparently execute the original prologue when unregistered. The
+framework validates the full protocol/metadata/stubs before publishing callbacks.
+
+It also embeds `PhiMod.framework` under `Phigros.app/Frameworks`. The framework's
 constructor installs the overlay after the application becomes active.
 
 ## Build without a local Mac

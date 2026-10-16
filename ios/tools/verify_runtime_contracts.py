@@ -52,7 +52,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('dump', type=Path)
     args = parser.parse_args()
-    source = (Path(__file__).resolve().parents[1] / 'PhiMod/Sources/PMRuntime.mm').read_text(encoding='utf-8')
+    base=Path(__file__).resolve().parents[1] / 'PhiMod/Sources'
+    source = (base/'PMRuntime.mm').read_text(encoding='utf-8')+'\n'+(base/'PMIL2CPP.hpp').read_text(encoding='utf-8')
     dump = args.dump.read_text(encoding='utf-8-sig')
     count = verify(dump, source)
     # Negative fixtures must be rejected, not silently accepted.

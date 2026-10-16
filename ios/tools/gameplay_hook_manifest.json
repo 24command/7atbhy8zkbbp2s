@@ -1,0 +1,298 @@
+[
+  {
+    "id": "levelAwake",
+    "name": "LevelControl.Awake",
+    "rva": 22547576,
+    "args": "",
+    "bytes": "ff0303d1",
+    "instruction": "SUB             SP, SP, #0xC0"
+  },
+  {
+    "id": "levelDestroy",
+    "name": "LevelControl.OnDestroy",
+    "rva": 22548376,
+    "args": "",
+    "bytes": "f44fbea9",
+    "instruction": "STP             X20, X19, [SP,#-0x10+var_10]!"
+  },
+  {
+    "id": "progressStart",
+    "name": "ProgressControl.Start",
+    "rva": 22619176,
+    "args": "",
+    "bytes": "f657bda9",
+    "instruction": "STP             X22, X21, [SP,#-0x10+var_20]!"
+  },
+  {
+    "id": "progressUpdate",
+    "name": "ProgressControl.Update",
+    "rva": 22619752,
+    "args": "",
+    "bytes": "e923bc6d",
+    "instruction": "STP             D9, D8, [SP,#-0x10+var_30]!"
+  },
+  {
+    "id": "miss",
+    "name": "ScoreControl.Miss",
+    "rva": 22626968,
+    "args": "float noteCode",
+    "bytes": "e923bd6d",
+    "instruction": "STP             D9, D8, [SP,#-0x10+var_20]!"
+  },
+  {
+    "id": "bad",
+    "name": "ScoreControl.Bad",
+    "rva": 22627200,
+    "args": "float noteCode, float judgeTime",
+    "bytes": "e923bd6d",
+    "instruction": "STP             D9, D8, [SP,#-0x10+var_20]!"
+  },
+  {
+    "id": "good",
+    "name": "ScoreControl.Good",
+    "rva": 22627452,
+    "args": "float noteCode, float judgeTime, Vector3 judgeTransform, bool isHold",
+    "bytes": "ed33ba6d",
+    "instruction": "STP             D13, D12, [SP,#-0x10+var_50]!"
+  },
+  {
+    "id": "perfect",
+    "name": "ScoreControl.Perfect",
+    "rva": 22627960,
+    "args": "float noteCode, float judgeTime, Vector3 judgeTransform, bool isHold",
+    "bytes": "ed33ba6d",
+    "instruction": "STP             D13, D12, [SP,#-0x10+var_50]!"
+  },
+  {
+    "id": "scoreUpdate",
+    "name": "ScoreControl.Update",
+    "rva": 22628424,
+    "args": "",
+    "bytes": "ff0301d1",
+    "instruction": "SUB             SP, SP, #0x40"
+  },
+  {
+    "id": "resultInfo",
+    "name": "ScoreControl.GetLevelResultInfo",
+    "rva": 22622096,
+    "args": "",
+    "bytes": "f657bda9",
+    "instruction": "STP             X22, X21, [SP,#-0x10+var_20]!"
+  },
+  {
+    "id": "click",
+    "name": "ClickControl.Judge",
+    "rva": 22603164,
+    "args": "",
+    "bytes": "eb2bbc6d",
+    "instruction": "STP             D11, D10, [SP,#-0x10+var_30]!"
+  },
+  {
+    "id": "drag",
+    "name": "DragControl.Judge",
+    "rva": 22605284,
+    "args": "",
+    "bytes": "e923bd6d",
+    "instruction": "STP             D9, D8, [SP,#-0x10+var_20]!"
+  },
+  {
+    "id": "hold",
+    "name": "HoldControl.Judge",
+    "rva": 22610648,
+    "args": "",
+    "bytes": "e923bc6d",
+    "instruction": "STP             D9, D8, [SP,#-0x10+var_30]!"
+  },
+  {
+    "id": "flick",
+    "name": "FlickControl.Judge",
+    "rva": 22607168,
+    "args": "",
+    "bytes": "e923bd6d",
+    "instruction": "STP             D9, D8, [SP,#-0x10+var_20]!"
+  },
+  {
+    "id": "record",
+    "name": "LevelRecord.UpdateRecord",
+    "rva": 21635760,
+    "args": "LevelResultInfo levelResult",
+    "bytes": "f85fbca9",
+    "instruction": "STP             X24, X23, [SP,#-0x10+var_30]!"
+  },
+  {
+    "id": "setRecord",
+    "name": "GameInformation.SetSongRecord",
+    "rva": 21652928,
+    "args": "string songsId, string songsLevel, LevelRecord record",
+    "bytes": "f85fbca9",
+    "instruction": "STP             X24, X23, [SP,#-0x10+var_30]!"
+  },
+  {
+    "id": "ranking",
+    "name": "GameInformation.UpdateRankingScore",
+    "rva": 21653472,
+    "args": "",
+    "bytes": "ff4301d1",
+    "instruction": "SUB             SP, SP, #0x50"
+  },
+  {
+    "id": "resultStart",
+    "name": "LevelOverControl.Start",
+    "rva": 22566900,
+    "args": "",
+    "bytes": "f657bda9",
+    "instruction": "STP             X22, X21, [SP,#-0x10+var_20]!"
+  },
+  {
+    "id": "resultMove",
+    "name": "LevelOverControl.<Start>d__43.MoveNext",
+    "rva": 22598344,
+    "args": "",
+    "bytes": "fa67bba9",
+    "instruction": "STP             X26, X25, [SP,#-0x10+var_40]!"
+  },
+  {
+    "id": "selector",
+    "name": "SongSelector.Update",
+    "rva": 22764048,
+    "args": "",
+    "bytes": "eb2bb86d",
+    "instruction": "STP             D11, D10, [SP,#-0x80]!"
+  },
+  {
+    "id": "selectorOff",
+    "name": "SongSelector.OnDisable",
+    "rva": 22747724,
+    "args": "",
+    "bytes": "f85fbca9",
+    "instruction": "STP             X24, X23, [SP,#-0x10+var_30]!"
+  },
+  {
+    "id": "setting",
+    "name": "Setting.Update",
+    "rva": 22689888,
+    "args": "",
+    "bytes": "f44fbea9",
+    "instruction": "STP             X20, X19, [SP,#-0x10+var_10]!"
+  },
+  {
+    "id": "settingTab",
+    "name": "Setting.ChangeTab",
+    "rva": 22692848,
+    "args": "int index",
+    "bytes": "e923bb6d",
+    "instruction": "STP             D9, D8, [SP,#-0x10+var_40]!"
+  },
+  {
+    "id": "settingBack",
+    "name": "Setting.Back",
+    "rva": 22692136,
+    "args": "",
+    "bytes": "f85fbca9",
+    "instruction": "STP             X24, X23, [SP,#-0x10+var_30]!"
+  },
+  {
+    "id": "button",
+    "name": "Button.Press",
+    "rva": 61089304,
+    "args": "",
+    "bytes": "f44fbea9",
+    "instruction": "STP             X20, X19, [SP,#-0x10+var_10]!"
+  },
+  {
+    "id": "checkNote",
+    "name": "JudgeControl.CheckNote",
+    "rva": 22529400,
+    "args": "int fingerIndex",
+    "bytes": "ed33b76d",
+    "instruction": "STP             D13, D12, [SP,#-0x10+var_80]!"
+  },
+  {
+    "id": "checkFlick",
+    "name": "JudgeControl.CheckFlick",
+    "rva": 22531304,
+    "args": "int fingerIndex",
+    "bytes": "ed33b76d",
+    "instruction": "STP             D13, D12, [SP,#-0x10+var_80]!"
+  },
+  {
+    "id": "DeleteKey",
+    "name": "SaveManagement.DeleteKey",
+    "rva": 21692624,
+    "args": "string keyName",
+    "bytes": "f657bda9",
+    "instruction": "STP             X22, X21, [SP,#-0x10+var_20]!"
+  },
+  {
+    "id": "SaveBool",
+    "name": "SaveManagement.SaveBool",
+    "rva": 21692828,
+    "args": "string keyName, bool value",
+    "bytes": "ff0301d1",
+    "instruction": "SUB             SP, SP, #0x40"
+  },
+  {
+    "id": "SaveInt",
+    "name": "SaveManagement.SaveInt",
+    "rva": 21693060,
+    "args": "string keyName, int value",
+    "bytes": "ff0301d1",
+    "instruction": "SUB             SP, SP, #0x40"
+  },
+  {
+    "id": "SaveFloat",
+    "name": "SaveManagement.SaveFloat",
+    "rva": 21693208,
+    "args": "string keyName, float value",
+    "bytes": "ff0301d1",
+    "instruction": "SUB             SP, SP, #0x40"
+  },
+  {
+    "id": "SaveDate",
+    "name": "SaveManagement.SaveDate",
+    "rva": 21693452,
+    "args": "string keyName, DateTime value",
+    "bytes": "ff0301d1",
+    "instruction": "SUB             SP, SP, #0x40"
+  },
+  {
+    "id": "SaveString",
+    "name": "SaveManagement.SaveString",
+    "rva": 21693660,
+    "args": "string keyName, string value",
+    "bytes": "f657bda9",
+    "instruction": "STP             X22, X21, [SP,#-0x10+var_20]!"
+  },
+  {
+    "id": "LegacySaveBool",
+    "name": "SaveManagement.LegacySaveBool",
+    "rva": 21698000,
+    "args": "string keyName, bool value",
+    "bytes": "ff0301d1",
+    "instruction": "SUB             SP, SP, #0x40"
+  },
+  {
+    "id": "LegacySaveInt",
+    "name": "SaveManagement.LegacySaveInt",
+    "rva": 21698232,
+    "args": "string keyName, int value",
+    "bytes": "ff0301d1",
+    "instruction": "SUB             SP, SP, #0x40"
+  },
+  {
+    "id": "LegacySaveFloat",
+    "name": "SaveManagement.LegacySaveFloat",
+    "rva": 21698380,
+    "args": "string keyName, float value",
+    "bytes": "ff0301d1",
+    "instruction": "SUB             SP, SP, #0x40"
+  },
+  {
+    "id": "LegacySaveString",
+    "name": "SaveManagement.LegacySaveString",
+    "rva": 21698528,
+    "args": "string keyName, string value",
+    "bytes": "f657bda9",
+    "instruction": "STP             X22, X21, [SP,#-0x10+var_20]!"
+  }
+]

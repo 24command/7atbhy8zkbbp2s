@@ -1,5 +1,9 @@
 # Custom judge fix ? 2026-10-16
 
+> Historical framework6 judge-hotfix notes. The newer source also requires
+> the offline gameplay backend before enabling Custom judge, so the new build
+> must be repackaged with the updated tools. See GAMEPLAY_UI_PORT.md.
+
 ## Cause
 
 `ProgressControl.Update` resets JudgeControl.PerfectTimeRange / GoodTimeRange /
