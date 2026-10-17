@@ -25,6 +25,7 @@ struct Options {
  float hpMax=200; std::array<float,4> hpDelta{1,-4,-16,-25};
  float hpRed=.3f,hpBlue=.6f;
  bool assisted() const { return judge||autoplay||noise||clearNoise||fullscreen||accuracyOnly||unified!=0||hpEnabled||challenge!=0; }
+ bool requiresSaveProtection() const { return judge||autoplay||clearNoise||fullscreen||accuracyOnly||unified!=0; }
  void validate() const {
   auto range=[](float n,float a,float b){return std::isfinite(n)&&n>=a&&n<=b;};
   if(!range(perfectMs,1,1000)||!range(goodMs,perfectMs,2000)||!range(radius,.3f,3)||
@@ -71,14 +72,14 @@ class Session {
   if(!finiteWindows(baseline))throw std::invalid_argument("Invalid engine baseline");
   if(requested_.assisted()&&!coverage_.safe())return false;
   baseline_=baseline;active_=requested_;phase_=Phase::Playing;serial_++;
-  excluded_=active_.assisted();lost_=retry_=failed_=lostDispatched_=false;hp_=active_.hpMax;
+  excluded_=active_.requiresSaveProtection();lost_=retry_=failed_=lostDispatched_=false;hp_=active_.hpMax;
   notes_.clear();sampled_.clear();credited_.clear();pending_.clear();samples_.clear();dropped_=0;
   return true;
  }
  bool sync() {
   if(phase_!=Phase::Playing||failed_)return false;
   if(requested_.assisted()&&!coverage_.safe())return false;
-  if(requested_.assisted())excluded_=true; // cannot unlatch by disabling an assistance switch
+  if(requested_.requiresSaveProtection())excluded_=true; // cannot unlatch protection during an active attempt
   if(requested_.hpEnabled&&!active_.hpEnabled){hp_=requested_.hpMax;lost_=lostDispatched_=false;}
   else if(requested_.hpMax!=active_.hpMax)hp_=std::clamp(hp_/active_.hpMax*requested_.hpMax,0.f,requested_.hpMax);
   active_=requested_;return true;
@@ -117,7 +118,7 @@ class Session {
  }
  void acknowledgeAction(Action action) {
   if(action==Action::TrackLost)lostDispatched_=true;
-  if(action==Action::Retry){retry_=false;excluded_=true;}
+  if(action==Action::Retry){retry_=false;if(active_.requiresSaveProtection())excluded_=true;}
  }
  Action takeAction(bool playing,bool leaving,bool breaking) {
   Action action=pendingAction(playing,leaving,breaking);acknowledgeAction(action);return action;

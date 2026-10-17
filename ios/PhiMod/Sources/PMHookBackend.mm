@@ -71,14 +71,14 @@ void begin(P p){
  auto jc=r.klass("JudgeControl");r.runtime_class_init(jc);
  phimod::Windows baseline{r.staticValue<float>(jc,"PerfectTimeRange","System.Single"),r.staticValue<float>(jc,"GoodTimeRange","System.Single"),r.staticValue<float>(jc,"BadTimeRange","System.Single")};
  if(!attempt->begin(baseline))throw std::runtime_error("Incomplete hook coverage");
- if(options.assisted())guard.store(true);
+ if(options.requiresSaveProtection())guard.store(true);
  lastError="Gameplay hooks armed (device verification pending)";
 }
 void onAwake(P self,P mi){
  // A latch survives OnDestroy, disabled switches and the entire result screen.
  // Alternate assisted result never launches the reward/save coroutine.
  if(!broken){
-  try{guard.store(PMReadOptions([[PMSettings shared] snapshot]).assisted());}catch(const std::exception &e){fault(e);}
+  try{guard.store(PMReadOptions([[PMSettings shared] snapshot]).requiresSaveProtection());}catch(const std::exception &e){fault(e);}
  }
   try{release(progressRoot);release(scoreRoot);attempt.reset();resetChartRegistration();pmscene::settingsLeave(R());pmscene::clearRecovery(R());pmhp::clear(R());pmmodes::clear(R());}catch(const std::exception&e){fault(e);}
    inResult=false;resultPresented=false;levelOverStarted=false;loadingMaskCleared=false;
@@ -144,10 +144,11 @@ void onProgressUpdate(P self,P mi){
    observe(c.code,c.offset,phimod::Rating::Perfect);
    credit(score(),c.code,c.offset,{c.position[0],c.position[1],c.position[2]},c.hold,nullptr);
   }
-  auto action=attempt->pendingAction(playing||pmhp::failing(),r.get<bool>(self,"leave"),r.get<bool>(self,"levelBreak"));
+  bool hpLost=attempt->options().hpEnabled&&attempt->trackLost();
+  auto action=attempt->pendingAction(playing||pmhp::failing()||hpLost,r.get<bool>(self,"leave"),r.get<bool>(self,"levelBreak"));
   P info=r.get<P>(self,"levelInformation");
   if(action==phimod::Action::Retry){
-   guard.store(true);r.call(self,"LevelBreak",{"System.String"},{r.string_new("Level")});
+   if(attempt->options().requiresSaveProtection())guard.store(true);r.call(self,"LevelBreak",{"System.String"},{r.string_new("Level")});
    r.put(info,"levelOver",true);r.put(info,"canPause",false);r.call(r.get<P>(self,"audioSource"),"Stop");attempt->acknowledgeAction(action);
    }else if(action==phimod::Action::TrackLost&&!levelOverStarted&&pmhp::failureReady(r,self)){
    r.call(score(),"FreezeScore");r.put(self,"isPlaying",false);r.put(info,"levelOver",true);r.put(info,"canLevelOver",true);
@@ -192,21 +193,40 @@ bool onClick(P s,P m){return noteJudge(s,m,h::click,false);}
 bool onDrag(P s,P m){return noteJudge(s,m,h::drag,false);}
 bool onHold(P s,P m){return noteJudge(s,m,h::hold,true);}
 bool onFlick(P s,P m){return noteJudge(s,m,h::flick,false);}
-float accuracy(P self){auto &r=R();return phimod::accuracyScore(r.get<int>(self,"perfect"),r.get<int>(self,"good"),r.get<int>(r.get<P>(self,"levelInformation"),"numOfNotes"));}
-void onScoreUpdate(P self,P mi){
- if(applying()&&attempt->options().accuracyOnly){try{R().put(self,"_score",accuracy(self));}catch(const std::exception&e){fault(e);}}
- orig<VoidFn>(h::scoreUpdate)(self,mi);
- if(!applying())return;
- try{auto &r=R();auto o=attempt->options();
-  if(o.accuracyOnly){float value=accuracy(self);r.put(self,"_score",value);char digits[32];snprintf(digits,sizeof(digits),"%07d",int(std::round(value)));r.text(r.get<P>(self,"score"),digits);}
-  if(o.hpEnabled){pmhp::scoreFrame(r,self);r.text(r.get<P>(self,"comboText"),"LIFE");r.text(r.get<P>(self,"combo"),std::to_string(int(std::ceil(attempt->hp()))).c_str());}
-  else if(o.autoplay)r.text(r.get<P>(self,"comboText"),"AUTOPLAY");
- }catch(const std::exception&e){fault(e);}
+bool readAccuracy(P self,float &outScore,int &outTotal){
+ try{
+  auto &r=R();P info=r.get<P>(self,"levelInformation");if(!info)return false;
+  int perfect=r.get<int>(self,"perfect"),good=r.get<int>(self,"good");
+  int total=r.get<int>(info,"numOfNotes");
+  // Accuracy only depends on Perfect/Good and the note total. Bad/Miss are
+  // deliberately not read: during result handoff they can be transient or
+  // represented differently for holds, while Android uses the same formula.
+  if(perfect<0||good<0||total<=0)return false;
+  if(static_cast<std::int64_t>(perfect)+good>total)return false;
+  float value=phimod::accuracyScore(perfect,good,total);
+  if(!std::isfinite(value))return false;
+  outScore=value;outTotal=total;return true;
+ }catch(...){return false;}
 }
-P onResultInfo(P self,P mi){
- P result=orig<P(*)(P,P)>(h::resultInfo)(self,mi);
- if(applying()&&attempt->options().accuracyOnly)try{float value=accuracy(self);R().call(result,"set_Score",{"System.Single"},{&value});}catch(const std::exception&e){fault(e);}
- return result;
+void onScoreUpdate(P self,P mi){
+  // ScoreControl must update its native counters first. During level setup the
+  // note count is transiently zero, so invalid reads are ignored rather than
+  // fail-closing the entire gameplay backend.
+  orig<VoidFn>(h::scoreUpdate)(self,mi);
+  if(!applying())return;
+  try{auto &r=R();auto o=attempt->options();
+   if(o.accuracyOnly){float value=0;int total=0;if(readAccuracy(self,value,total)){
+    r.put(self,"scoreOfNote",1000000.f/total);r.put(self,"_score",value);r.put(self,"_percent",value/1000000.f);
+    char digits[32];snprintf(digits,sizeof(digits),"%07d",int(std::round(value)));r.text(r.get<P>(self,"score"),digits);
+   }}
+   if(o.hpEnabled){pmhp::scoreFrame(r,self);r.text(r.get<P>(self,"comboText"),"LIFE");r.text(r.get<P>(self,"combo"),std::to_string(int(std::ceil(attempt->hp()))).c_str());}
+   else if(o.autoplay)r.text(r.get<P>(self,"comboText"),"AUTOPLAY");
+  }catch(const std::exception&e){lastError=std::string("Score update: ")+e.what();NSLog(@"[PhiMod] %s",lastError.c_str());}
+ }
+ P onResultInfo(P self,P mi){
+  P result=orig<P(*)(P,P)>(h::resultInfo)(self,mi);
+  if(attempt&&attempt->options().accuracyOnly&&(applying()||inResult))try{float value=0;int total=0;if(readAccuracy(self,value,total))R().call(result,"set_Score",{"System.Single"},{&value});}catch(const std::exception&e){lastError=std::string("Accuracy result: ")+e.what();}
+  return result;
 }
 void onRecord(P self,P result,P mi){if(!guard.load())orig<void(*)(P,P,P)>(h::record)(self,result,mi);}
 void onSetRecord(P self,P id,P level,P record,P mi){if(!guard.load())orig<void(*)(P,P,P,P,P)>(h::setRecord)(self,id,level,record,mi);}
@@ -249,46 +269,58 @@ void renderPracticeResult(P self){
  lastError=warnings.empty()?"Practice result displayed; saves remain blocked":warnings;
 }
 P onResultStart(P self,P mi){
-  // Match Android resultStart: assisted sessions render the result directly
-  // and never launch the original save/unlock coroutine. The original method
-  // only allocates <Start>d__43; calling it here leaves Unity waiting on a
-  // coroutine whose state machine is intentionally being bypassed.
-   if(!guard.load())return orig<P(*)(P,P)>(h::resultStart)(self,mi);
-   inResult=true;resultPresented=false;
-   try{
-    if(attempt){
-     for(auto c:attempt->flushPendingHolds()){
-      observe(c.code,c.offset,phimod::Rating::Perfect);
-      credit(score(),c.code,c.offset,{c.position[0],c.position[1],c.position[2]},c.hold,nullptr);
-     }
-     attempt->result();
+  // Keep Unity's real <Start>d__43 coroutine. It owns result-canvas setup,
+  // result audio and the save/unlock ordering; only the protected data path is
+  // intercepted by the persistence hooks below.
+  if(!guard.load())return orig<P(*)(P,P)>(h::resultStart)(self,mi);
+  inResult=true;resultPresented=false;
+  try{
+   if(attempt){
+    for(auto c:attempt->flushPendingHolds()){
+     observe(c.code,c.offset,phimod::Rating::Perfect);
+     credit(score(),c.code,c.offset,{c.position[0],c.position[1],c.position[2]},c.hold,nullptr);
     }
-    renderPracticeResult(self);
-    resultPresented=true;inResult=false;
-   }catch(const std::exception&e){
-    lastError=std::string("Practice result: ")+e.what();NSLog(@"[PhiMod] %s",lastError.c_str());
-    try{pmscene::resultRecovery(R(),self,lastError);}catch(const std::exception&nested){lastError+=std::string("; recovery: ")+nested.what();}
-    inResult=false;
+    attempt->result();
    }
-   return nullptr;
+  }catch(const std::exception&e){
+   lastError=std::string("Result preparation: ")+e.what();
+   NSLog(@"[PhiMod] %s",lastError.c_str());
+  }
+  return orig<P(*)(P,P)>(h::resultStart)(self,mi);
+ }
+ bool onResultMove(P iterator,P mi){
+  if(!guard.load())return orig<JudgeFn>(h::resultMove)(iterator,mi);
+  bool more=orig<JudgeFn>(h::resultMove)(iterator,mi);
+  if(!more){
+   resultPresented=true;inResult=false;
+   try{if(attempt&&attempt->phase()==phimod::Phase::Result)attempt->finishResult();}
+   catch(const std::exception&e){lastError=std::string("Result completion: ")+e.what();}
+  }
+  return more;
+ }
+void onLifeStart(P self,P mi){
+ if(!pmhp::active()){orig<VoidFn>(h::lifeStart)(self,mi);return;}
+ try{pmhp::barStart(R(),self);}catch(const std::exception&e){
+  lastError=std::string("Native HP bar: ")+e.what();
+  orig<VoidFn>(h::lifeStart)(self,mi);
+ }
 }
-bool onResultMove(P iterator,P mi){
- if(!guard.load())return orig<JudgeFn>(h::resultMove)(iterator,mi);
-  // A guarded result never has an iterator. Keep this hook fail-closed for a
-  // stale Unity callback instead of touching generated state-machine fields.
-  return false;
-}
-void onLifeStart(P self,P mi){if(!pmhp::active()){orig<VoidFn>(h::lifeStart)(self,mi);return;}try{pmhp::barStart(R(),self);}catch(const std::exception&e){lastError=std::string("Native HP bar: ")+e.what();}}
 float onLifeNormalized(P self,P game,P mi){
  try{if(pmhp::ownsBar(R(),self))return pmhp::normalized();}
- catch(const std::exception&e){lastError=std::string("Native HP normalized: ")+e.what();if(pmhp::active())return pmhp::normalized();}
+ catch(const std::exception&e){lastError=std::string("Native HP normalized: ")+e.what();}
  return orig<float(*)(P,P,P)>(h::lifeNormalized)(self,game,mi);
 }
-void onLifeModStart(P self,P mi){if(!pmhp::active()){orig<VoidFn>(h::lifeModStart)(self,mi);return;}try{pmhp::modStart(R(),self);}catch(const std::exception&e){fault(e);}}
+void onLifeModStart(P self,P mi){
+ if(!pmhp::active()){orig<VoidFn>(h::lifeModStart)(self,mi);return;}
+ try{pmhp::modStart(R(),self);}catch(const std::exception&e){
+  lastError=std::string("Native HP mod: ")+e.what();
+  orig<VoidFn>(h::lifeModStart)(self,mi);
+ }
+}
 void onHPBackgroundStart(P self,P mi){try{pmhp::backgroundBefore(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::hpBackgroundStart)(self,mi);try{if(pmhp::active())pmhp::frame(R(),attempt?attempt->hp():frozenOptions.hpMax);}catch(const std::exception&e){lastError=e.what();}}
 void onLifeUpdate(P self,P mi){
  try{if(pmhp::ownsBar(R(),self)){pmhp::barUpdate(R(),self);return;}}
- catch(const std::exception&e){lastError=std::string("Native HP update: ")+e.what();return;}
+ catch(const std::exception&e){lastError=std::string("Native HP update: ")+e.what();orig<VoidFn>(h::lifeUpdate)(self,mi);return;}
  orig<VoidFn>(h::lifeUpdate)(self,mi);
 }
  P onProgressLevelOver(P self,P mi){
