@@ -27,10 +27,10 @@ std::unique_ptr<Runtime> rt;
 P gateways[h::Count]{};
 std::unique_ptr<phimod::Session> attempt;
 std::atomic<bool> guard{false};
-bool ready=false,broken=false,inResult=false;
+ bool ready=false,broken=false,inResult=false,resultPresented=false,levelOverStarted=false,loadingMaskCleared=false;
 phimod::Options frozenOptions;
 uint32_t progressRoot=0,scoreRoot=0;
-std::set<float> registered;
+  std::set<float> registered;
 std::string lastError="Backend not installed";
 // All runtime reflection and gameplay callbacks are Unity main-thread only.
 // Persistence callbacks only load the atomic guard and invoke their gateway.
@@ -44,19 +44,25 @@ bool applying(){return ready&&!broken&&attempt&&attempt->shouldApplyGameplay();}
 P progress(){return progressRoot?R().gchandle_get_target(progressRoot):nullptr;}
 P score(){return scoreRoot?R().gchandle_get_target(scoreRoot):nullptr;}
 void release(uint32_t &root){if(root){R().gchandle_free(root);root=0;}}
-void registerOne(P note){
- auto &r=R();float code=r.get<float>(note,"noteCode");
- if(registered.count(code))return;
- attempt->registerNote({code,r.get<float>(note,"realTime"),r.get<float>(note,"holdTime"),r.get<int>(note,"type"),false});registered.insert(code);
-}
-void registerChart(P info){
- auto &r=R();P list=r.get<P>(info,"chartNoteSortByTime");int count=r.count(list);
- if(count<0||count>200000)throw std::runtime_error("Invalid chart count");
- for(int i=0;i<count;++i)registerOne(r.at(list,i));
-}
+  void resetChartRegistration(){registered.clear();}
+ bool registerOne(P note){
+  if(!attempt||!note)return false;
+  try{
+   auto &r=R();float code=r.get<float>(note,"noteCode");
+   if(registered.count(code))return true;
+   attempt->registerNote({code,r.get<float>(note,"realTime"),r.get<float>(note,"holdTime"),r.get<int>(note,"type"),false});registered.insert(code);
+   return true;
+  }catch(const std::exception&e){
+   lastError=std::string("Chart registration deferred: ")+e.what();
+   return false;
+  }catch(...){
+   lastError="Chart registration deferred: unknown error";
+   return false;
+  }
+ }
 void begin(P p){
  auto &r=R();auto options=frozenOptions;
- release(progressRoot);release(scoreRoot);attempt.reset();registered.clear();
+    release(progressRoot);release(scoreRoot);attempt.reset();resetChartRegistration();resultPresented=false;levelOverStarted=false;loadingMaskCleared=false;
  if(!options.assisted()){lastError="Original gameplay: assistance off";return;}
  progressRoot=r.gchandle_new(p,false);scoreRoot=r.gchandle_new(r.get<P>(p,"scoreControl"),false);
  attempt=std::make_unique<phimod::Session>();
@@ -66,7 +72,6 @@ void begin(P p){
  phimod::Windows baseline{r.staticValue<float>(jc,"PerfectTimeRange","System.Single"),r.staticValue<float>(jc,"GoodTimeRange","System.Single"),r.staticValue<float>(jc,"BadTimeRange","System.Single")};
  if(!attempt->begin(baseline))throw std::runtime_error("Incomplete hook coverage");
  if(options.assisted())guard.store(true);
- registered.clear();registerChart(r.get<P>(p,"levelInformation"));
  lastError="Gameplay hooks armed (device verification pending)";
 }
 void onAwake(P self,P mi){
@@ -75,20 +80,31 @@ void onAwake(P self,P mi){
  if(!broken){
   try{guard.store(PMReadOptions([[PMSettings shared] snapshot]).assisted());}catch(const std::exception &e){fault(e);}
  }
- try{release(progressRoot);release(scoreRoot);attempt.reset();registered.clear();pmscene::settingsLeave(R());pmscene::clearRecovery(R());pmhp::clear(R());pmmodes::clear(R());}catch(const std::exception&e){fault(e);}
- inResult=false;
+  try{release(progressRoot);release(scoreRoot);attempt.reset();resetChartRegistration();pmscene::settingsLeave(R());pmscene::clearRecovery(R());pmhp::clear(R());pmmodes::clear(R());}catch(const std::exception&e){fault(e);}
+   inResult=false;resultPresented=false;levelOverStarted=false;loadingMaskCleared=false;
  try{frozenOptions=PMReadOptions([[PMSettings shared] snapshot]);if(!broken){pmhp::prepare(R(),self,frozenOptions);pmmodes::prepare(R(),self,frozenOptions);}}catch(const std::exception&e){fault(e);}
  orig<VoidFn>(h::levelAwake)(self,mi);
 }
 void onDestroy(P self,P mi){
- if(attempt){attempt->result();if(attempt->excluded())guard.store(true);}
- try{pmhp::clear(R());pmmodes::clear(R());}catch(const std::exception&e){fault(e);}
- orig<VoidFn>(h::levelDestroy)(self,mi);
+  if(attempt){attempt->result();if(attempt->excluded())guard.store(true);}
+  resultPresented=false;levelOverStarted=false;loadingMaskCleared=false;
+  try{pmhp::clear(R());pmmodes::clear(R());}catch(const std::exception&e){fault(e);}
+  resetChartRegistration();
+  orig<VoidFn>(h::levelDestroy)(self,mi);
 }
 void onProgressStart(P self,P mi){
  orig<VoidFn>(h::progressStart)(self,mi);
  try{begin(self);}catch(const std::exception&e){fault(e);}
 }
+ void clearGameplayMask(Runtime&r,P progressControl){
+  if(loadingMaskCleared||r.get<float>(progressControl,"nowTime")<0||!r.get<bool>(progressControl,"isPlaying"))return;
+  P mask=r.get<P>(r.mainGame(),"sceneSwitchMask");
+  if(!mask)return;
+  r.call(mask,"set_texture",{"UnityEngine.Texture"},{nullptr});
+  Color clear{0,0,0,0};
+  r.call(mask,"set_color",{"UnityEngine.Color"},{&clear});
+  loadingMaskCleared=true;
+ }
 void credit(P self,float code,float offset,V3 pos,bool hold,P mi){
  orig<PerfectFn>(h::perfect)(self,code,offset,pos,hold,mi);
 }
@@ -106,7 +122,13 @@ void onPerfect(P self,float code,float offset,V3 pos,bool hold,P mi){
  observe(code,offset,phimod::Rating::Perfect);credit(self,code,offset,pos,hold,mi);
 }
 void onMiss(P self,float code,P mi){
- if(applying()&&attempt->options().autoplay){onPerfect(self,code,0,{0,0,0},true,nullptr);return;}
+ if(applying()&&attempt->options().autoplay){
+  // Android only defers type-3 holds to their real tail. Ordinary Tap/Drag/
+  // Flick misses are converted to an immediate Perfect and must not enter
+  // the hold queue, otherwise the result coroutine sees unfinished notes.
+  bool hold=attempt->noteType(code)==3;
+  onPerfect(self,code,0,{0,0,0},hold,nullptr);return;
+ }
  observe(code,0,phimod::Rating::Miss);orig<void(*)(P,float,P)>(h::miss)(self,code,mi);
 }
 void onBad(P self,float code,float offset,P mi){observe(code,offset,phimod::Rating::Bad);orig<void(*)(P,float,float,P)>(h::bad)(self,code,offset,mi);}
@@ -115,7 +137,7 @@ void onProgressUpdate(P self,P mi){
  orig<VoidFn>(h::progressUpdate)(self,mi);
  if(!applying())return;
  try{
-  auto &r=R();bool playing=r.get<bool>(self,"isPlaying");float now=r.get<float>(self,"nowTime");
+   auto &r=R();clearGameplayMask(r,self);bool playing=r.get<bool>(self,"isPlaying");float now=r.get<float>(self,"nowTime");
   // Pending holds only credit at their real tail, not the engine's -220ms
   // completion point. Exactly one sample/HP award and one original Perfect.
   for(auto c:attempt->dueHolds(now,playing)){
@@ -127,11 +149,10 @@ void onProgressUpdate(P self,P mi){
   if(action==phimod::Action::Retry){
    guard.store(true);r.call(self,"LevelBreak",{"System.String"},{r.string_new("Level")});
    r.put(info,"levelOver",true);r.put(info,"canPause",false);r.call(r.get<P>(self,"audioSource"),"Stop");attempt->acknowledgeAction(action);
-  }else if(action==phimod::Action::TrackLost&&pmhp::failureReady(r,self)){
+   }else if(action==phimod::Action::TrackLost&&!levelOverStarted&&pmhp::failureReady(r,self)){
    r.call(score(),"FreezeScore");r.put(self,"isPlaying",false);r.put(info,"levelOver",true);r.put(info,"canLevelOver",true);
-   P routine=r.call(self,"LevelOver");r.call(self,"StartCoroutine",{"System.Collections.IEnumerator"},{routine});attempt->acknowledgeAction(action);r.call(r.get<P>(self,"audioSource"),"Stop");
+    P routine=r.call(self,"LevelOver");r.call(self,"StartCoroutine",{"System.Collections.IEnumerator"},{routine});levelOverStarted=true;attempt->acknowledgeAction(action);r.call(r.get<P>(self,"audioSource"),"Stop");
   }
-  if(r.get<bool>(info,"levelOver"))pmhp::finish(r);
   pmhp::frame(r,attempt->hp());
  }catch(const std::exception&e){lastError=std::string("Transition pending: ")+e.what();NSLog(@"[PhiMod] %s",lastError.c_str());}
 }
@@ -228,27 +249,34 @@ void renderPracticeResult(P self){
  lastError=warnings.empty()?"Practice result displayed; saves remain blocked":warnings;
 }
 P onResultStart(P self,P mi){
- // IDA: Start only allocates <Start>d__43. All mutation is in MoveNext,
- // which is intercepted below. Returning a real iterator lets Unity perform
- // the normal lifecycle instead of a null coroutine plus blanket false.
- if(guard.load()){inResult=true;if(attempt)attempt->result();}
- return orig<P(*)(P,P)>(h::resultStart)(self,mi);
+  // Match Android resultStart: assisted sessions render the result directly
+  // and never launch the original save/unlock coroutine. The original method
+  // only allocates <Start>d__43; calling it here leaves Unity waiting on a
+  // coroutine whose state machine is intentionally being bypassed.
+   if(!guard.load())return orig<P(*)(P,P)>(h::resultStart)(self,mi);
+   inResult=true;resultPresented=false;
+   try{
+    if(attempt){
+     for(auto c:attempt->flushPendingHolds()){
+      observe(c.code,c.offset,phimod::Rating::Perfect);
+      credit(score(),c.code,c.offset,{c.position[0],c.position[1],c.position[2]},c.hold,nullptr);
+     }
+     attempt->result();
+    }
+    renderPracticeResult(self);
+    resultPresented=true;inResult=false;
+   }catch(const std::exception&e){
+    lastError=std::string("Practice result: ")+e.what();NSLog(@"[PhiMod] %s",lastError.c_str());
+    try{pmscene::resultRecovery(R(),self,lastError);}catch(const std::exception&nested){lastError+=std::string("; recovery: ")+nested.what();}
+    inResult=false;
+   }
+   return nullptr;
 }
 bool onResultMove(P iterator,P mi){
  if(!guard.load())return orig<JudgeFn>(h::resultMove)(iterator,mi);
- P self=nullptr;
- try{
-  auto&r=R();self=r.get<P>(iterator,"<>4__this");int state=r.get<int>(iterator,"<>1__state");
-  int step=phimod::resultStep(state);r.put<P>(iterator,"<>2__current",nullptr);
-  if(step==1){r.put(iterator,"<>1__state",1);return true;}
-  r.put(iterator,"<>1__state",-1);if(step==2)renderPracticeResult(self);
- }catch(const std::exception&e){
-  lastError=std::string("Practice result: ")+e.what();NSLog(@"[PhiMod] %s",lastError.c_str());
-  // Fail visibly with rooted, navigation-only recovery; NEVER execute the
-  // original reward/unlock iterator as an error fallback.
-  if(self)try{pmscene::resultRecovery(R(),self,lastError);}catch(const std::exception&nested){lastError+=std::string("; recovery: ")+nested.what();}
- }
- inResult=false;return false;
+  // A guarded result never has an iterator. Keep this hook fail-closed for a
+  // stale Unity callback instead of touching generated state-machine fields.
+  return false;
 }
 void onLifeStart(P self,P mi){if(!pmhp::active()){orig<VoidFn>(h::lifeStart)(self,mi);return;}try{pmhp::barStart(R(),self);}catch(const std::exception&e){lastError=std::string("Native HP bar: ")+e.what();}}
 float onLifeNormalized(P self,P game,P mi){
@@ -263,7 +291,10 @@ void onLifeUpdate(P self,P mi){
  catch(const std::exception&e){lastError=std::string("Native HP update: ")+e.what();return;}
  orig<VoidFn>(h::lifeUpdate)(self,mi);
 }
-P onProgressLevelOver(P self,P mi){try{pmhp::finish(R());}catch(const std::exception&e){lastError=e.what();}return orig<P(*)(P,P)>(h::progressLevelOver)(self,mi);}
+ P onProgressLevelOver(P self,P mi){
+  if(pmhp::active())try{pmhp::finish(R());}catch(const std::exception&e){lastError=std::string("HP result cleanup: ")+e.what();}
+  return orig<P(*)(P,P)>(h::progressLevelOver)(self,mi);
+ }
 void onLevelCodes(P self,P mi){
  if(!broken)try{pmmodes::beforeCodes(R(),self);}catch(const std::exception&e){fault(e);}
  orig<VoidFn>(h::levelCodes)(self,mi);
@@ -275,7 +306,7 @@ void onLevelInformation(P self,P mi){
 void onNoteManager(P self,P mi){
  if(applying())try{pmmodes::beginFrame(R(),self);}catch(const std::exception&e){fault(e);}
  orig<VoidFn>(h::noteManager)(self,mi);
- if(applying())try{pmmodes::frame(R(),self);}catch(const std::exception&e){fault(e);}
+   if(applying())try{pmmodes::frame(R(),self);}catch(const std::exception&e){fault(e);}
 }
 bool onBlocking(P self,V2 point,P*out,P mi){
  if(applying())try{bool handled=false;bool value=pmmodes::blocking(R(),{point.x,point.y},out,handled);if(handled)return value;}catch(const std::exception&e){fault(e);}

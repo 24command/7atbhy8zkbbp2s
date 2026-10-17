@@ -49,13 +49,27 @@ class SourceContracts(unittest.TestCase):
   self.assertIn('Entry gate instruction mismatch',hook)
   self.assertIn('__atomic_store_n',hook)
   result=hook[hook.index('P onResultStart('):hook.index('bool onResultMove(')]
-  self.assertIn('return orig<P(*)(P,P)>(h::resultStart)(self,mi);',result)
-  self.assertNotIn('return nullptr',result)
+  self.assertIn('if(!guard.load())return orig<P(*)(P,P)>(h::resultStart)(self,mi);',result)
+  self.assertIn('renderPracticeResult(self);',result)
+  self.assertIn('return nullptr;',result)
   move=hook[hook.index('bool onResultMove('):hook.index('void onLifeStart(')]
-  self.assertIn('if(!guard.load())return orig<JudgeFn>',move)
-  self.assertIn('resultStep(state)',move)
-  self.assertIn('renderPracticeResult(self)',move)
-  self.assertIn('resultRecovery(R(),self,lastError)',move)
+  self.assertIn('if(!guard.load())return orig<JudgeFn>(h::resultMove)(iterator,mi);',move)
+  self.assertIn('return false;',move)
+  self.assertNotIn('r.get<P>(iterator,"<>4__this")',move)
+  self.assertNotIn('r.put(iterator,"<>1__state",-1)',move)
+  self.assertEqual(move.count('orig<JudgeFn>(h::resultMove)(iterator,mi)'),1)
+  self.assertIn('resultPresented=false',hook)
+  self.assertIn('for(auto c:attempt->flushPendingHolds())',result)
+  self.assertIn('!levelOverStarted&&pmhp::failureReady(r,self)',hook)
+  self.assertIn('levelOverStarted=true',hook)
+  self.assertIn('void clearGameplayMask(Runtime&r,P progressControl)',hook)
+  self.assertIn('clearGameplayMask(r,self)',hook)
+  self.assertIn('loadingMaskCleared=false',hook)
+  self.assertIn('registerOne(note)',hook)
+  self.assertNotIn('registerChart(',hook)
+  level_over=hook[hook.index('P onProgressLevelOver('):hook.index('void onLevelCodes(')]
+  self.assertIn('return orig<P(*)(P,P)>(h::progressLevelOver)(self,mi);',level_over)
+  self.assertIn('pmhp::finish(R())',level_over)
   self.assertIn('if(!options.assisted())',hook)
   self.assertIn('if(!guard.load())',hook)
  def test_modes_ready_only_after_real_pipeline_validation(self):
@@ -64,7 +78,18 @@ class SourceContracts(unittest.TestCase):
   self.assertLess(hook.index('pmmodes::validate(r)'),hook.index('__atomic_store_n'))
   modes=(ROOT/'PhiMod/Sources/PMChartModes.mm').read_text(encoding='utf-8')
   for value in ('unifiedNote(', 'FromJsonOverwrite', 'holes.masks(', 'UpdateBlocksTransform', 'holes.allows(', 'holdGrace.inject(', 'fxClock.pulse('):self.assertIn(value,modes)
-  self.assertIn('FromJson',modes);self.assertIn('originalRoot',modes)
+  # Keep mutations on the original Chart so Unity's native lifecycle computes
+  # floorPosition/realTime on the same object SetInformation later consumes.
+  self.assertNotIn('"FromJson"',modes);self.assertNotIn('chartRoot',modes)
+  self.assertIn('originalRoot',modes);self.assertIn('originalBlocksRoot',modes)
+  self.assertIn('geometryRevision()',modes)
+  self.assertIn('if(options.clearNoise&&!options.noise)',modes)
+  self.assertIn('handled=true;if(out)*out=nullptr;return false;',modes)
+  self.assertNotIn('ClearRenderTexture',modes)
+  clear=modes[modes.index('void afterInformation('):modes.index('void beginFrame(')]
+  self.assertIn('overwrite(r,chart,"{\\"blockAreaList\\":[]}")',clear)
+  self.assertIn('Original noise removal incomplete',clear)
+  self.assertLess(clear.index('overwrite(r,chart'),clear.index('if(!options.noise)return;'))
   ui=(ROOT/'PhiMod/Sources/PMSceneUI.mm').read_text(encoding='utf-8')
   self.assertNotIn('if(i==1||i==2)return true',ui)
   self.assertIn('i==2?@((old+1)%5)',ui)
@@ -85,6 +110,10 @@ class SourceContracts(unittest.TestCase):
   f=s[s.index('void onHoldMove('):s.index('template<h::Index i>void onNoteMove(')]
   self.assertLess(f.index('pmmodes::holdMove('),f.index('orig<VoidFn>'))
   self.assertLess(f.index('orig<VoidFn>'),f.index('pmmodes::moved('))
+ def test_autoplay_miss_only_defers_real_holds(self):
+  hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf-8')
+  self.assertIn('bool hold=attempt->noteType(code)==3;',hook)
+  self.assertIn('onPerfect(self,code,0,{0,0,0},hold,nullptr)',hook)
  def test_preview_types_use_their_real_namespaces(self):
   s=(ROOT/'PhiMod/Sources/PMChartModes.mm').read_text(encoding='utf-8')
   self.assertNotIn('r.klass("PreviewBlockControl")',s)

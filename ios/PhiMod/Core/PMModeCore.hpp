@@ -1,6 +1,7 @@
 #pragma once
 #include "PMGameplayCore.hpp"
 #include <limits>
+#include <utility>
 namespace phimod {
 struct UnifiedNote {int type;float speed,holdTicks;};
 inline UnifiedNote unifiedNote(int old,int target,float speed,float hold,float lineSpeed,float bpm) {
@@ -19,10 +20,19 @@ class NoiseHoles {
  struct Entry {Hole hole{};std::vector<std::pair<Hole,float>> history;float expiry=-std::numeric_limits<float>::infinity();std::uint64_t frame=0;};
  std::map<float,Entry> entries_;
  std::vector<Hole> active_;
+ std::vector<Hole> published_;
  std::uint64_t frame_=0;
+ std::uint64_t geometryRevision_=0;
  float now_=0;
+ static bool sameGeometry(const std::vector<Hole>&a,const std::vector<Hole>&b){
+  if(a.size()!=b.size())return false;
+  for(std::size_t i=0;i<a.size();++i){
+   if(a[i].x!=b[i].x||a[i].y!=b[i].y||a[i].w!=b[i].w||a[i].h!=b[i].h)return false;
+  }
+  return true;
+ }
  public:
- void clear(){entries_.clear();active_.clear();frame_=0;now_=0;}
+ void clear(){entries_.clear();active_.clear();published_.clear();frame_=0;geometryRevision_=0;now_=0;}
  void begin(float now){if(!std::isfinite(now))throw std::invalid_argument("Invalid noise clock");if(now<now_)clear();now_=now;++frame_;active_.clear();}
  void visible(float code,Hole hole,bool hold,float grace){
   if(!std::isfinite(code)||!std::isfinite(hole.x)||!std::isfinite(hole.y)||!std::isfinite(hole.w)||!std::isfinite(hole.h)||hole.w<=0||hole.h<=0||!std::isfinite(grace)||grace<0||grace>.5f)
@@ -40,16 +50,20 @@ class NoiseHoles {
   auto it=entries_.find(code);if(it!=entries_.end())it->second.expiry=now+grace;
  }
  void end(){
+  std::vector<Hole> next;
   for(auto it=entries_.begin();it!=entries_.end();){auto&e=it->second;
    e.history.erase(std::remove_if(e.history.begin(),e.history.end(),[&](const auto&h){return h.second<now_;}),e.history.end());
    bool current=e.frame==frame_||e.expiry>=now_;
-   if(current)active_.push_back(e.hole);
-   for(auto h:e.history)active_.push_back(h.first);
+   if(current)next.push_back(e.hole);
+   for(auto h:e.history)next.push_back(h.first);
    if(!current&&e.history.empty())it=entries_.erase(it);else ++it;
   }
+  active_=std::move(next);
+  if(!sameGeometry(active_,published_)){published_=active_;++geometryRevision_;}
  }
  bool allows(float x,float y)const{for(auto h:active_)if(inside(h,x,y))return true;return false;}
  const std::vector<Hole>&active()const{return active_;}
+ std::uint64_t geometryRevision()const{return geometryRevision_;}
  std::vector<Rect> masks(float width,float height)const{
   if(!std::isfinite(width)||!std::isfinite(height)||width<=0||height<=0)throw std::invalid_argument("Invalid noise viewport");
   std::vector<Rect> rectangles;rectangles.reserve(active_.size());

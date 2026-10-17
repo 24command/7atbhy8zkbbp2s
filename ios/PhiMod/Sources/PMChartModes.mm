@@ -4,11 +4,17 @@
 namespace pmmodes {
 namespace {
 struct V3{float x,y,z;};struct Color{float r,g,b,a;};
+struct NoteBackup{P note=nullptr;int type=0;float speed=0,hold=0;};
 phimod::Options options;
 phimod::NoiseHoles holes;
 phimod::HoldGrace holdGrace;
 phimod::HoldFxClock fxClock;
-uint32_t levelRoot=0,originalRoot=0,chartRoot=0,fullRoot=0,materialRoot=0;
+uint32_t levelRoot=0,originalRoot=0,originalBlocksRoot=0,fullRoot=0,materialRoot=0;
+std::vector<NoteBackup> noteBackups;
+std::vector<phimod::Rect> cachedMasks;
+std::uint64_t cachedGeometryRevision=~std::uint64_t(0);
+float cachedWidth=0,cachedHeight=0;
+bool cachedGeometry=false;
 Color originalFill{},originalEdge{};float originalFloats[3]{};
 constexpr const char*properties[]={"_FillStrength","_FillOpacity","_DisplaceBlendIntensity"};
 P target(Runtime&r,uint32_t root){return root?r.gchandle_get_target(root):nullptr;}
@@ -19,16 +25,12 @@ void overwrite(Runtime&r,P chart,const std::string&json){
  try{r.stat(r.type("UnityEngine","JsonUtility"),"FromJsonOverwrite",{"System.String","System.Object"},{text,chart});}
  catch(...){r.gchandle_free(root);throw;}r.gchandle_free(root);
 }
-void clone(Runtime&r,P level){
- if(chartRoot)return;
+void captureChart(Runtime&r,P level){
+ if(originalRoot)return;
  P original=r.get<P>(level,"chart");if(!original)throw std::runtime_error("Chart not loaded");
  originalRoot=r.gchandle_new(original,false);
- P json=r.stat(r.type("UnityEngine","JsonUtility"),"ToJson",{"System.Object"},{original});uint32_t root=r.gchandle_new(json,false);
- try{
-  P chart=r.stat(r.type("UnityEngine","JsonUtility"),"FromJson",{"System.String","System.Type"},{json,r.type_get_object(r.class_get_type(r.klass("Chart")))});
-  if(!chart)throw std::runtime_error("Practice chart clone failed");
-  chartRoot=r.gchandle_new(chart,false);r.put(level,"chart",chart);
- }catch(...){r.gchandle_free(root);throw;}r.gchandle_free(root);
+ P blocks=r.get<P>(original,"blockAreaList");
+ if(blocks)originalBlocksRoot=r.gchandle_new(blocks,false);
 }
 void restoreMaterial(Runtime&r){
  P mat=target(r,materialRoot);
@@ -55,18 +57,27 @@ void tint(Runtime&r,P render){
 void prepare(Runtime&r,P level,const phimod::Options&o){clear(r);options=o;levelRoot=r.gchandle_new(level,false);}
 void clear(Runtime&r){
  try{restoreMaterial(r);}catch(const std::exception&e){NSLog(@"[PhiMod] Noise material cleanup: %s",e.what());}
- try{P level=target(r,levelRoot);if(r.alive(level)&&chartRoot&&r.get<P>(level,"chart")==target(r,chartRoot))r.put(level,"chart",target(r,originalRoot));}
- catch(const std::exception&e){NSLog(@"[PhiMod] Practice chart cleanup: %s",e.what());}
- for(auto root:{&levelRoot,&originalRoot,&chartRoot,&fullRoot,&materialRoot})release(r,*root);
+ try{
+  // ChartNote and Chart are managed serializable objects, not UnityEngine.Object
+  // instances; Runtime::alive is only valid for UnityEngine.Object-derived values.
+  for(const auto& backup:noteBackups)if(backup.note){
+   r.put(backup.note,"type",backup.type);r.put(backup.note,"speed",backup.speed);r.put(backup.note,"holdTime",backup.hold);
+  }
+  P chart=target(r,originalRoot),blocks=target(r,originalBlocksRoot);
+  if(chart&&blocks)r.put(chart,"blockAreaList",blocks);
+ }catch(const std::exception&e){NSLog(@"[PhiMod] Practice chart cleanup: %s",e.what());}
+ for(auto root:{&levelRoot,&originalRoot,&originalBlocksRoot,&fullRoot,&materialRoot})release(r,*root);
+ noteBackups.clear();cachedMasks.clear();cachedGeometryRevision=~std::uint64_t(0);cachedWidth=cachedHeight=0;cachedGeometry=false;
  options=phimod::Options{};holes.clear();holdGrace.clear();fxClock.clear();
 }
 void beforeCodes(Runtime&r,P self){
  if(self!=target(r,levelRoot)||(!options.noise&&!options.unified&&!options.clearNoise))return;
- clone(r,self);if(!options.unified)return;
- P lines=r.get<P>(target(r,chartRoot),"judgeLineList");int n=boundedCount(r,lines,2048);
+ captureChart(r,self);if(!options.unified)return;
+ P lines=r.get<P>(target(r,originalRoot),"judgeLineList");int n=boundedCount(r,lines,2048);
  for(int i=0;i<n;++i){P line=r.at(lines,i),events=r.get<P>(line,"speedEvents");float bpm=r.get<float>(line,"bpm");int ne=boundedCount(r,events);
   for(const char*side:{"notesAbove","notesBelow"}){P notes=r.get<P>(line,side);int nn=boundedCount(r,notes);
    for(int j=0;j<nn;++j){P note=r.at(notes,j);int old=r.get<int>(note,"type");if(old==options.unified)continue;
+    noteBackups.push_back({note,old,r.get<float>(note,"speed"),r.get<float>(note,"holdTime")});
     float tick=float(r.get<int>(note,"time")),speed=1;
     for(int k=0;k<ne;++k){P event=r.at(events,k);if(tick>=r.get<float>(event,"startTime"))speed=r.get<float>(event,"value");else break;}
     auto converted=phimod::unifiedNote(old,options.unified,r.get<float>(note,"speed"),r.get<float>(note,"holdTime"),speed,bpm);
@@ -76,9 +87,16 @@ void beforeCodes(Runtime&r,P self){
  }
 }
 void afterInformation(Runtime&r,P self){
- if(self!=target(r,levelRoot)||!chartRoot)return;
- P chart=target(r,chartRoot);
- if(options.clearNoise&&!options.noise){overwrite(r,chart,"{\"blockAreaList\":[]}");return;}
+ if(self!=target(r,levelRoot)||!originalRoot)return;
+ P chart=target(r,originalRoot);
+ // Match Android SetInformation: No Noise removes the chart's original
+ // blocking areas after the game has finished deriving chart information.
+ // Noise takes precedence when both switches are enabled.
+ if(options.clearNoise&&!options.noise){
+  overwrite(r,chart,"{\"blockAreaList\":[]}");
+  if(boundedCount(r,r.get<P>(chart,"blockAreaList"))!=0)throw std::runtime_error("Original noise removal incomplete");
+  return;
+ }
  if(!options.noise)return;
  std::string json="{\"blockAreaList\":[";
  for(int i=0;i<=256;++i){if(i)json+=',';
@@ -101,26 +119,26 @@ void frame(Runtime&r,P manager){
  if(!count)return; // Preview assets have not been instantiated yet.
  if(count!=257)throw std::runtime_error("Noise preview block count mismatch");
  P first=r.at(blocks,0);if(first!=target(r,fullRoot)){release(r,fullRoot);fullRoot=r.gchandle_new(first,false);}
- float width=r.get<float>(preview,"screenWidth"),height=r.get<float>(preview,"screenHeight");auto masks=holes.masks(width,height);
+ float width=r.get<float>(preview,"screenWidth"),height=r.get<float>(preview,"screenHeight");
+ bool geometryChanged=!cachedGeometry||cachedGeometryRevision!=holes.geometryRevision()||cachedWidth!=width||cachedHeight!=height;
+ if(geometryChanged){cachedMasks=holes.masks(width,height);cachedGeometryRevision=holes.geometryRevision();cachedWidth=width;cachedHeight=height;cachedGeometry=true;}
+ const auto&masks=cachedMasks;
  // Never allow more touches than are actually represented by subtract blocks.
  // Refuse pathological geometry instead of silently truncating holes.
  if(masks.size()>256)throw std::runtime_error("Noise union exceeds 256 native masks");
- for(int i=1;i<count;++i){P block=r.at(blocks,i),info=r.get<P>(block,"blockInfo");Point low{-10,-10},high{-9,-9};
+ if(geometryChanged)for(int i=1;i<count;++i){P block=r.at(blocks,i),info=r.get<P>(block,"blockInfo");Point low{-10,-10},high{-9,-9};
   if(size_t(i-1)<masks.size()){auto m=masks[size_t(i-1)];low={m.left/width+.5f,m.bottom/height+.5f};high={m.right/width+.5f,m.top/height+.5f};}
   Point oldLow=r.get<Point>(info,"bottomLeftPercentage"),oldHigh=r.get<Point>(info,"topRightPercentage");
   if(oldLow.x!=low.x||oldLow.y!=low.y||oldHigh.x!=high.x||oldHigh.y!=high.y){r.put(info,"bottomLeftPercentage",low);r.put(info,"topRightPercentage",high);r.call(block,"UpdateBlocksTransform");}
  }
- P render=r.get<P>(preview,"<BlockRender>k__BackingField");if(r.alive(render))tint(r,render);
+  P render=r.get<P>(preview,"<BlockRender>k__BackingField");if(options.noiseVisual&&r.alive(render))tint(r,render);
 }
 void late(Runtime&r,P render){
- if(!levelRoot||(!options.noise&&!options.clearNoise)||options.noiseVisual)return;
- P level=target(r,levelRoot),preview=r.get<P>(level,"previewElementUpdateControl");
- if(render!=r.get<P>(preview,"<BlockRender>k__BackingField"))return;
- for(const char*name:{"effectRT","composedEnabledBlockRT","composedDisabledBlockRT"}){
-  P texture=r.get<P>(render,name);if(r.alive(texture))r.stat(r.klass("BlockRender"),"ClearRenderTexture",{"UnityEngine.RenderTexture"},{texture});
- }
+ (void)r;
+ (void)render;
 }
 bool blocking(Runtime&r,Point point,P*out,bool&handled){
+ if(options.clearNoise&&!options.noise){handled=true;if(out)*out=nullptr;return false;}
  handled=options.noise&&fullRoot; if(!handled)return false;
  bool blocked=!holes.allows(point.x,point.y);if(out)*out=blocked?target(r,fullRoot):nullptr;return blocked;
 }
@@ -161,9 +179,9 @@ HoldScope::HoldScope(Runtime&r,P self):r_(r){
 }
 HoldScope::~HoldScope()noexcept{try{restore();}catch(const std::exception&e){NSLog(@"[PhiMod] Hold rollback: %s",e.what());}}
 void validate(Runtime&r){
- P json=r.type("UnityEngine","JsonUtility");r.resolve(json,"ToJson",{"System.Object"},true);r.resolve(json,"FromJson",{"System.String","System.Type"},true);r.resolve(json,"FromJsonOverwrite",{"System.String","System.Object"},true);
+ P json=r.type("UnityEngine","JsonUtility");r.resolve(json,"FromJsonOverwrite",{"System.String","System.Object"},true);
  r.resolve(r.type("System","Array"),"SetValue",{"System.Object","System.Int32"});
- r.resolve(r.type("ProjectEditor.PreviewScripts","PreviewBlockControl"),"UpdateBlocksTransform");r.resolve(r.klass("BlockRender"),"ClearRenderTexture",{"UnityEngine.RenderTexture"},true);
+  r.resolve(r.type("ProjectEditor.PreviewScripts","PreviewBlockControl"),"UpdateBlocksTransform");
  for(auto field:{"judgeLineList","blockAreaList"})r.field(r.klass("Chart"),field,field==std::string("judgeLineList")?"System.Collections.Generic.List<JudgeLine>":"System.Collections.Generic.List<GameInformation.BlockArea>",false);
  r.field(r.klass("LevelControl"),"chart","Chart",false);r.field(r.klass("LevelControl"),"previewElementUpdateControl","Phigros2.Level.Scripts.PreviewElementUpdateControl",false);
  for(auto c:{"ClickControl","DragControl","HoldControl","FlickControl"}){r.field(r.klass(c),"noteInfor","ChartNote",false);r.field(r.klass(c),"isVisible","System.Boolean",false);}
@@ -173,7 +191,6 @@ void validate(Runtime&r){
  r.field(r.type("ProjectEditor.PreviewScripts","PreviewBlockControl"),"blockInfo","GameInformation.BlockArea",false);
  P area=r.nested(r.klass("GameInformation"),"BlockArea");r.field(area,"bottomLeftPercentage","UnityEngine.Vector2",false);r.field(area,"topRightPercentage","UnityEngine.Vector2",false);
  r.field(r.klass("BlockRender"),"activeBlockMaterial","UnityEngine.Material",false);
- for(auto name:{"effectRT","composedEnabledBlockRT","composedDisabledBlockRT"})r.field(r.klass("BlockRender"),name,"UnityEngine.RenderTexture",false);
  for(auto name:{"clickControls","dragControls","holdControls","flickControls"}){std::string t="System.Collections.Generic.List<";t+=!strcmp(name,"clickControls")?"ClickControl":!strcmp(name,"dragControls")?"DragControl":!strcmp(name,"holdControls")?"HoldControl":"FlickControl";t+='>';r.field(r.klass("NoteUpdateManager"),name,t.c_str(),false);}
  r.field(r.klass("JudgeLineControl"),"numOfFingers","System.Int32",false);r.field(r.klass("JudgeLineControl"),"fingerPositionX","System.Single[]",false);
  for(auto name:{"type","time"})r.field(r.klass("ChartNote"),name,"System.Int32",false);

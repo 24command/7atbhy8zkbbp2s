@@ -94,6 +94,11 @@ class Session {
    throw std::invalid_argument("Invalid note");
   if(!notes_.emplace(n.code,n).second)throw std::invalid_argument("Duplicate note code");
  }
+ int noteType(float code) const {
+  if(!std::isfinite(code))return 0;
+  auto it=notes_.find(code);
+  return it==notes_.end()?0:it->second.type;
+ }
  bool observe(float code,float offsetSeconds,Rating rating) {
   int index=static_cast<int>(rating);
   if(phase_!=Phase::Playing||failed_||!std::isfinite(code)||(!std::isfinite(offsetSeconds)||!std::isfinite(offsetSeconds*1000.f))||index<0||index>3)return false;
@@ -131,7 +136,8 @@ class Session {
  }
  std::vector<HoldCredit> dueHolds(float now,bool playing) {
   std::vector<HoldCredit> out;
-  if(phase_!=Phase::Playing||failed_||!playing||!std::isfinite(now))return out;
+  (void)playing;
+  if(phase_!=Phase::Playing||failed_||!std::isfinite(now))return out;
   for(auto it=pending_.begin();it!=pending_.end();) {
    if(now<it->second.end){++it;continue;}
    if(credited_.insert(it->first).second)out.push_back({it->first,it->second.offset,it->second.position,it->second.hold});
@@ -139,6 +145,18 @@ class Session {
   }
   return out; // backend must dispatch each once on game frame and root managed targets
  }
+  // Result can start after ProgressControl stops advancing time.  Android's
+  // score path has already reached the real hold tail by then, so the iOS
+  // result hook must drain the remaining queue without waiting on nowTime.
+  std::vector<HoldCredit> flushPendingHolds() {
+   std::vector<HoldCredit> out;
+   if(phase_!=Phase::Playing||failed_)return out;
+   for(auto it=pending_.begin();it!=pending_.end();) {
+    if(credited_.insert(it->first).second)out.push_back({it->first,it->second.offset,it->second.position,it->second.hold});
+    it=pending_.erase(it);
+   }
+   return out;
+  }
  bool creditOnce(float code) {
   if(phase_!=Phase::Playing||failed_||!std::isfinite(code))return false;
   auto note=notes_.find(code);if(note==notes_.end()||note->second.fake)return false;

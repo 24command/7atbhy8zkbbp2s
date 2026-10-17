@@ -19,8 +19,8 @@ This is source only. framework7 is an older 37-hook v1 build.
 | HP zero | Stops judging/freezes score, native failure flash/audio fade, 1.5-second delay, then the normal LevelOver transition into a protected practice result. |
 | Practice result | Original Start allocates a real iterator; intercepted MoveNext yields a frame then invokes presentation-only helpers. Optional cover/audio failures cannot block canvas activation. Catastrophic failure offers Retry/Back; never falls back to reward/save MoveNext. |
 | Scene buttons | Clones the existing Mirror-style song controls and settings tab. Hooks Button.Press + OnPointerClick + OnSubmit; original non-MOD buttons pass through. |
-| Noise | Clones chart; supplies full native block and subtract masks; captures holes from real NoteMove calls; rectangle union prevents subtract-XOR overlaps; hooks real touch blocking. |
-| No Noise | Clears blockAreaList on the cloned chart, not the cached original. Noise takes precedence if both switches are enabled. |
+| Noise | Mutates the original chart's blockAreaList after the native information pass; supplies full native block and subtract masks; captures holes from real NoteMove calls; rectangle union prevents subtract-XOR overlaps; hooks real touch blocking. |
+| No Noise | Clears blockAreaList on the original chart after the native information pass and restores the original list when leaving the scene. Noise takes precedence if both switches are enabled. |
 | Unified | Converts chart note types before SetCodeForNote, preserving speed semantics and synthesizing Hold length as in Android. 0=off, 1=Tap, 2=Drag, 3=Hold, 4=Flick. |
 | Hold tuning | Noise-only temporary finger injection with managed Array.SetValue and guaranteed restoration. AutoPlay Hold FX is prepared BEFORE native NoteMove. |
 
