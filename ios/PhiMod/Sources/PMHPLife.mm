@@ -1,6 +1,7 @@
 #include "PMHPLife.hpp"
 #include "../Core/PMFlowCore.hpp"
 #include <cmath>
+#import "PMDiagnostics.h"
 namespace pmhp {
 using pmbridge::P;using pmbridge::Runtime;
 namespace {
@@ -23,6 +24,7 @@ bool active(){return enabled;}
 float normalized(){return options.hpMax>0?std::clamp(life/options.hpMax,0.f,1.f):0;}
 void prepare(Runtime&r,P level,const phimod::Options&o){
  clear(r);options=o;enabled=o.hpEnabled;life=o.hpMax;failure.reset();finished=false;
+ PMDiagnosticsWrite(enabled?"HP prepare: enabled":"HP prepare: disabled");
  if(!enabled)return;
  try{
  levelRoot=r.gchandle_new(level,false);
@@ -37,10 +39,11 @@ void prepare(Runtime&r,P level,const phimod::Options&o){
   P code=r.string_new(key);if(!r.unbox<bool>(r.call(copy,"Contains",{"System.String"},{code})))r.call(copy,"Add",{"System.String"},{code});
  }
  r.put(info,"levelMods",copy);
- }catch(...){clear(r);throw;}
+  }catch(const std::exception&e){PMDiagnosticsWrite((std::string("HP prepare failed: ")+e.what()).c_str());clear(r);throw;}
 }
 void barStart(Runtime&r,P self){
  if(!enabled)return;
+ PMDiagnosticsWrite("HP bar Start enter");
  release(r,barRoot);barRoot=r.gchandle_new(self,false);
  P image=r.get<P>(self,"target"),materialTemplate=r.get<P>(self,"materialTemplate");
  if(!r.alive(image)||!r.alive(materialTemplate))throw std::runtime_error("HP: native life material missing");
@@ -52,6 +55,7 @@ void barStart(Runtime&r,P self){
  P score=r.get<P>(target(r,levelRoot),"scoreControl");
  for(const char*name:{"combo","comboText"})r.stat(r.type(ns,"SecretChallengeLifeMod"),"EnableTrueShadow",{"UnityEngine.Component"},{r.get<P>(score,name)});
  setEnabled(r,image,options.hpTop);r.call(self,"ApplyShaderParameters");
+ PMDiagnosticsWrite("HP bar Start configured");
 }
 // GetNormalizedLife can also run on another official bar; never hijack it.
 bool ownsBar(Runtime&r,P self){return enabled&&target(r,barRoot)==self;}
@@ -67,16 +71,20 @@ void barUpdate(Runtime&r,P self){
  if(next<.001f&&targetLife<=0)next=0;r.put(self,"displayedLife",next);r.put(self,"lifeVelocity",velocity);r.call(self,"ApplyShaderParameters");
 }
 void modStart(Runtime&r,P self){
+ PMDiagnosticsWrite("HP mod Start enter");
  release(r,modRoot);modRoot=r.gchandle_new(self,false);
  P level=target(r,levelRoot);r.put(self,"levelControl",level);r.put(self,"scoreControl",r.get<P>(level,"scoreControl"));
  r.put<P>(self,"lifeHitFlash",nullptr);r.put(self,"subscribed",false);r.put(self,"failed",false);
  activeObject(r,r.get<P>(self,"redFlash"),false);
  // No stock Start: do not subscribe official challenge events or promotion.
+  PMDiagnosticsWrite("HP mod Start configured");
 }
 void backgroundBefore(Runtime&r){
- if(!enabled||backgroundOwned)return;P c=r.klass("HPDisplayControl");r.runtime_class_init(c);
+ if(!enabled||backgroundOwned)return;
+ PMDiagnosticsWrite("HP background capture enter");P c=r.klass("HPDisplayControl");r.runtime_class_init(c);
  originalMain=r.unbox<Color>(r.stat(c,"get_MainColor"));originalCover=r.unbox<Color>(r.stat(c,"get_CoverColor"));
  originalOpacity=r.unbox<float>(r.stat(c,"get_Opacity"));originalGlow=r.unbox<float>(r.stat(c,"get_GlowOpacity"));backgroundOwned=true;
+ PMDiagnosticsWrite("HP background captured");
 }
 void frame(Runtime&r,float hp){
  if(!enabled)return;life=hp;P bar=target(r,barRoot);
@@ -103,6 +111,7 @@ void flash(Runtime&r){P mod=target(r,modRoot);if(enabled&&!finished&&r.alive(mod
 bool failing(){return failure.started();}
 bool failureReady(Runtime&r,P progress){
  if(!failure.started()){
+  PMDiagnosticsWrite("HP failureReady: begin freeze/fade");
   P info=r.get<P>(progress,"levelInformation");r.put(info,"canPause",false);r.put(info,"canLevelOver",false);
   r.put(r.get<P>(progress,"judgeControl"),"stopJudge",true);r.call(r.get<P>(progress,"scoreControl"),"FreezeScore");
   failure.begin(time(r)); // Only start the delay after critical operations succeed.
@@ -116,13 +125,16 @@ bool failureReady(Runtime&r,P progress){
    r.call(mod,"StartCoroutine",{"System.Collections.IEnumerator"},{fade});
   }
  }
- return failure.ready(time(r));
+  bool readyNow=failure.ready(time(r));
+  if(readyNow)PMDiagnosticsWrite("HP failureReady: delay complete");
+  return readyNow;
 }
 // Scene destruction may invalidate one native object while others remain alive.
 // Each cleanup stage is best-effort; always release roots and reset ownership.
 template<class F>void cleanup(const char*stage,F fn){try{fn();}catch(const std::exception&e){NSLog(@"[PhiMod] HP cleanup %s: %s",stage,e.what());}}
 void finish(Runtime&r){
  if(!enabled||finished)return;finished=true;
+ PMDiagnosticsWrite("HP finish: hide visuals");
  cleanup("bar",[&]{P bar=target(r,barRoot);if(r.alive(bar)){setEnabled(r,r.get<P>(bar,"target"),false);setEnabled(r,r.get<P>(bar,"lifeCanvas"),false);}});
  cleanup("flash coroutine",[&]{P mod=target(r,modRoot);if(r.alive(mod)){r.call(mod,"StopAllCoroutines");r.put<P>(mod,"lifeHitFlash",nullptr);activeObject(r,r.get<P>(mod,"redFlash"),false);}});
  cleanup("background",[&]{if(backgroundOwned){float zero=0;P c=r.klass("HPDisplayControl");r.stat(c,"set_Opacity",{"System.Single"},{&zero});r.stat(c,"set_GlowOpacity",{"System.Single"},{&zero});}});

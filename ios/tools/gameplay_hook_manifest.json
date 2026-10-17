@@ -430,5 +430,13 @@
     "args": "",
     "bytes": "eb2bbb6d",
     "instruction": "IDA-verified STP D11, D10 stack prologue"
+  },
+  {
+    "id": "judgeUpdate",
+    "name": "JudgeControl.Update",
+    "rva": 22526752,
+    "args": "",
+    "bytes": "e923ba6d",
+    "instruction": "IDA-verified relocatable stack prologue"
   }
 ]

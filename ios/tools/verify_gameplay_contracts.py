@@ -218,7 +218,7 @@ def main():
    pass
   else:
    raise AssertionError('Failed to reject incorrect runtime namespace: '+old)
- print(f'PASS: {count} gameplay metadata / 54 hook contracts + {source_count} source lookups + 5 negative fixtures')
+ print(f'PASS: {count} gameplay metadata / 55 hook contracts + {source_count} source lookups + 5 negative fixtures')
 
 if __name__=='__main__':
  main()

@@ -8,7 +8,7 @@ class SourceContracts(unittest.TestCase):
   protocol=(ROOT/'PhiMod/Core/PMHookProtocol.hpp').read_text(encoding='utf-8')
   header=(ROOT/'PhiMod/Core/PMHookManifest.hpp').read_text(encoding='utf-8')
   generated=re.findall(r'\{(0x[0-9a-f]+)u,(0x[0-9a-f]+)u\}',header)
-  self.assertEqual(len(manifest),54);self.assertEqual(len(generated),54)
+  self.assertEqual(len(manifest),55);self.assertEqual(len(generated),55)
   for i,(entry,(site,word)) in enumerate(zip(manifest,generated)):
    self.assertRegex(protocol,r'\b'+re.escape(entry['id'])+'='+str(i)+r',')
    self.assertEqual(int(site,16),entry['rva'])
@@ -64,10 +64,16 @@ class SourceContracts(unittest.TestCase):
   self.assertEqual(move.count('orig<JudgeFn>(h::resultMove)(iterator,mi)'),2)
   self.assertIn('resultPresented=false',hook)
   self.assertIn('for(auto c:attempt->flushPendingHolds())',result)
-  self.assertIn('!levelOverStarted&&pmhp::failureReady(r,self)',hook)
+  self.assertIn('!levelOverStarted&&pmhp::failureReady(r,progressControl)',hook)
   self.assertIn('levelOverStarted=true',hook)
   self.assertIn('void clearGameplayMask(Runtime&r,P progressControl)',hook)
-  self.assertIn('clearGameplayMask(r,self)',hook)
+  self.assertIn('clearGameplayMask(r,progressControl)',hook)
+  self.assertIn('orig<VoidFn>(h::judgeUpdate)(self,mi)',hook)
+  self.assertIn('tickGameplay(r,progressControl,"JudgeControl.Update")',hook)
+  self.assertIn('diagnosticTick(r,progressControl,source)',hook)
+  progress_update=hook[hook.index('void onProgressUpdate('):hook.index('void onJudgeUpdate(')]
+  self.assertIn('orig<VoidFn>(h::progressUpdate)(self,mi)',progress_update)
+  self.assertNotIn('tickGameplay(',progress_update)
   self.assertIn('loadingMaskCleared=false',hook)
   self.assertIn('registerOne(note)',hook)
   self.assertNotIn('registerChart(',hook)
@@ -152,6 +158,7 @@ class SourceContracts(unittest.TestCase):
   self.assertIn('bool hpLost=attempt->options().hpEnabled&&attempt->trackLost();',hook)
   self.assertIn('pendingAction(playing||pmhp::failing()||hpLost',hook)
   self.assertIn('attempt->acknowledgeAction(action)',hook)
+  self.assertNotIn('lastTickFrame',hook)
  def test_hold_array_edit_is_scoped_and_no_android_layout(self):
   bridge=(ROOT/'PhiMod/Sources/PMIL2CPP.hpp').read_text(encoding='utf-8')
   modes=(ROOT/'PhiMod/Sources/PMChartModes.mm').read_text(encoding='utf-8')
@@ -170,6 +177,16 @@ class SourceContracts(unittest.TestCase):
   self.assertIn('PMGameplay-contract-v2-'+str(len(manifest)),hook)
   package=(ROOT/'tools/package_unsigned_ipa.py').read_text(encoding='utf-8')
   self.assertIn('PMGameplay-contract-v2-'+str(len(manifest)),package)
+ def test_hp_diagnostics_are_persistent_and_copyable(self):
+  diagnostics=(ROOT/'PhiMod/Sources/PMDiagnostics.mm').read_text(encoding='utf-8')
+  ui=(ROOT/'PhiMod/Sources/PhiModBootstrap.mm').read_text(encoding='utf-8')
+  hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf-8')
+  hp=(ROOT/'PhiMod/Sources/PMHPLife.mm').read_text(encoding='utf-8')
+  self.assertIn('PhiMod-diagnostics.log',diagnostics)
+  self.assertIn('writeToFile:path atomically:YES',diagnostics)
+  self.assertIn('UIPasteboard.generalPasteboard.string=PMDiagnosticsTail(400)',ui)
+  self.assertIn('judgeUpdateHook',hook)
+  self.assertIn('HP failureReady: begin freeze/fade',hp)
  def test_packager_rejects_old_framework_before_copying_payload(self):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp);(root/'source/Payload').mkdir(parents=True);(root/'PhiMod.framework').mkdir()

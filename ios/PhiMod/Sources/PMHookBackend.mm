@@ -1,6 +1,7 @@
 #import "PMHookBackend.h"
 #import "PMSettings.h"
 #import "PMRuntime.h"
+#import "PMDiagnostics.h"
 #include "PMIL2CPP.hpp"
 #include "PMOptions.hpp"
 #include "PMSceneUI.hpp"
@@ -14,12 +15,13 @@
 #include <set>
 #include <sstream>
 #include <cstdio>
+#include <cstdarg>
 namespace {
 using pmbridge::P;
 using pmbridge::Runtime;
 namespace h=phimod::hooks;
 __attribute__((used)) static const char PMGameplayProtocol[16]="PMGameplay-v2";
-__attribute__((used)) static const char PMGameplayBuild[]="PMGameplay-contract-v2-54";
+__attribute__((used)) static const char PMGameplayBuild[]="PMGameplay-contract-v2-55";
 struct V3{float x,y,z;};
 struct V2{float x,y;};
 struct Color{float r,g,b,a;};
@@ -32,6 +34,11 @@ phimod::Options frozenOptions;
 uint32_t progressRoot=0,scoreRoot=0;
   std::set<float> registered;
 std::string lastError="Backend not installed";
+bool judgeUpdateSeen=false;
+bool diagHaveState=false,diagLastPlaying=false,diagLastLeave=false,diagLastLevelBreak=false,diagLastLevelOver=false,diagLastCanLevelOver=false;
+float diagLastNow=0;
+int diagLastFrame=-1;
+unsigned installAttempts=0;
 // All runtime reflection and gameplay callbacks are Unity main-thread only.
 // Persistence callbacks only load the atomic guard and invoke their gateway.
 Runtime &R(){if(!rt||![NSThread isMainThread])throw std::runtime_error("Unity main thread required");return *rt;}
@@ -39,7 +46,10 @@ template<class T>T orig(h::Index i){return reinterpret_cast<T>(gateways[i]);}
 using VoidFn=void(*)(P,P);
 using JudgeFn=bool(*)(P,P);
 using PerfectFn=void(*)(P,float,float,V3,bool,P);
-void fault(const std::exception &e){NSLog(@"[PhiMod] Gameplay failure: %s",e.what());lastError=e.what();broken=true;guard.store(true);if(attempt)attempt->failClosed();}
+void diagf(const char *format,...){
+ char buffer[768];va_list args;va_start(args,format);vsnprintf(buffer,sizeof(buffer),format,args);va_end(args);PMDiagnosticsWrite(buffer);
+}
+void fault(const std::exception &e){diagf("fault: %s",e.what());NSLog(@"[PhiMod] Gameplay failure: %s",e.what());lastError=e.what();broken=true;guard.store(true);if(attempt)attempt->failClosed();}
 bool applying(){return ready&&!broken&&attempt&&attempt->shouldApplyGameplay();}
 P progress(){return progressRoot?R().gchandle_get_target(progressRoot):nullptr;}
 P score(){return scoreRoot?R().gchandle_get_target(scoreRoot):nullptr;}
@@ -63,7 +73,8 @@ void release(uint32_t &root){if(root){R().gchandle_free(root);root=0;}}
 void begin(P p){
  auto &r=R();auto options=frozenOptions;
     release(progressRoot);release(scoreRoot);attempt.reset();resetChartRegistration();resultPresented=false;levelOverStarted=false;loadingMaskCleared=false;
- if(!options.assisted()){lastError="Original gameplay: assistance off";return;}
+ diagf("ProgressControl.Start begin assisted=%d judge=%d autoplay=%d hp=%d challenge=%d",options.assisted(),options.judge,options.autoplay,options.hpEnabled,options.challenge);
+ if(!options.assisted()){lastError="Original gameplay: assistance off";diagf("ProgressControl.Start original gameplay");return;}
  progressRoot=r.gchandle_new(p,false);scoreRoot=r.gchandle_new(r.get<P>(p,"scoreControl"),false);
  attempt=std::make_unique<phimod::Session>();
  attempt->setCoverage({true,true,true,true,true,true,true});
@@ -73,27 +84,34 @@ void begin(P p){
  if(!attempt->begin(baseline))throw std::runtime_error("Incomplete hook coverage");
  if(options.requiresSaveProtection())guard.store(true);
  lastError="Gameplay hooks armed (device verification pending)";
+ diagf("ProgressControl.Start armed baseline P=%.4f G=%.4f B=%.4f",baseline.perfect,baseline.good,baseline.bad);
 }
 void onAwake(P self,P mi){
+ diagf("LevelControl.Awake enter hp=%d",frozenOptions.hpEnabled);
  // A latch survives OnDestroy, disabled switches and the entire result screen.
  // Alternate assisted result never launches the reward/save coroutine.
  if(!broken){
   try{guard.store(PMReadOptions([[PMSettings shared] snapshot]).requiresSaveProtection());}catch(const std::exception &e){fault(e);}
  }
-  try{release(progressRoot);release(scoreRoot);attempt.reset();resetChartRegistration();pmscene::settingsLeave(R());pmscene::clearRecovery(R());pmhp::clear(R());pmmodes::clear(R());}catch(const std::exception&e){fault(e);}
+  try{release(progressRoot);release(scoreRoot);attempt.reset();resetChartRegistration();judgeUpdateSeen=false;pmscene::settingsLeave(R());pmscene::clearRecovery(R());pmhp::clear(R());pmmodes::clear(R());}catch(const std::exception&e){fault(e);}
    inResult=false;resultPresented=false;levelOverStarted=false;loadingMaskCleared=false;
- try{frozenOptions=PMReadOptions([[PMSettings shared] snapshot]);if(!broken){pmhp::prepare(R(),self,frozenOptions);pmmodes::prepare(R(),self,frozenOptions);}}catch(const std::exception&e){fault(e);}
+ try{frozenOptions=PMReadOptions([[PMSettings shared] snapshot]);diagf("LevelControl.Awake options assisted=%d hp=%d hpMax=%.1f",frozenOptions.assisted(),frozenOptions.hpEnabled,frozenOptions.hpMax);if(!broken){pmhp::prepare(R(),self,frozenOptions);diagf("HP prepare ok");pmmodes::prepare(R(),self,frozenOptions);}}catch(const std::exception&e){diagf("LevelControl.Awake prepare failed: %s",e.what());fault(e);}
  orig<VoidFn>(h::levelAwake)(self,mi);
+ diagf("LevelControl.Awake returned");
 }
 void onDestroy(P self,P mi){
+ diagf("LevelControl.OnDestroy enter");
   if(attempt){attempt->result();if(attempt->excluded())guard.store(true);}
-  resultPresented=false;levelOverStarted=false;loadingMaskCleared=false;
+  resultPresented=false;levelOverStarted=false;loadingMaskCleared=false;judgeUpdateSeen=false;
   try{pmhp::clear(R());pmmodes::clear(R());}catch(const std::exception&e){fault(e);}
   resetChartRegistration();
   orig<VoidFn>(h::levelDestroy)(self,mi);
+  diagf("LevelControl.OnDestroy returned");
 }
 void onProgressStart(P self,P mi){
+ diagf("ProgressControl.Start enter");
  orig<VoidFn>(h::progressStart)(self,mi);
+ diagf("ProgressControl.Start original returned");
  try{begin(self);}catch(const std::exception&e){fault(e);}
 }
  void clearGameplayMask(Runtime&r,P progressControl){
@@ -133,11 +151,32 @@ void onMiss(P self,float code,P mi){
 }
 void onBad(P self,float code,float offset,P mi){observe(code,offset,phimod::Rating::Bad);orig<void(*)(P,float,float,P)>(h::bad)(self,code,offset,mi);}
 void onGood(P self,float code,float offset,V3 pos,bool hold,P mi){observe(code,offset,phimod::Rating::Good);orig<PerfectFn>(h::good)(self,code,offset,pos,hold,mi);}
-void onProgressUpdate(P self,P mi){
- orig<VoidFn>(h::progressUpdate)(self,mi);
- if(!applying())return;
+void diagnosticTick(Runtime&r,P progressControl,const char *source){
+ if(!progressControl)return;
+ bool playing=r.get<bool>(progressControl,"isPlaying");
+ float now=r.get<float>(progressControl,"nowTime");
+ int frame=r.get<int>(progressControl,"_nowFrameIndex");
+ bool leave=r.get<bool>(progressControl,"leave");
+ bool breaking=r.get<bool>(progressControl,"levelBreak");
+ bool over=false,canOver=false;
+ P info=r.get<P>(progressControl,"levelInformation");
+ if(info){over=r.get<bool>(info,"levelOver");canOver=r.get<bool>(info,"canLevelOver");}
+ bool stateChanged=!diagHaveState||playing!=diagLastPlaying||leave!=diagLastLeave||breaking!=diagLastLevelBreak||over!=diagLastLevelOver||canOver!=diagLastCanLevelOver||frame<diagLastFrame;
+ bool timeDue=!std::isfinite(diagLastNow)||!std::isfinite(now)||std::fabs(now-diagLastNow)>=.1f;
+ if(stateChanged||timeDue){
+  int phase=attempt?static_cast<int>(attempt->phase()):-1;
+  float hp=attempt?attempt->hp():-1;
+  diagf("tick source=%s frame=%d now=%.3f playing=%d leave=%d break=%d over=%d canOver=%d phase=%d hp=%.2f",source,frame,now,playing,leave,breaking,over,canOver,phase,hp);
+  diagHaveState=true;diagLastPlaying=playing;diagLastLeave=leave;diagLastLevelBreak=breaking;diagLastLevelOver=over;diagLastCanLevelOver=canOver;diagLastNow=now;diagLastFrame=frame;
+ }
+}
+void tickGameplay(Runtime&r,P progressControl,const char *source){
+ if(!progressControl)return;
+ diagnosticTick(r,progressControl,source);
+ float now=r.get<float>(progressControl,"nowTime");
+ if(!attempt||!attempt->shouldApplyGameplay())return;
  try{
-   auto &r=R();clearGameplayMask(r,self);bool playing=r.get<bool>(self,"isPlaying");float now=r.get<float>(self,"nowTime");
+  clearGameplayMask(r,progressControl);bool playing=r.get<bool>(progressControl,"isPlaying");
   // Pending holds only credit at their real tail, not the engine's -220ms
   // completion point. Exactly one sample/HP award and one original Perfect.
   for(auto c:attempt->dueHolds(now,playing)){
@@ -145,17 +184,30 @@ void onProgressUpdate(P self,P mi){
    credit(score(),c.code,c.offset,{c.position[0],c.position[1],c.position[2]},c.hold,nullptr);
   }
   bool hpLost=attempt->options().hpEnabled&&attempt->trackLost();
-  auto action=attempt->pendingAction(playing||pmhp::failing()||hpLost,r.get<bool>(self,"leave"),r.get<bool>(self,"levelBreak"));
-  P info=r.get<P>(self,"levelInformation");
+  auto action=attempt->pendingAction(playing||pmhp::failing()||hpLost,r.get<bool>(progressControl,"leave"),r.get<bool>(progressControl,"levelBreak"));
+  P info=r.get<P>(progressControl,"levelInformation");
   if(action==phimod::Action::Retry){
-   if(attempt->options().requiresSaveProtection())guard.store(true);r.call(self,"LevelBreak",{"System.String"},{r.string_new("Level")});
-   r.put(info,"levelOver",true);r.put(info,"canPause",false);r.call(r.get<P>(self,"audioSource"),"Stop");attempt->acknowledgeAction(action);
-   }else if(action==phimod::Action::TrackLost&&!levelOverStarted&&pmhp::failureReady(r,self)){
-   r.call(score(),"FreezeScore");r.put(self,"isPlaying",false);r.put(info,"levelOver",true);r.put(info,"canLevelOver",true);
-    P routine=r.call(self,"LevelOver");r.call(self,"StartCoroutine",{"System.Collections.IEnumerator"},{routine});levelOverStarted=true;attempt->acknowledgeAction(action);r.call(r.get<P>(self,"audioSource"),"Stop");
+   if(attempt->options().requiresSaveProtection())guard.store(true);r.call(progressControl,"LevelBreak",{"System.String"},{r.string_new("Level")});
+   r.put(info,"levelOver",true);r.put(info,"canPause",false);r.call(r.get<P>(progressControl,"audioSource"),"Stop");attempt->acknowledgeAction(action);diagf("gameplay retry dispatched");
+  }else if(action==phimod::Action::TrackLost&&!levelOverStarted&&pmhp::failureReady(r,progressControl)){
+   diagf("HP failure ready; starting LevelOver");
+   r.call(score(),"FreezeScore");r.put(progressControl,"isPlaying",false);r.put(info,"levelOver",true);r.put(info,"canLevelOver",true);
+   P routine=r.call(progressControl,"LevelOver");r.call(progressControl,"StartCoroutine",{"System.Collections.IEnumerator"},{routine});levelOverStarted=true;attempt->acknowledgeAction(action);r.call(r.get<P>(progressControl,"audioSource"),"Stop");
+   diagf("HP LevelOver coroutine started");
   }
   pmhp::frame(r,attempt->hp());
- }catch(const std::exception&e){lastError=std::string("Transition pending: ")+e.what();NSLog(@"[PhiMod] %s",lastError.c_str());}
+ }catch(const std::exception&e){lastError=std::string("Transition pending: ")+e.what();diagf("Transition pending: %s",e.what());NSLog(@"[PhiMod] %s",lastError.c_str());}
+}
+void onProgressUpdate(P self,P mi){
+ orig<VoidFn>(h::progressUpdate)(self,mi);
+ try{diagnosticTick(R(),self,"ProgressControl.Update");}catch(const std::exception&e){diagf("ProgressControl.Update diagnostic failed: %s",e.what());}
+}
+void onJudgeUpdate(P self,P mi){
+ judgeUpdateSeen=true;
+ orig<VoidFn>(h::judgeUpdate)(self,mi);
+ try{
+  auto &r=R();P progressControl=r.get<P>(self,"progressControl");tickGameplay(r,progressControl,"JudgeControl.Update");
+ }catch(const std::exception&e){lastError=std::string("JudgeControl.Update: ")+e.what();diagf("JudgeControl.Update failed: %s",e.what());}
 }
 bool noteJudge(P self,P mi,h::Index index,bool hold){
  if(!applying())return orig<JudgeFn>(index)(self,mi);
@@ -299,32 +351,37 @@ P onResultStart(P self,P mi){
   return more;
  }
 void onLifeStart(P self,P mi){
+ diagf("SecretChallengeLifeBar.Start active=%d",pmhp::active());
  if(!pmhp::active()){orig<VoidFn>(h::lifeStart)(self,mi);return;}
  try{pmhp::barStart(R(),self);}catch(const std::exception&e){
   lastError=std::string("Native HP bar: ")+e.what();
+  diagf("Native HP bar failed: %s",e.what());
   orig<VoidFn>(h::lifeStart)(self,mi);
  }
 }
 float onLifeNormalized(P self,P game,P mi){
  try{if(pmhp::ownsBar(R(),self))return pmhp::normalized();}
- catch(const std::exception&e){lastError=std::string("Native HP normalized: ")+e.what();}
+ catch(const std::exception&e){lastError=std::string("Native HP normalized: ")+e.what();diagf("Native HP normalized failed: %s",e.what());}
  return orig<float(*)(P,P,P)>(h::lifeNormalized)(self,game,mi);
 }
 void onLifeModStart(P self,P mi){
+ diagf("SecretChallengeLifeMod.Start active=%d",pmhp::active());
  if(!pmhp::active()){orig<VoidFn>(h::lifeModStart)(self,mi);return;}
  try{pmhp::modStart(R(),self);}catch(const std::exception&e){
   lastError=std::string("Native HP mod: ")+e.what();
+  diagf("Native HP mod failed: %s",e.what());
   orig<VoidFn>(h::lifeModStart)(self,mi);
  }
 }
-void onHPBackgroundStart(P self,P mi){try{pmhp::backgroundBefore(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::hpBackgroundStart)(self,mi);try{if(pmhp::active())pmhp::frame(R(),attempt?attempt->hp():frozenOptions.hpMax);}catch(const std::exception&e){lastError=e.what();}}
+void onHPBackgroundStart(P self,P mi){diagf("HPDisplayControl.Start active=%d",pmhp::active());try{pmhp::backgroundBefore(R());}catch(const std::exception&e){lastError=e.what();diagf("HP background capture failed: %s",e.what());}orig<VoidFn>(h::hpBackgroundStart)(self,mi);try{if(pmhp::active())pmhp::frame(R(),attempt?attempt->hp():frozenOptions.hpMax);}catch(const std::exception&e){lastError=e.what();diagf("HP background update failed: %s",e.what());}}
 void onLifeUpdate(P self,P mi){
  try{if(pmhp::ownsBar(R(),self)){pmhp::barUpdate(R(),self);return;}}
- catch(const std::exception&e){lastError=std::string("Native HP update: ")+e.what();orig<VoidFn>(h::lifeUpdate)(self,mi);return;}
+ catch(const std::exception&e){lastError=std::string("Native HP update: ")+e.what();diagf("Native HP update failed: %s",e.what());orig<VoidFn>(h::lifeUpdate)(self,mi);return;}
  orig<VoidFn>(h::lifeUpdate)(self,mi);
 }
  P onProgressLevelOver(P self,P mi){
-  if(pmhp::active())try{pmhp::finish(R());}catch(const std::exception&e){lastError=std::string("HP result cleanup: ")+e.what();}
+  diagf("ProgressControl.LevelOver enter hpActive=%d",pmhp::active());
+  if(pmhp::active())try{pmhp::finish(R());}catch(const std::exception&e){lastError=std::string("HP result cleanup: ")+e.what();diagf("HP result cleanup failed: %s",e.what());}
   return orig<P(*)(P,P)>(h::progressLevelOver)(self,mi);
  }
 void onLevelCodes(P self,P mi){
@@ -399,6 +456,8 @@ void onCheckFlick(P s,int f,P m){onCheck(s,f,m,h::checkFlick);}
 @implementation PMHookBackend
 + (NSDictionary *)install {
  if(ready)return [self status];
+ ++installAttempts;
+ if(installAttempts<=3||installAttempts%10==0)diagf("PMHookBackend.install attempt=%u",installAttempts);
  try{
   auto candidate=std::make_unique<Runtime>();candidate->open();candidate->mainGame();auto &r=*candidate;
   const section_64 *code=nullptr,*data=nullptr;auto cursor=reinterpret_cast<const uint8_t*>(r.imageHeader+1);auto end=cursor+r.imageHeader->sizeofcmds;
@@ -427,6 +486,8 @@ void onCheckFlick(P s,int f,P m){onCheck(s,f,m,h::checkFlick);}
    gateways[i]=const_cast<uint8_t*>(base)+e.gateway;
   }
   // Scalar fields are size/type checked before publishing any callback.
+  r.field(r.klass("JudgeControl"),"progressControl","ProgressControl",false);
+  r.field(r.klass("JudgeControl"),"stopJudge","System.Boolean",false);
   r.field(r.klass("ProgressControl"),"_isFirstTimeLaunch","System.Boolean",false);
   r.field(r.klass("ProgressControl"),"_isFirstTimeLaunchInGuide","System.Boolean",false);
   r.field(r.klass("ProgressControl"),"isPlaying","System.Boolean",false);
@@ -533,11 +594,11 @@ void onCheckFlick(P s,int f,P m){onCheck(s,f,m,h::checkFlick);}
   r.resolve(r.klass("AddressableAudioSource"),"set_Volume",{"System.Single"});
   pmhp::validate(r);pmmodes::validate(r);
   rt=std::move(candidate);
-  P callbacks[h::Count]={reinterpret_cast<P>(onAwake),reinterpret_cast<P>(onDestroy),reinterpret_cast<P>(onProgressStart),reinterpret_cast<P>(onProgressUpdate),reinterpret_cast<P>(onMiss),reinterpret_cast<P>(onBad),reinterpret_cast<P>(onGood),reinterpret_cast<P>(onPerfect),reinterpret_cast<P>(onScoreUpdate),reinterpret_cast<P>(onResultInfo),reinterpret_cast<P>(onClick),reinterpret_cast<P>(onDrag),reinterpret_cast<P>(onHold),reinterpret_cast<P>(onFlick),reinterpret_cast<P>(onRecord),reinterpret_cast<P>(onSetRecord),reinterpret_cast<P>(onRanking),reinterpret_cast<P>(onResultStart),reinterpret_cast<P>(onResultMove),reinterpret_cast<P>(onSelector),reinterpret_cast<P>(onSelectorOff),reinterpret_cast<P>(onSetting),reinterpret_cast<P>(onSettingTab),reinterpret_cast<P>(onSettingBack),reinterpret_cast<P>(onPress),reinterpret_cast<P>(onCheckNote),reinterpret_cast<P>(onCheckFlick),reinterpret_cast<P>(onDelete),reinterpret_cast<P>(saveBool<h::SaveBool>),reinterpret_cast<P>(saveInt<h::SaveInt>),reinterpret_cast<P>(saveFloat<h::SaveFloat>),reinterpret_cast<P>(onSaveDate),reinterpret_cast<P>(saveString<h::SaveString>),reinterpret_cast<P>(saveBool<h::LegacySaveBool>),reinterpret_cast<P>(saveInt<h::LegacySaveInt>),reinterpret_cast<P>(saveFloat<h::LegacySaveFloat>),reinterpret_cast<P>(saveString<h::LegacySaveString>),reinterpret_cast<P>(onPointerClick),reinterpret_cast<P>(onSubmit),reinterpret_cast<P>(onLifeStart),reinterpret_cast<P>(onLifeNormalized),reinterpret_cast<P>(onLifeModStart),reinterpret_cast<P>(onHPBackgroundStart),reinterpret_cast<P>(onProgressLevelOver),reinterpret_cast<P>(onLifeUpdate),reinterpret_cast<P>(onLevelCodes),reinterpret_cast<P>(onLevelInformation),reinterpret_cast<P>(onNoteManager),reinterpret_cast<P>(onBlocking),reinterpret_cast<P>(onBlockLate),reinterpret_cast<P>(onHoldMove),reinterpret_cast<P>(onNoteMove<h::clickMove>),reinterpret_cast<P>(onNoteMove<h::dragMove>),reinterpret_cast<P>(onNoteMove<h::flickMove>)};
+  P callbacks[h::Count]={reinterpret_cast<P>(onAwake),reinterpret_cast<P>(onDestroy),reinterpret_cast<P>(onProgressStart),reinterpret_cast<P>(onProgressUpdate),reinterpret_cast<P>(onMiss),reinterpret_cast<P>(onBad),reinterpret_cast<P>(onGood),reinterpret_cast<P>(onPerfect),reinterpret_cast<P>(onScoreUpdate),reinterpret_cast<P>(onResultInfo),reinterpret_cast<P>(onClick),reinterpret_cast<P>(onDrag),reinterpret_cast<P>(onHold),reinterpret_cast<P>(onFlick),reinterpret_cast<P>(onRecord),reinterpret_cast<P>(onSetRecord),reinterpret_cast<P>(onRanking),reinterpret_cast<P>(onResultStart),reinterpret_cast<P>(onResultMove),reinterpret_cast<P>(onSelector),reinterpret_cast<P>(onSelectorOff),reinterpret_cast<P>(onSetting),reinterpret_cast<P>(onSettingTab),reinterpret_cast<P>(onSettingBack),reinterpret_cast<P>(onPress),reinterpret_cast<P>(onCheckNote),reinterpret_cast<P>(onCheckFlick),reinterpret_cast<P>(onDelete),reinterpret_cast<P>(saveBool<h::SaveBool>),reinterpret_cast<P>(saveInt<h::SaveInt>),reinterpret_cast<P>(saveFloat<h::SaveFloat>),reinterpret_cast<P>(onSaveDate),reinterpret_cast<P>(saveString<h::SaveString>),reinterpret_cast<P>(saveBool<h::LegacySaveBool>),reinterpret_cast<P>(saveInt<h::LegacySaveInt>),reinterpret_cast<P>(saveFloat<h::LegacySaveFloat>),reinterpret_cast<P>(saveString<h::LegacySaveString>),reinterpret_cast<P>(onPointerClick),reinterpret_cast<P>(onSubmit),reinterpret_cast<P>(onLifeStart),reinterpret_cast<P>(onLifeNormalized),reinterpret_cast<P>(onLifeModStart),reinterpret_cast<P>(onHPBackgroundStart),reinterpret_cast<P>(onProgressLevelOver),reinterpret_cast<P>(onLifeUpdate),reinterpret_cast<P>(onLevelCodes),reinterpret_cast<P>(onLevelInformation),reinterpret_cast<P>(onNoteManager),reinterpret_cast<P>(onBlocking),reinterpret_cast<P>(onBlockLate),reinterpret_cast<P>(onHoldMove),reinterpret_cast<P>(onNoteMove<h::clickMove>),reinterpret_cast<P>(onNoteMove<h::dragMove>),reinterpret_cast<P>(onNoteMove<h::flickMove>),reinterpret_cast<P>(onJudgeUpdate)};
   auto slots=reinterpret_cast<h::Slot*>(const_cast<uint8_t*>(base)+state);
   for(uint32_t i=0;i<h::Count;++i)__atomic_store_n(&slots[i].callback,reinterpret_cast<uint64_t>(callbacks[i]),__ATOMIC_RELEASE);
-  ready=true;lastError="54 offline entry hooks v2 installed; verify on device";return [self status];
- }catch(const std::exception&e){lastError=e.what();return [self status];}
+  ready=true;lastError="55 offline entry hooks v2 installed; verify on device";diagf("PMHookBackend.install success hooks=%u judgeUpdate=1",h::Count);return [self status];
+ }catch(const std::exception&e){lastError=e.what();if(installAttempts<=3||installAttempts%10==0)diagf("PMHookBackend.install failed: %s",e.what());return [self status];}
 }
 + (BOOL)protectJudgeChange {
  if(!ready||broken)return NO;
@@ -545,6 +606,6 @@ void onCheckFlick(P s,int f,P m){onCheck(s,f,m,h::checkFlick);}
  return YES;
 }
 + (NSDictionary *)status {
- return @{ @"ok":@(ready&&!broken),@"ready":@(ready),@"failedClosed":@(broken),@"saveGuard":@(guard.load()),@"hookCount":@(ready?h::Count:0),@"autoplay":@(applying()&&attempt->options().autoplay),@"hp":@(attempt?attempt->hp():0),@"noiseReady":@(ready&&!broken),@"unifiedReady":@(ready&&!broken),@"message":[NSString stringWithUTF8String:lastError.c_str()] ?: @"Backend error" };
+ return @{ @"ok":@(ready&&!broken),@"ready":@(ready),@"failedClosed":@(broken),@"saveGuard":@(guard.load()),@"hookCount":@(ready?h::Count:0),@"judgeUpdateHook":@(judgeUpdateSeen),@"autoplay":@(applying()&&attempt->options().autoplay),@"hp":@(attempt?attempt->hp():0),@"noiseReady":@(ready&&!broken),@"unifiedReady":@(ready&&!broken),@"diagnosticPath":PMDiagnosticsPath(),@"diagnosticTail":PMDiagnosticsTail(80),@"message":[NSString stringWithUTF8String:lastError.c_str()] ?: @"Backend error" };
 }
 @end

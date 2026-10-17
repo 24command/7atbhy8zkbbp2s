@@ -1,8 +1,10 @@
 # Current migration status - 2026-10-17
 
-**Current source: PMGameplay-v2 / 54 hooks, framework 0.2.0 (54).**
-Downloaded framework7 and the previously packaged framework7 IPA DO NOT contain
-this revision. No new framework or game IPA has been built locally for it.
+**Current source: PMGameplay-v2 / 55 hooks, framework 0.2.0 (55).**
+The added `JudgeControl.Update` hook moves the HP/gameplay frame tick onto the
+same Unity lifecycle used by Android. A persistent diagnostics log can be copied
+from the floating panel's Settings tab. The 55-hook framework still needs a
+GitHub Actions Apple SDK build and device verification.
 
 The five reported device issues now have source fixes: practice result flow,
 HP-zero transition, native HP effects, settings MOD button clicks, song shortcut

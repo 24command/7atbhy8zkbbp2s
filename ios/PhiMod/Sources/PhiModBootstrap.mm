@@ -4,6 +4,7 @@
 #import "PMRuntime.h"
 #import "PMGameplay.h"
 #import "PMHookBackend.h"
+#import "PMDiagnostics.h"
 
 static const NSInteger PMOverlayRootTag = 0x50484D4F;
 static NSString * const PMBubbleXKey = @"phimod.ios.bubble.x";
@@ -173,7 +174,7 @@ static UIColor *PMColor(uint32_t argb) {
     close.tag = 102;
     [self.panelHeader addSubview:close];
 
-    self.statusLabel = [self label:@"PhiMod gameplay v1 | verify hooks and back up saves" size:11 color:PMColor(0xff92a2b9)];
+    self.statusLabel = [self label:@"PhiMod gameplay v2 | verify hooks and back up saves" size:11 color:PMColor(0xff92a2b9)];
     [self.panel addSubview:self.statusLabel];
 
     self.tabBar = [[UIStackView alloc] init];
@@ -259,6 +260,8 @@ static UIColor *PMColor(uint32_t argb) {
  if(ok && [sender.accessibilityIdentifier isEqualToString:@"opacity"])self.bubble.alpha=number*(self.open?0.65:1);
 }
 - (void)probeRuntime {self.statusLabel.text=[PMRuntime probe];}
+- (void)copyDiagnostics {UIPasteboard.generalPasteboard.string=PMDiagnosticsTail(400);self.statusLabel.text=[NSString stringWithFormat:@"Diagnostics copied: %@",PMDiagnosticsPath().lastPathComponent];}
+- (void)clearDiagnostics {PMDiagnosticsClear();self.statusLabel.text=@"Diagnostics cleared";}
 - (void)previewGameplay {NSDictionary *r=[PMGameplay previewConfiguration];self.statusLabel.text=r[@"message"] ?: @"配置错误";}
 - (void)validateGameplay {NSDictionary *r=[PMGameplay validateConfiguration];self.statusLabel.text=r[@"message"] ?: @"配置错误";}
 - (void)readGameSnapshot {
@@ -282,6 +285,7 @@ static UIColor *PMColor(uint32_t argb) {
  for(NSArray *p in numbers)[self addSetting:p[0] title:p[1] boolean:NO];
  }
  if(self.selectedTab==4){[self addSetting:@"opacity" title:@"浮窗透明度 0.15–1（立即生效）" boolean:NO];[self addSetting:@"showShortcuts" title:@"选曲快捷按钮" boolean:YES];[self.body addArrangedSubview:[self textButton:@"读取游戏状态（实际读取）" action:@selector(readGameSnapshot)]];[self.body addArrangedSubview:[self textButton:@"切换中文" action:@selector(setChinese)]];[self.body addArrangedSubview:[self textButton:@"切换 English" action:@selector(setEnglish)]];[self.body addArrangedSubview:[self textButton:@"只读探测 IL2CPP" action:@selector(probeRuntime)]];}
+ if(self.selectedTab==4){[self.body addArrangedSubview:[self textButton:@"Copy diagnostics" action:@selector(copyDiagnostics)]];[self.body addArrangedSubview:[self textButton:@"Clear diagnostics" action:@selector(clearDiagnostics)]];}
  [self.body addArrangedSubview:[self textButton:@"Validate gameplay config" action:@selector(validateGameplay)]];
  [self.body addArrangedSubview:[self textButton:@"Preview gameplay config (not applied)" action:@selector(previewGameplay)]];
  [self.body addArrangedSubview:[self textButton:@"UI 自检" action:@selector(runSelfTest)]];

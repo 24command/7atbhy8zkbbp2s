@@ -1,7 +1,7 @@
 # PhiMod iOS - device fixes + native gameplay modes
 
-Source revision: **2026-10-17**, protocol **PMGameplay-v2 / 54 hooks**,
-framework version **0.2.0 (54)**. This revision is newer than framework7.
+Source revision: **2026-10-17**, protocol **PMGameplay-v2 / 55 hooks**,
+framework version **0.2.0 (55)**. This revision is newer than framework10.
 **It must be rebuilt with the Apple iOS SDK before creating a new test IPA.**
 
 Start with [DEVICE_FIX_20261017.md](DEVICE_FIX_20261017.md) for the Chinese
@@ -44,7 +44,7 @@ bash ios/build_unsigned.sh
 
 Use the NEW framework with the NEW packaging tools and the ORIGINAL extracted
 Payload. Merely replacing PhiMod.framework inside an older patched IPA is not
-sufficient: the Unity entry gates changed from 37 to 54 and from v1 to v2.
+sufficient: the Unity entry gates changed from 37 to 55 and from v1 to v2.
 The helper rejects stale frameworks before copying the game.
 
 ```powershell
@@ -56,7 +56,7 @@ python ios\tools\package_unsigned_ipa.py `
 
 The source app is not modified. In a temporary copy, the helper embeds
 PhiMod.framework, adds the load dependency to UnityFramework, installs the
-UUID/prologue-gated judge patch and 54 gameplay gateways, and removes old
+UUID/prologue-gated judge patch and 55 gameplay gateways, and removes old
 signature data. No runtime executable-page writes or external hook library are
 used. Final output is deliberately unsigned.
 
