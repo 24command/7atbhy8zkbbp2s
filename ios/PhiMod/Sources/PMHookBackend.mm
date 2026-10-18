@@ -54,6 +54,7 @@ void diagf(const char *format,...){
  char buffer[768];va_list args;va_start(args,format);vsnprintf(buffer,sizeof(buffer),format,args);va_end(args);PMDiagnosticsWrite(buffer);
 }
 struct PlaybackJudgeScope{Runtime&r;explicit PlaybackJudgeScope(Runtime&value):r(value){pmpractice::judgeRateEnter(r);}~PlaybackJudgeScope(){pmpractice::judgeRateLeave();}};
+void resetChartRegistration(){registered.clear();}
 void restartPracticeSession(){
  if(attempt&&attempt->phase()==phimod::Phase::Playing){attempt->restartSegment();resetChartRegistration();try{pmmodes::restartSegment(R());if(attempt->options().hpEnabled)pmhp::beginAttempt(attempt->hp());diagf("Practice segment session reset hp=%.2f",attempt->hp());}catch(const std::exception&e){diagf("Practice session reset failed: %s",e.what());}}
 }
@@ -83,7 +84,6 @@ bool applying(){return ready&&!broken&&attempt&&attempt->shouldApplyGameplay();}
 P progress(){return progressRoot?R().gchandle_get_target(progressRoot):nullptr;}
 P score(){return scoreRoot?R().gchandle_get_target(scoreRoot):nullptr;}
 void release(uint32_t &root){if(root){R().gchandle_free(root);root=0;}}
-  void resetChartRegistration(){registered.clear();}
  bool registerOne(P note){
   if(!attempt||!note)return false;
   try{
