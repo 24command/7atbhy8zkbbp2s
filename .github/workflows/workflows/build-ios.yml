@@ -34,6 +34,15 @@ jobs:
           file "$RUNNER_TEMP/out/PhiMod.framework/PhiMod"
           xcrun lipo -info "$RUNNER_TEMP/out/PhiMod.framework/PhiMod"
           codesign --verify --verbose "$RUNNER_TEMP/out/PhiMod.framework"
+          python3 - "$RUNNER_TEMP/out/PhiMod.framework/PhiMod" <<'PY'
+          import sys
+          from pathlib import Path
+          binary = Path(sys.argv[1]).read_bytes()
+          for marker in (b"PMJudgeHook-v1", b"PMGameplay-v2", b"PMGameplay-contract-v2-57"):
+              assert marker in binary, f"Missing build marker: {marker!r}"
+          assert b"PMGameplay-v1" not in binary, "Stale gameplay protocol"
+          print("PASS: framework judge/gameplay protocol v2, 57 hooks")
+          PY
           cd "$RUNNER_TEMP/out"
           ditto -c -k --keepParent PhiMod.framework PhiMod.framework.zip
       - uses: actions/upload-artifact@v4
