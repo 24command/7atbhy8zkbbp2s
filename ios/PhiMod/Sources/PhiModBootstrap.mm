@@ -6,6 +6,7 @@
 #import "PMHookBackend.h"
 #import "PMDiagnostics.h"
 #import "PMPracticeControls.h"
+#import "PMContentUI.h"
 
 static const NSInteger PMOverlayRootTag = 0x50484D4F;
 static NSString * const PMBubbleXKey = @"phimod.ios.bubble.x";
@@ -280,12 +281,14 @@ static UIColor *PMColor(uint32_t argb) {
 - (void)selectModeCategory:(UISegmentedControl *)sender {self.selectedModeCategory=sender.selectedSegmentIndex;[self renderPage];}
 - (void)practiceCommand:(UIButton *)sender {NSDictionary *r=[PMHookBackend practiceCommand:sender.tag-700];self.statusLabel.text=r[@"message"] ?: @"Practice command unavailable";}
 - (void)refreshPracticeStatus {NSDictionary *r=[PMHookBackend practiceStatus];self.statusLabel.text=r[@"message"] ?: @"Practice status unavailable";}
+- (void)openLibrary {self.open=NO;self.panel.hidden=YES;PMShowContent(self.root,NO);}
+- (void)openChapters {self.open=NO;self.panel.hidden=YES;PMShowContent(self.root,YES);}
 - (void)renderPage {
  for(UIView *view in self.body.arrangedSubviews.copy){[self.body removeArrangedSubview:view];[view removeFromSuperview];}
  NSArray *names=@[@"谱库",@"章节",@"判定",@"模式",@"设置"];
  [self.body addArrangedSubview:[self label:names[self.selectedTab] size:18 color:PMColor(0xfff1f5fa)]];
  [self.body addArrangedSubview:[self label:@"Practice hooks + original-style song shortcuts / MOD tab. Back up saves. Native Noise / Unified / Hold tuning connected; device verification pending." size:12 color:PMColor(0xff92a2b9)]];
- if(self.selectedTab==0 || self.selectedTab==1){[self.body addArrangedSubview:[self label:@"等待移植谱面存储、导入和游戏导航；不会修改原版曲库。" size:13 color:PMColor(0xff92a2b9)]];}
+ if(self.selectedTab==0 || self.selectedTab==1){[self.body addArrangedSubview:[self label:@"ZIP / PEZ、原生 JSON / PEC / RPE 谱包。文件保存在应用 Documents/PhiMod，可导入多文件、分组、编辑章节与导出。" size:13 color:PMColor(0xff92a2b9)]];[self.body addArrangedSubview:[self textButton:self.selectedTab==0?@"打开谱库管理":@"打开章节管理" action:self.selectedTab==0?@selector(openLibrary):@selector(openChapters)]];}
  if(self.selectedTab==2){[self addSetting:@"enabled" title:@"Custom judge (apply to game)" boolean:YES];[self addSetting:@"perfect" title:@"Perfect / ms" boolean:NO];[self addSetting:@"good" title:@"Good / ms" boolean:NO];[self addSetting:@"holdGrace" title:@"Noise Hold grace / ms" boolean:NO];}
  if(self.selectedTab==3){
   NSArray *categories=@[@"模式",@"练习",@"噪域",@"HP"];
@@ -306,6 +309,9 @@ static UIColor *PMColor(uint32_t argb) {
    [self addSetting:@"practicePosition" title:@"定位位置 / 秒" boolean:NO];
    [self addSetting:@"practiceLoop" title:@"到终点后循环本区间" boolean:YES];
    [self addSetting:@"practiceCountdown" title:@"开始区间前倒数 3 秒" boolean:YES];
+   [self addSetting:@"practiceWhiteUi" title:@"白色区间 UI（练习面板也可切换）" boolean:YES];
+   [self addSetting:@"noteFlowEnabled" title:@"启用练习流速调整" boolean:YES];
+   [self addSetting:@"noteFlow" title:@"音符流速 0–5×" boolean:NO];
    for(NSArray *entry in @[@[@"开始区间",@0],@[@"暂停 / 继续",@1],@[@"重播区间",@2],@[@"播放整首",@3],@[@"应用当前练习倍速",@4],@[@"定位并播放",@5],@[@"应用起止 / 循环 / 倒数",@6],@[@"定位并暂停预览",@7]]){UIButton *b=[self textButton:entry[0] action:@selector(practiceCommand:)];b.tag=700+[entry[1] integerValue];[self.body addArrangedSubview:b];}
    [self.body addArrangedSubview:[self textButton:@"刷新练习状态" action:@selector(refreshPracticeStatus)]];
   }else if(self.selectedModeCategory==2){

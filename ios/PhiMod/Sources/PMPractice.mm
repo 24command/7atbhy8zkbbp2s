@@ -3,6 +3,7 @@
 #include "PMHPLife.hpp"
 #include "PMChartModes.hpp"
 #include "PMDiagnostics.h"
+#import "PMSettings.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -12,6 +13,7 @@ namespace pmpractice {
 namespace {
 phimod::Options options;
 uint32_t progressRoot=0,sourceRoot=0,audioRoot=0;
+float originalFlowSpeed=1;bool flowCaptured=false;
 float originalPitch=1,effectiveRate=1,anchorNative=0,anchorClip=0,lastNative=0;
 bool active=false,segment=false,segmentPaused=false,entryPending=false,segmentEnded=false,restartPending=false,anchorReady=false,pitchCaptured=false,countdownActive=false,countdownAudio=false;
 float segmentStart=0,segmentEnd=-1,segmentDuration=0,segmentCursor=0,countdownTarget=0,countdownFrom=0,countdownAt=0;
@@ -124,6 +126,7 @@ void begin(Runtime&r,P progress){
  PMDiagnosticsWrite("Practice runtime armed; segment will pause after chart/audio preparation");
 }
 void clear(Runtime&r){
+ if(flowCaptured){try{r.setStaticValue<float>(r.klass("LevelInformation"),"Speed","System.Single",originalFlowSpeed);}catch(...){}flowCaptured=false;}
  if(pitchCaptured){try{setPitch(r,originalPitch);}catch(const std::exception&e){PMDiagnosticsWrite((std::string("Practice pitch restore failed: ")+e.what()).c_str());}}
  for(uint32_t*h:{&progressRoot,&sourceRoot,&audioRoot})release(r,*h);
  pmpracticepreview::clear();
@@ -186,6 +189,7 @@ bool updateRange(Runtime&r,const phimod::Options&changed){
 State state(Runtime&r){State s{};s.active=active;s.segment=segment;s.paused=segmentPaused;s.countdown=countdownActive;s.ended=segmentEnded;s.loop=options.practiceLoop;s.countIn=options.practiceCountdown;s.ready=active&&!entryPending&&segmentDuration>0;s.start=segmentStart;s.end=segmentEnd;s.duration=segmentDuration;s.cursor=segmentCursor;s.rate=options.playbackRate;s.effectiveRate=effectiveRate;P p=progressObject(r);if(p){s.cursor=r.get<float>(p,"nowTime");s.playing=r.get<bool>(p,"isPlaying");}return s;}
 bool command(Runtime&r,int action,float requestedRate,float requestedPosition){
  P progress=progressObject(r);if(!progress||!active||entryPending||r.get<bool>(progress,"leave")||r.get<bool>(progress,"levelBreak"))return false;
+ if(action==8){P klass=r.klass("LevelInformation");r.runtime_class_init(klass);if(!flowCaptured){originalFlowSpeed=r.staticValue<float>(klass,"Speed","System.Single");flowCaptured=true;}float flow=[[[PMSettings shared]value:@"noteFlowEnabled"]boolValue]?[[[PMSettings shared]value:@"noteFlow"]floatValue]:1;if(!std::isfinite(flow)||flow<0||flow>5)return false;r.setStaticValue<float>(klass,"Speed","System.Single",originalFlowSpeed*flow);return true;}
  if(action==4){
   if(!std::isfinite(requestedRate)||requestedRate<0||requestedRate>5)return false;
   P source=sourceObject(r);float clipNow=source?r.get<float>(source,"time"):0;

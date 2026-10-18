@@ -61,6 +61,9 @@ struct Runtime {
     P (*type_get_object)(P)=nullptr;
     P (*object_new)(P)=nullptr;
     P (*string_new)(const char*)=nullptr;
+    const char16_t*(*string_chars)(P)=nullptr;
+    int32_t(*string_length)(P)=nullptr;
+    P(*string_new_utf16)(const char16_t*,int32_t)=nullptr;
     uint32_t (*gchandle_new)(P,bool)=nullptr;
     P (*gchandle_get_target)(uint32_t)=nullptr;
     void (*gchandle_free)(uint32_t)=nullptr;
@@ -122,7 +125,7 @@ struct Runtime {
         PM_API(class_from_type); PM_API(class_is_valuetype); PM_API(class_value_size);
         PM_API(object_get_class); PM_API(class_get_parent); PM_API(class_get_nested_types);
         PM_API(class_get_name); PM_API(class_get_type); PM_API(type_get_object);
-        PM_API(object_new); PM_API(string_new); PM_API(gchandle_new); PM_API(gchandle_get_target);
+        PM_API(object_new); PM_API(string_new); PM_API(string_chars); PM_API(string_length); PM_API(string_new_utf16); PM_API(gchandle_new); PM_API(gchandle_get_target);
         PM_API(gchandle_free); PM_API(field_set_value); PM_API(array_new); PM_API(array_length);
 #undef PM_API
         domain=domain_get();
@@ -301,6 +304,8 @@ struct Runtime {
         return invokeOn(resolve(c,name,params,true),nullptr,args);
     }
     template<class T> T unbox(P obj) {if(!obj)throw std::runtime_error("Null boxed value");checkClass<T>(object_get_class(obj));T v{};P data=object_unbox(obj);if(!data)throw std::runtime_error("Unbox failed");memcpy(&v,data,sizeof(v));return v;}
+    NSString*string(P value){if(!value)return @"";int32_t n=string_length(value);if(n<0||n>300000000)throw std::runtime_error("Invalid managed string length");return [[NSString alloc]initWithCharacters:reinterpret_cast<const unichar*>(string_chars(value)) length:n] ?: @"";}
+    P managedString(NSString*value){std::vector<unichar>chars(value.length);[value getCharacters:chars.data() range:NSMakeRange(0,value.length)];return string_new_utf16(reinterpret_cast<const char16_t*>(chars.data()),int32_t(chars.size()));}
     int count(P list){return list?unbox<int>(call(list,"get_Count")):0;}
     P at(P list,int index){return call(list,"get_Item",{"System.Int32"},{&index});}
     P arrayAt(P array,int index){return invokeOn(resolve(type("System","Array"),"GetValue",{"System.Int32"}),array,{&index});}

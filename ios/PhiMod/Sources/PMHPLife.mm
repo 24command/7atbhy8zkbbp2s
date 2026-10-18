@@ -16,7 +16,8 @@ struct VisualLoad {const char*key;uint32_t handle=0;bool settled=false;};
 VisualLoad visualLoads[]={{"LevelMod/SecretChallengeLifeMod"},{"LevelMod/HPDisplay"}};
 std::chrono::steady_clock::time_point nextVisualPoll{};
 bool enabled=false,finished=false,backgroundOwned=false,textOwned=false;
-float life=0,originalOpacity=0,originalGlow=0;
+float life=0,originalOpacity=0,originalGlow=0,hitFlashAt=-1;
+bool hitPending=false;
 Color originalMain{},originalCover{},originalText[2]{};
 P target(Runtime&r,uint32_t h){return h?r.gchandle_get_target(h):nullptr;}
 void release(Runtime&r,uint32_t &h){if(h){r.gchandle_free(h);h=0;}}
@@ -123,7 +124,7 @@ void backgroundBefore(Runtime&r){
  PMDiagnosticsWrite("HP background captured");
 }
 void frame(Runtime&r,float hp){
- if(!enabled)return;life=hp;P bar=target(r,barRoot);
+ if(!enabled)return;if(hp!=life)hitPending=true;life=hp;P bar=target(r,barRoot);
  if(r.alive(bar))setEnabled(r,r.get<P>(bar,"target"),options.hpTop&&!finished);
  if(!backgroundOwned)return;
  P c=r.klass("HPDisplayControl");float ratio=normalized(),opacity=options.hpBackground&&!finished?.1f:0.f,glow=0;
@@ -134,16 +135,16 @@ void frame(Runtime&r,float hp){
 void scoreFrame(Runtime&r,P score){
  if(!enabled||finished)return;
  if(!scoreRoot)scoreRoot=r.gchandle_new(score,false);
- P mod=target(r,modRoot);
- if(textOwned&&r.alive(mod)&&r.get<P>(mod,"lifeHitFlash"))return;
- Color black{0,0,0,1};int i=0;
+ if(hitPending){hitPending=false;hitFlashAt=time(r);PMDiagnosticsWrite("HP hit feedback applied outside judgement callback");}
+ float elapsed=hitFlashAt<0?1:std::max(0.f,time(r)-hitFlashAt);float intensity=std::clamp(1.f-elapsed/.15f,0.f,1.f);
+ Color black{intensity,intensity,intensity,1};int i=0;
  for(const char*name:{"combo","comboText"}){
   P text=r.get<P>(score,name);if(!textOwned)originalText[i]=r.unbox<Color>(r.call(text,"get_color"));
   r.call(text,"set_color",{"UnityEngine.Color"},{&black});++i;
  }
  textOwned=true;
 }
-void flash(Runtime&r){P mod=target(r,modRoot);if(enabled&&!finished&&r.alive(mod))r.call(mod,"FlashLifeText");}
+void flash(Runtime&r){if(!enabled||finished)return;hitFlashAt=time(r);PMDiagnosticsWrite("HP hit feedback queued (MOD color animation)");}
 bool failing(){return failure.started();}
 void finish(Runtime&);
 void finishChallenge(Runtime&r,P progress){
@@ -205,7 +206,7 @@ void clear(Runtime&r){
   r.stat(c,"set_Opacity",{"System.Single"},{&originalOpacity});r.stat(c,"set_GlowOpacity",{"System.Single"},{&originalGlow});}});
  cleanup("restore text",[&]{P score=target(r,scoreRoot);if(textOwned&&r.alive(score)){int i=0;for(const char*name:{"combo","comboText"}){P text=r.get<P>(score,name);if(r.alive(text))r.call(text,"set_color",{"UnityEngine.Color"},{&originalText[i]});++i;}}});
  for(uint32_t*p:{&levelRoot,&barRoot,&modRoot,&flashRoot,&scoreRoot})release(r,*p);
- enabled=finished=backgroundOwned=textOwned=false;failure.reset();life=0;
+ enabled=finished=backgroundOwned=textOwned=false;failure.reset();life=0;hitFlashAt=-1;hitPending=false;
 }
 void validate(Runtime&r){
  P addressables=r.type("UnityEngine.AddressableAssets","Addressables");
@@ -213,7 +214,7 @@ void validate(Runtime&r){
  r.resolve(addressables,"ReleaseInstance",{"UnityEngine.ResourceManagement.AsyncOperations.AsyncOperationHandle<UnityEngine.GameObject>"},true);
  P bar=r.type(ns,"SecretChallengeLifeBar"),mod=r.type(ns,"SecretChallengeLifeMod");
  r.resolve(r.type("UnityEngine","Mathf"),"SmoothDamp",{"System.Single","System.Single","System.Single&","System.Single","System.Single","System.Single"},true);
- r.resolve(bar,"ConfigureCanvas");r.resolve(bar,"ApplyShaderParameters");r.resolve(mod,"FlashLifeText");
+ r.resolve(bar,"ConfigureCanvas");r.resolve(bar,"ApplyShaderParameters");
  r.resolve(mod,"AudioFadeOut",{"AddressableAudioSource","System.Single"});r.resolve(mod,"EnableTrueShadow",{"UnityEngine.Component"},true);
  for(const char*name:{"get_MainColor","get_CoverColor","get_Opacity","get_GlowOpacity"})r.resolve(r.klass("HPDisplayControl"),name,{},true);
 }

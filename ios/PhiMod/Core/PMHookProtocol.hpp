@@ -63,6 +63,10 @@ enum Index : std::uint32_t {
  judgeUpdate=54,
  audioUpdate=55,
  lineCreateNote=56,
+ assetCtor=57,
+ assetRelease=58,
+ songInfo=59,
+ itemInfo=60,
  Count
 };
 struct Entry {std::uint32_t site,original;std::uint64_t gateway;};

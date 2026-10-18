@@ -3,6 +3,7 @@
 #import "PMSettings.h"
 #import "PMRuntime.h"
 #import "PMHookBackend.h"
+#import "PMContentUI.h"
 #include <algorithm>
 #include <array>
 #include <map>
@@ -129,10 +130,12 @@ void projectTab(Runtime&r){P tab=target(r,tabRoot);if(!r.alive(tab))return;P txt
    [self.body addArrangedSubview:[self label:@"保存后进入歌曲，将显示可拖动的时间轴。拖动可暂停预览谱面，也可在练习条上设置起止、循环和倍速。练习成绩不写入存档。" size:13]];
   }else if(self.category==2){[self addToggle:@"enabled" title:@"Custom judge"];[self addNumber:@"perfect" title:@"Perfect / ms"];[self addNumber:@"good" title:@"Good / ms"];
   }else if(self.category==3){[self addToggle:@"noise" title:@"噪域"];[self addToggle:@"clearOriginalNoise" title:@"清除原谱噪域"];[self addToggle:@"noiseVisual" title:@"显示噪域视觉"];[self addNumber:@"radius" title:@"噪域半径"];[self addNumber:@"noiseGrace" title:@"噪域容错 / ms"];[self addNumber:@"holdGrace" title:@"Hold 容错 / ms"];[self addNumber:@"holdFx" title:@"AutoPlay Hold 特效间隔 / ms"];
-  }else{[self addToggle:@"showShortcuts" title:@"选曲快捷按钮"];[self addNumber:@"opacity" title:@"浮窗透明度 0.15–1"];}
+  }else{[self.body addArrangedSubview:[self button:@"谱库管理 / 导入导出" action:@selector(contentLibrary)]];[self.body addArrangedSubview:[self button:@"章节管理" action:@selector(contentChapters)]];[self addToggle:@"showShortcuts" title:@"选曲快捷按钮"];[self addNumber:@"opacity" title:@"浮窗透明度 0.15–1"];}
 
  }
  [self layoutEditor];}
+- (void)contentLibrary{PMShowContent(self,NO);}
+- (void)contentChapters{PMShowContent(self,YES);}
 - (void)categoryChanged:(UISegmentedControl*)sender {if(![self collect]){sender.selectedSegmentIndex=self.category;return;}self.category=sender.selectedSegmentIndex;[self render];}
 - (void)hp{if([self collect]){self.page=1;[self render];}}
 - (void)back{if(self.page){if([self collect]){self.page=0;[self render];}}else [self cancel];}

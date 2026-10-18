@@ -1,0 +1,33 @@
+#pragma once
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
+struct RpeControlSegment {float from,to,start,end;};
+inline float rpeControl(const std::vector<RpeControlSegment>& segments,float distance){
+    if(segments.empty())return 1;
+    auto next=std::upper_bound(segments.begin(),segments.end(),distance,[](float x,const RpeControlSegment& s){return x<s.from;});
+    if(next==segments.begin())return next->start;
+    const auto& s=*--next;
+    float t=s.to>s.from?std::clamp((distance-s.from)/(s.to-s.from),0.f,1.f):1;
+    return s.start+(s.end-s.start)*t;
+}
+// The converter uses RPE speed / 4.5 for native floor units. Phira uses
+// the same integrated speed divided by HEIGHT_RATIO (0.83175).
+constexpr float rpeFloorToDistance=450.f/.83175f;
+constexpr float rpeOffsetToFloor=.83175f/450.f;
+struct RpeGeometry {float head,tail,distance;};
+inline RpeGeometry rpeGeometry(float start,float end,float floor,float rawSpeed,float yOffset,float yControl,float worldSpeed,bool started){
+    float offset=yOffset*rpeOffsetToFloor*rawSpeed;
+    float head=((started?floor:start)-floor)*rawSpeed*yControl+offset;
+    float tail=(end-floor)*rawSpeed*yControl+offset;
+    return {head*worldSpeed,tail*worldSpeed,(start-floor)*rpeFloorToDistance+yOffset};
+}
+struct RpeHoldLayout {float origin,scale;};
+inline RpeHoldLayout rpeHoldLayout(const RpeGeometry& g,float spriteHeight,float spriteBottom,bool below){
+    float side=below?-1.f:1.f;
+    // Mirror the complete Hold, including its body and child positions.
+    // Negative integrated lengths have no body in Phira's renderer.
+    float scale=side*std::max(.00001f,g.tail-g.head)/spriteHeight;
+    return {side*g.head-spriteBottom*scale,scale};
+}

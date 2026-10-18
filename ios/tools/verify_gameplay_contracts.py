@@ -131,6 +131,22 @@ def verify(dump, manifest):
    assert len(matches)==1, f'Method contract mismatch: {name}.{method}({args}), static={static}'
    count += 1
  for entry in manifest:
+  if entry['id'] in ('assetCtor','assetRelease'):
+   # IL2CPP's shared generic code has an RVA in GenericInstMethod rather
+   # than on the open generic C# declaration. Verify that exact shared body.
+   name='AssetStore.AssetRef<T>'
+   text=body(name)
+   method='.ctor' if entry['id']=='assetCtor' else 'Release'
+   expected='AssetStore.AssetRef<object>.'+method
+   assert entry['name']==expected, 'Generic hook name mismatch'
+   marker='|-'+expected
+   at=text.find(marker)
+   assert at>=0, 'Shared generic instantiation missing: '+expected
+   rvas=re.findall(r'\|-RVA: (0x[0-9A-Fa-f]+)',text[:at])
+   assert rvas and int(rvas[-1],16)==entry['rva'], 'Shared generic RVA mismatch'
+   assert re.search(r'public void '+re.escape(method)+r'\(',text), 'Generic signature missing'
+   count+=1
+   continue
   name,method = entry['name'].rsplit('.',1)
   matches = list(method_matches(body(name),method,entry['args'],None))
   assert len(matches)==1, 'Hook signature mismatch: '+entry['name']
@@ -200,7 +216,7 @@ def main():
  dump = args.dump.read_text(encoding='utf-8-sig')
  manifest = json.loads((ROOT/'tools/gameplay_hook_manifest.json').read_text(encoding='utf-8'))
  count = verify(dump,manifest)
- sources = [(ROOT/"PhiMod/Sources"/name).read_text(encoding="utf-8") for name in ("PMChartModes.mm", "PMHPLife.mm", "PMPractice.mm", "PMPracticePreview.mm", "PMHookBackend.mm")]
+ sources = [(ROOT/"PhiMod/Sources"/name).read_text(encoding="utf-8") for name in ("PMChartModes.mm", "PMHPLife.mm", "PMPractice.mm", "PMPracticePreview.mm", "PMContentRuntime.mm", "PMHookBackend.mm")]
  source_count = verify_sources(dump,sources)
  for old,new in [('public ChartNote noteInfor;', 'public ChartNote noteInfo;'),
                  ('public float timeOfJudge;', 'public double timeOfJudge;'),
@@ -221,7 +237,7 @@ def main():
    pass
   else:
    raise AssertionError('Failed to reject incorrect runtime namespace: '+old)
- print(f'PASS: {count} gameplay metadata / 57 hook contracts + {source_count} source lookups + 5 negative fixtures')
+ print(f'PASS: {count} gameplay metadata / 61 hook contracts + {source_count} source lookups + 5 negative fixtures')
 
 if __name__=='__main__':
  main()

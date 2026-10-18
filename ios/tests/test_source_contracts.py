@@ -8,7 +8,7 @@ class SourceContracts(unittest.TestCase):
   protocol=(ROOT/'PhiMod/Core/PMHookProtocol.hpp').read_text(encoding='utf-8')
   header=(ROOT/'PhiMod/Core/PMHookManifest.hpp').read_text(encoding='utf-8')
   generated=re.findall(r'\{(0x[0-9a-f]+)u,(0x[0-9a-f]+)u\}',header)
-  self.assertEqual(len(manifest),57);self.assertEqual(len(generated),57)
+  self.assertEqual(len(manifest),61);self.assertEqual(len(generated),61)
   for i,(entry,(site,word)) in enumerate(zip(manifest,generated)):
    self.assertRegex(protocol,r'\b'+re.escape(entry['id'])+'='+str(i)+r',')
    self.assertEqual(int(site,16),entry['rva'])
@@ -196,7 +196,7 @@ class SourceContracts(unittest.TestCase):
   hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf-8')
   ui=(ROOT/'PhiMod/Sources/PhiModBootstrap.mm').read_text(encoding='utf-8')
   settings=(ROOT/'PhiMod/Sources/PMSettings.mm').read_text(encoding='utf-8')
-  self.assertIn('PMGameplay-contract-v2-57',hook)
+  self.assertIn('PMGameplay-contract-v2-61',hook)
   self.assertIn('audioUpdate=55', (ROOT/'PhiMod/Core/PMHookProtocol.hpp').read_text(encoding='utf-8'))
   self.assertIn('lineCreateNote=56', (ROOT/'PhiMod/Core/PMHookProtocol.hpp').read_text(encoding='utf-8'))
   self.assertIn('AddressableAudioSource.Update', (ROOT/'tools/gameplay_hook_manifest.json').read_text(encoding='utf-8'))
@@ -256,6 +256,35 @@ class SourceContracts(unittest.TestCase):
     (root/'PhiMod.framework/PhiMod').write_bytes(marker)
     result=subprocess.run([sys.executable,str(ROOT/'tools/package_unsigned_ipa.py'),'--source',str(root/'source'),'--framework',str(root/'PhiMod.framework'),'--output',str(root/'out.ipa')],capture_output=True,text=True,encoding="utf-8",errors="replace")
     self.assertNotEqual(result.returncode,0);self.assertIn('Stale framework',result.stderr);self.assertFalse((root/'out.ipa').exists())
+ def test_hp_damage_does_not_invoke_unity_inside_judgement_callback(self):
+  hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf-8')
+  hp=(ROOT/'PhiMod/Sources/PMHPLife.mm').read_text(encoding='utf-8')
+  observe=hook[hook.index('void observe('):hook.index('void onPerfect(')]
+  self.assertNotIn('pmhp::frame(',observe);self.assertNotIn('pmhp::flash(',observe)
+  self.assertNotIn('"FlashLifeText"',hp)
+  score=hook[hook.index('void onScoreUpdate('):hook.index('P onResultInfo(')]
+  self.assertIn('pmhp::frame(r,attempt->hp())',score)
+  self.assertIn('HP Miss original returned',hook)
+ def test_content_bridge_is_connected_and_safe_archive_paths_are_checked(self):
+  hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf-8')
+  for name in ('assetConstructor','assetRelease','levelInfo','beforeChart','afterChart','noteMoved','visuals','levelEnd','attach'):self.assertIn('pmcontent::'+name,hook)
+  archive=(ROOT/'PhiMod/Sources/PMArchive.mm').read_text(encoding='utf-8')
+  self.assertIn('if(!ok)break;',archive)
+  self.assertIn('path.lowercaseString.UTF8String',archive)
+  store=(ROOT/'PhiMod/Sources/PMContentStore.mm').read_text(encoding='utf-8')
+  for name in ('library.backup.json','startAccessingSecurityScopedResource','NSFileCoordinator','phigros-phi-chapter','chart-native.json','source.rpe.json'):self.assertIn(name,store)
+  ui=(ROOT/'PhiMod/Sources/PMContentUI.mm').read_text(encoding='utf-8')
+  self.assertIn('initForOpeningContentTypes:',ui);self.assertIn('initForExportingURLs:',ui)
+  self.assertIn('contentCommand:',ui)
+ def test_practice_canvas_matches_android_transport_structure(self):
+  source=(ROOT/'PhiMod/Sources/PMPracticeControls.mm').read_text(encoding='utf-8')
+  for value in ('PHI / PRACTICE','切换 UI','3s 倒计时','0xff42afff','0xffee5164','0xff37d35b','self.dragging','self.whiteUi','queuePreview','流速'):self.assertIn(value,source)
+  self.assertNotIn('NSLayoutConstraint',source)
+ def test_content_build_includes_vendors_frameworks_and_host_tests(self):
+  build=(ROOT/'build_unsigned.sh').read_text(encoding='utf-8')
+  for name in ('PMZipVendor.cpp','PMVorbisVendor.cpp','AVFoundation','UniformTypeIdentifiers'):self.assertIn(name,build)
+  workflow=(ROOT/'.github/workflows/build-ios.yml').read_text(encoding='utf-8')
+  self.assertIn('run_content_tests.sh',workflow)
  def test_bridge_checks_value_type_and_size(self):
   s=(ROOT/'PhiMod/Sources/PMIL2CPP.hpp').read_text(encoding='utf-8')
   self.assertIn('class_value_size(c,&alignment)!=sizeof(T)',s)

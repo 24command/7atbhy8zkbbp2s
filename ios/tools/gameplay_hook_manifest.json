@@ -454,5 +454,37 @@
     "args": "int,bool",
     "bytes": "eb2bb96d",
     "instruction": "IDA-verified relocatable STP D11, D10 stack prologue"
+  },
+  {
+    "id": "assetCtor",
+    "name": "AssetStore.AssetRef<object>..ctor",
+    "rva": 34208408,
+    "args": "string key",
+    "bytes": "ff8301d1",
+    "instruction": "sub sp, sp, #0x60"
+  },
+  {
+    "id": "assetRelease",
+    "name": "AssetStore.AssetRef<object>.Release",
+    "rva": 34208764,
+    "args": "",
+    "bytes": "f44fbea9",
+    "instruction": "stp x20, x19, [sp, #-0x20]!"
+  },
+  {
+    "id": "songInfo",
+    "name": "SongsItem.GetLevelStartInfo",
+    "rva": 21638376,
+    "args": "int level",
+    "bytes": "ff8301d1",
+    "instruction": "sub sp, sp, #0x60"
+  },
+  {
+    "id": "itemInfo",
+    "name": "SongSelectorItem.GetLevelStartInfo",
+    "rva": 22811264,
+    "args": "int level",
+    "bytes": "f657bda9",
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
   }
 ]
