@@ -1,7 +1,7 @@
 # PhiMod iOS - device fixes + native gameplay modes
 
-Source revision: **2026-10-18**, protocol **PMGameplay-v2 / 57 hooks**,
-framework version **0.2.0 (57)**. This revision is newer than framework12.
+Source revision: **2026-10-18**, protocol **PMGameplay-v2 / 61 hooks**,
+framework version **0.2.0 (61)**. This revision is newer than framework13.
 **It must be rebuilt with the Apple iOS SDK before creating a new test IPA.**
 
 Start with [HP_PRACTICE_20261018.md](HP_PRACTICE_20261018.md) for this revision, [DEVICE_FIX_20261017.md](DEVICE_FIX_20261017.md) for the Chinese
@@ -18,12 +18,14 @@ and safety boundaries. Portable C++ cores were rebuilt and run with local MSVC. 
 - Noise Hold grace and AutoPlay Hold effect interval, following Android logic.
 - Range practice: draggable timeline, paused live note preview, range markers, pause/resume/repeat, looping, three-second count-in, and live rate controls. Crossing Holds are trimmed from restored source data on each rewind.
 - The in-game MOD editor now has categorized mode/practice/judgment/noise/UI pages, with a separate HP rules/visuals page.
+- Practice controls now mirror Android’s industrial and white panels: three draggable handles, editable timestamps, countdown toggle, rate/flow controls and paused preview.
+- Added local library/chapter management with the iOS document picker, ZIP/PEZ safety checks, native v3/PEC/RPE conversion, cover replacement, chapter ordering, multi difficulty groups and original chapter browsing.
+- Added Android-style RPE line/note visuals: easing, parent lines, floor integration, custom sizes/alpha, line textures, extended text and fake notes.
 - AddressableAudioSource.Update rate mapping and nested judge-window scaling follow the Android playback-rate path.
 - Android's JudgeControl.Update floor-buffer capacity guard is restored before the native judge update.
 - Save/RKS/reward/unlock protection covers custom judge, AutoPlay, No Noise, full-screen judgment, Accuracy, Unified, range practice, and changed playback rate. HP/AP/FC alone follow the previously requested save policy.
 
-Chart import/storage/navigation, the extended RPE/media/skin ecosystem and exact
-pixel-for-pixel Android settings presentation are **not** finished. The MOD tab
+Video playback, shader uniform execution, custom skins and exact pixel-for-pixel Android settings presentation still require additional device-specific work. Library import/export and RPE conversion are implemented in source and require Apple SDK/device validation. The MOD tab
 uses a native Unity navigation button with a UIKit editor. Do not call this a
 fully verified Android port or a verified normal-signing release.
 
@@ -48,8 +50,8 @@ bash ios/build_unsigned.sh
 
 Use the NEW framework with the NEW packaging tools and the ORIGINAL extracted
 Payload. Merely replacing PhiMod.framework inside an older patched IPA is not
-sufficient: the Unity entry gates changed from 37 to 57 and from v1 to v2.
-The helper rejects stale frameworks before copying the game.
+sufficient: the Unity entry gates changed from 37 to 61 and from v1 to v2.
+The helper rejects stale frameworks before copying the game. The current source revision requires the 61-hook framework.
 
 ```powershell
 python ios\tools\package_unsigned_ipa.py `
@@ -60,7 +62,7 @@ python ios\tools\package_unsigned_ipa.py `
 
 The source app is not modified. In a temporary copy, the helper embeds
 PhiMod.framework, adds the load dependency to UnityFramework, installs the
-UUID/prologue-gated judge patch and 57 gameplay gateways, and removes old
+UUID/prologue-gated judge patch and 61 gameplay gateways, and removes old
 signature data. No runtime executable-page writes or external hook library are
 used. Final output is deliberately unsigned.
 

@@ -7,10 +7,13 @@ mkdir -p "$OUT/PhiMod.framework"
 xcrun --sdk iphoneos clang++ \
   -arch arm64 -isysroot "$SDK" -miphoneos-version-min=15.0 \
   -std=c++17 -fobjc-arc -fvisibility=hidden -dynamiclib \
-  -framework UIKit -framework Foundation -framework CoreGraphics -framework QuartzCore \
+  -framework UIKit -framework Foundation -framework CoreGraphics -framework QuartzCore -framework AVFoundation -framework UniformTypeIdentifiers \
   -Wl,-install_name,@rpath/PhiMod.framework/PhiMod \
   -Wl,-dead_strip \
   "$ROOT"/PhiMod/Sources/*.mm \
+  "$ROOT"/PhiMod/Vendor/PMZipVendor.cpp \
+  "$ROOT"/PhiMod/Vendor/PMVorbisVendor.cpp \
+  -I"$ROOT/PhiMod/Vendor" \
   -o "$OUT/PhiMod.framework/PhiMod"
 cp "$ROOT/PhiMod/Resources/Info.plist" "$OUT/PhiMod.framework/Info.plist"
 /usr/bin/codesign --force --sign - --timestamp=none "$OUT/PhiMod.framework"
