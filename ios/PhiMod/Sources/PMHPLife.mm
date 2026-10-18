@@ -2,6 +2,7 @@
 #include "../Core/PMFlowCore.hpp"
 #include <cmath>
 #include <cstdio>
+#include <chrono>
 #import "PMDiagnostics.h"
 namespace pmhp {
 using pmbridge::P;using pmbridge::Runtime;
@@ -10,7 +11,10 @@ constexpr const char *ns="Phigros2.Level.Mods.SecretChallengeLife";
 struct Color{float r,g,b,a;};
 phimod::Options options;
 phimod::FailureDelay failure;
-uint32_t levelRoot=0,barRoot=0,modRoot=0,flashRoot=0,infoRoot=0,originalModsRoot=0,ownedModsRoot=0,scoreRoot=0;
+uint32_t levelRoot=0,barRoot=0,modRoot=0,flashRoot=0,scoreRoot=0;
+struct VisualLoad {const char*key;uint32_t handle=0;bool settled=false;};
+VisualLoad visualLoads[]={{"LevelMod/SecretChallengeLifeMod"},{"LevelMod/HPDisplay"}};
+std::chrono::steady_clock::time_point nextVisualPoll{};
 bool enabled=false,finished=false,backgroundOwned=false,textOwned=false;
 float life=0,originalOpacity=0,originalGlow=0;
 Color originalMain{},originalCover{},originalText[2]{};
@@ -25,23 +29,47 @@ bool active(){return enabled;}
 float normalized(){return options.hpMax>0?std::clamp(life/options.hpMax,0.f,1.f):0;}
 void prepare(Runtime&r,P level,const phimod::Options&o){
  clear(r);options=o;enabled=o.hpEnabled;life=std::max(1.f,o.hpMax);failure.reset();finished=false;
- PMDiagnosticsWrite(enabled?"HP prepare: enabled":"HP prepare: disabled");
- if(!enabled)return;
- try{
- levelRoot=r.gchandle_new(level,false);
- P info=r.get<P>(r.mainGame(),"levelStartInfo");infoRoot=r.gchandle_new(info,false);
- P mods=r.get<P>(info,"levelMods");if(!mods)throw std::runtime_error("HP: missing LevelStartInfo.levelMods");
- originalModsRoot=r.gchandle_new(mods,false);
- P copy=r.object_new(r.object_get_class(mods));ownedModsRoot=r.gchandle_new(copy,false);r.call(copy,".ctor");
- for(int i=0;i<r.count(mods);++i)r.call(copy,"Add",{"System.String"},{r.at(mods,i)});
- // Exactly the Android loader path. Never enable GameInformation's official
- // secret-challenge state: that would award lives/promote tiers/write progress.
- for(const char*key:{"LevelMod/SecretChallengeLifeMod","LevelMod/HPDisplay"}){
-  P code=r.string_new(key);if(!r.unbox<bool>(r.call(copy,"Contains",{"System.String"},{code})))r.call(copy,"Add",{"System.String"},{code});
+ PMDiagnosticsWrite(enabled?"HP prepare: enabled; optional native visuals deferred until chart ready":"HP prepare: disabled");
+ if(enabled)levelRoot=r.gchandle_new(level,false);
+ // iOS LevelControl.Start waits for EVERY entry in LevelStartInfo.levelMods.
+ // Keep that list owned by the game; optional MOD effects must not gate chart loading.
+}
+P valueCall(Runtime&r,P boxed,const char*method){
+ if(!boxed)throw std::runtime_error("HP asset operation missing");
+ return r.invokeOn(r.resolve(r.object_get_class(boxed),method),r.object_unbox(boxed));
+}
+void loadVisuals(Runtime&r,P progress){
+ if(!enabled||finished)return;
+ if(visualLoads[0].settled&&visualLoads[1].settled)return;
+ auto now=std::chrono::steady_clock::now();if(now<nextVisualPoll)return;nextVisualPoll=now+std::chrono::milliseconds(100);
+ P level=target(r,levelRoot),info=r.get<P>(progress,"levelInformation");
+ if(!r.alive(level)||!info||!r.get<bool>(info,"chartLoaded"))return;
+ for(auto&load:visualLoads){
+  if(load.settled)continue;
+  try{
+   if(!load.handle){
+    P start=r.get<P>(r.mainGame(),"levelStartInfo"),mods=start?r.get<P>(start,"levelMods"):nullptr;
+    P code=r.string_new(load.key);
+    if(mods&&r.unbox<bool>(r.call(mods,"Contains",{"System.String"},{code}))){load.settled=true;continue;}
+    bool no=false,yes=true;P parent=r.call(level,"get_transform");
+    P operation=r.stat(r.type("UnityEngine.AddressableAssets","Addressables"),"InstantiateAsync",{"System.Object","UnityEngine.Transform","System.Boolean","System.Boolean"},{code,parent,&no,&yes});
+    if(!operation)throw std::runtime_error("HP InstantiateAsync returned null");
+    load.handle=r.gchandle_new(operation,false);
+    PMDiagnosticsWrite((std::string("HP visual requested: ")+load.key).c_str());
+   }
+   P operation=target(r,load.handle);
+   if(!r.unbox<bool>(valueCall(r,operation,"get_IsDone")))continue;
+   P instance=valueCall(r,operation,"get_Result");load.settled=true;
+   if(!r.alive(instance)){
+    PMDiagnosticsWrite((std::string("HP visual failed; gameplay continues: ")+load.key).c_str());
+   }else PMDiagnosticsWrite((std::string("HP visual loaded: ")+load.key).c_str());
+  }catch(const std::exception&e){load.settled=true;PMDiagnosticsWrite((std::string("HP visual error; gameplay continues: ")+load.key+": "+e.what()).c_str());}
  }
- r.put(info,"levelMods",copy);
-  char message[128];snprintf(message,sizeof(message),"HP levelMods replaced count=%d",r.count(copy));PMDiagnosticsWrite(message);
-  }catch(const std::exception&e){PMDiagnosticsWrite((std::string("HP prepare failed: ")+e.what()).c_str());clear(r);throw;}
+}
+std::string loadingStatus(Runtime&r){
+ std::string out;P level=target(r,levelRoot);
+ if(level&&enabled){out="nativeModCount="+std::to_string(r.get<int>(level,"levelModCount"));for(const auto&load:visualLoads)out+=std::string(" ")+load.key+"="+(load.settled?"settled":load.handle?"pending":"deferred");}
+ return out;
 }
 void beginAttempt(float hp){
  life=std::max(0.f,std::isfinite(hp)?hp:options.hpMax);
@@ -170,15 +198,19 @@ void finish(Runtime&r){
 }
 void clear(Runtime&r){
  finish(r);
- cleanup("level mods",[&]{P info=target(r,infoRoot);if(info&&r.get<P>(info,"levelMods")==target(r,ownedModsRoot))r.put(info,"levelMods",target(r,originalModsRoot));});
+ for(auto&load:visualLoads){cleanup("release optional visual",[&]{P operation=target(r,load.handle);if(operation)r.stat(r.type("UnityEngine.AddressableAssets","Addressables"),"ReleaseInstance",{"UnityEngine.ResourceManagement.AsyncOperations.AsyncOperationHandle<UnityEngine.GameObject>"},{r.object_unbox(operation)});});release(r,load.handle);load.settled=false;}
+ nextVisualPoll={};
  cleanup("restore background",[&]{if(backgroundOwned){P c=r.klass("HPDisplayControl");
   r.stat(c,"set_MainColor",{"UnityEngine.Color"},{&originalMain});r.stat(c,"set_CoverColor",{"UnityEngine.Color"},{&originalCover});
   r.stat(c,"set_Opacity",{"System.Single"},{&originalOpacity});r.stat(c,"set_GlowOpacity",{"System.Single"},{&originalGlow});}});
  cleanup("restore text",[&]{P score=target(r,scoreRoot);if(textOwned&&r.alive(score)){int i=0;for(const char*name:{"combo","comboText"}){P text=r.get<P>(score,name);if(r.alive(text))r.call(text,"set_color",{"UnityEngine.Color"},{&originalText[i]});++i;}}});
- for(uint32_t*p:{&levelRoot,&barRoot,&modRoot,&flashRoot,&infoRoot,&originalModsRoot,&ownedModsRoot,&scoreRoot})release(r,*p);
+ for(uint32_t*p:{&levelRoot,&barRoot,&modRoot,&flashRoot,&scoreRoot})release(r,*p);
  enabled=finished=backgroundOwned=textOwned=false;failure.reset();life=0;
 }
 void validate(Runtime&r){
+ P addressables=r.type("UnityEngine.AddressableAssets","Addressables");
+ r.resolve(addressables,"InstantiateAsync",{"System.Object","UnityEngine.Transform","System.Boolean","System.Boolean"},true);
+ r.resolve(addressables,"ReleaseInstance",{"UnityEngine.ResourceManagement.AsyncOperations.AsyncOperationHandle<UnityEngine.GameObject>"},true);
  P bar=r.type(ns,"SecretChallengeLifeBar"),mod=r.type(ns,"SecretChallengeLifeMod");
  r.resolve(r.type("UnityEngine","Mathf"),"SmoothDamp",{"System.Single","System.Single","System.Single&","System.Single","System.Single","System.Single"},true);
  r.resolve(bar,"ConfigureCanvas");r.resolve(bar,"ApplyShaderParameters");r.resolve(mod,"FlashLifeText");

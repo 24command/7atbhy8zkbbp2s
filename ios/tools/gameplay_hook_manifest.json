@@ -438,5 +438,21 @@
     "args": "",
     "bytes": "e923ba6d",
     "instruction": "IDA-verified relocatable stack prologue"
+  },
+  {
+    "id": "audioUpdate",
+    "name": "AddressableAudioSource.Update",
+    "rva": 22838076,
+    "args": "",
+    "bytes": "eb2bbb6d",
+    "instruction": "IDA-verified relocatable STP D11, D10 stack prologue"
+  },
+  {
+    "id": "lineCreateNote",
+    "name": "JudgeLineControl.CreateNote",
+    "rva": 22537376,
+    "args": "int,bool",
+    "bytes": "eb2bb96d",
+    "instruction": "IDA-verified relocatable STP D11, D10 stack prologue"
   }
 ]

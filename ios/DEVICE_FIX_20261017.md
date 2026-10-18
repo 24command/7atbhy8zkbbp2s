@@ -2,8 +2,8 @@
 
 ## 当前交付是什么
 
-这是 **framework10 之后的新版源码**：协议 `PMGameplay-v2 / 55 hooks`，
-框架版本 `0.2.0 (55)`。旧 framework10 ZIP 和 IPA 均不包含这次修改。
+这是 **framework10 之后的新版源码**：协议 `PMGameplay-v2 / 56 hooks`，
+框架版本 `0.2.0 (56)`。旧 framework10 ZIP 和 IPA 均不包含这次修改。
 
 本次尚未生成新版 framework 或 IPA。必须先在 GitHub Actions 使用 Apple SDK
 重新编译，再从原始 Payload 打包。不要把旧 framework7 塞回安装包当作修复版。
@@ -36,13 +36,13 @@ Accuracy 对应 Android 的去除连击分，不是隐藏 Combo 文字。
    Run workflow。重跑旧提交的失败任务不会取得这次新代码。
 3. 下载新的 `PhiMod-framework` 构建产物。解压后应包含
    `PhiMod.framework/PhiMod`。把下载路径发给我，再用本版工具和原始 Payload
-    打包新版 IPA。55-hook v2 工具会拒绝旧版 framework。
+    打包新版 IPA。56-hook v2 工具会拒绝旧版 framework。
 4. 先备份游戏存档，再使用测试账号安装到 TrollStore 设备验证。
 
 ## 建议测试顺序
 
 - **全关基线**：关闭全部玩法修改，确保至少一首能自然结束并正常结算，
-   Retry / Back 都能使用。点击 Validate gameplay config，应报告 **55 hooks v2**。
+   Retry / Back 都能使用。点击 Validate gameplay config，应报告 **56 hooks v2**。
 - **按钮**：直接点 Mirror 旁的 AutoPlay 等按钮；进入设置点 MOD，保存/取消后
   回到选曲页应正常。Unified 循环关闭/Tap/Drag/Hold/Flick，AP / FC 循环三态。
 - **AutoPlay**：选择含四种音符的谱面，验证长 Hold 尾部、暂停/继续、
@@ -50,7 +50,7 @@ Accuracy 对应 Android 的去除连击分，不是隐藏 Combo 文字。
 - **HP**：先只开 HP，将最大 HP 设为 1、Miss 设为 -1，故意漏一个音符。
   检查原生顶部血条与背景效果，约 1.5 秒后应进入 TRACK LOST 练习结算，
   再测试 Retry / Back。分别关闭顶部/背景效果，确认开关真的控制原生效果。
-  若仍卡在加载后空白页，进入悬浮窗“设置”点击 **Copy diagnostics**，把剪贴板日志发回；日志会标明 JudgeControl.Update 是否触发以及 HP 生命周期停在哪一步。
+  若仍卡在加载后空白页，进入悬浮窗“设置”点击 **Copy diagnostics**，把剪贴板日志发回；日志每约 0.75 秒分别记录 Progress / Judge 心跳、音频时钟与 pitch、chartLoaded、判定停止标志和 floorPositions/judgeLines 容量。
 - **噪域/统一**：分别测试遮罩、孔洞重叠、实际触摸阻挡、关闭视觉但保留阻挡；
   测试统一四种音符和清除原噪域，退出后重开原曲不得被永久修改。
   同时启用时噪域优先于清除原噪域。检查 Hold 短暂离手的容错边界。

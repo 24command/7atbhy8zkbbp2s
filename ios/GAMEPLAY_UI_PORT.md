@@ -2,8 +2,8 @@
 
 ## Current revision
 
-`PMGameplay-v2`, version 2, **55 hooks**, marker
-`PMGameplay-contract-v2-55`; framework Info.plist version 0.2.0, build 55.
+`PMGameplay-v2`, version 2, **56 hooks**, marker
+`PMGameplay-contract-v2-56`; framework Info.plist version 0.2.0, build 56.
 This is source only. framework7 is an older 37-hook v1 build.
 
 ## Implemented source paths
@@ -64,7 +64,7 @@ Host tests do not prove the absence of every inlined persistence path.
 - 36 flow/transition checks; 57,696 Unified/Noise/Hold geometry and timing checks.
 - 16 source/protocol regression tests, including real click paths, original
   button passthrough, scoped Hold buffers, native HP and stale-build rejection.
-- Judge and all 55 gameplay gates: synthetic fixtures AND local original
+- Judge and all 56 gameplay gates: synthetic fixtures AND local original
   UnityFramework, two ASLR slides, dormant/callback/gateway paths, FP/register/
   stack invariants, combined injection and fail-closed mismatches.
 - 8 existing runtime dump contracts + 3 negative fixtures.

@@ -4,6 +4,8 @@
 namespace pmhp {
 void prepare(pmbridge::Runtime&,void*,const phimod::Options&);
 void beginAttempt(float hp);
+void loadVisuals(pmbridge::Runtime&,void* progress);
+std::string loadingStatus(pmbridge::Runtime&);
 void clear(pmbridge::Runtime&);
 bool active();
 bool ownsBar(pmbridge::Runtime&,void*);

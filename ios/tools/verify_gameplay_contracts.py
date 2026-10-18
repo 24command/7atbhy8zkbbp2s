@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HP_NS = 'Phigros2.Level.Mods.SecretChallengeLife.'
 ALIASES = {name: HP_NS + name for name in ('SecretChallengeLifeBar', 'SecretChallengeLifeMod')}
 ALIASES.update(Button='UnityEngine.UI.Button', JsonUtility='UnityEngine.JsonUtility',
-               Array='System.Array', Mathf='UnityEngine.Mathf',
+               Array='System.Array', Mathf='UnityEngine.Mathf', AudioSource='UnityEngine.AudioSource', Time='UnityEngine.Time', Object='UnityEngine.Object',
                PreviewBlockControl='ProjectEditor.PreviewScripts.PreviewBlockControl',
                PreviewElementUpdateControl='Phigros2.Level.Scripts.PreviewElementUpdateControl')
 
@@ -54,9 +54,12 @@ METHODS = {
   '<Start>g__SetResultAudio|1', '<Start>g__SetResultInfo|2', '<Start>g__SetScreenRatio|23',
   '<Start>g__EnableResultCanvas|21', '<Start>g__PlayResultBGM|22')]
   + [('<Start>g__SetRatingWithScore|3','int,bool',False)],
- 'AddressableAudioSource': [('set_Volume','float',False), ('Stop','',False)],
- 'ProgressControl': [('LevelBreak','string',False), ('LevelOver','',False)],
- 'ScoreControl': [('FreezeScore','',False)],
+ 'AddressableAudioSource': [('set_Volume','float',False), ('Stop','',False), ('Play','',False), ('Pause','',False), ('Seek','float',False), ('get_ClipLength','',False)],
+ 'ProgressControl': [('LevelBreak','string',False), ('LevelOver','',False), ('Play','bool',False)],
+ 'ScoreControl': [('FreezeScore','',False), ('SetNoteCodeList','',False)],
+ 'AudioSource': [('get_pitch','',False), ('set_pitch','float',False), ('get_time','',False), ('set_time','float',False)],
+ 'Time': [('get_timeSinceLevelLoad','',True)],
+ 'Object': [('Destroy','UnityEngine.Object',True)],
 }
 SERIALIZABLE = ('Chart', 'ChartNote', 'JudgeLine', 'SpeedEvent', 'GameInformation.BlockArea')
 
@@ -197,7 +200,7 @@ def main():
  dump = args.dump.read_text(encoding='utf-8-sig')
  manifest = json.loads((ROOT/'tools/gameplay_hook_manifest.json').read_text(encoding='utf-8'))
  count = verify(dump,manifest)
- sources = [(ROOT/"PhiMod/Sources"/name).read_text(encoding="utf-8") for name in ("PMChartModes.mm", "PMHPLife.mm", "PMHookBackend.mm")]
+ sources = [(ROOT/"PhiMod/Sources"/name).read_text(encoding="utf-8") for name in ("PMChartModes.mm", "PMHPLife.mm", "PMPractice.mm", "PMPracticePreview.mm", "PMHookBackend.mm")]
  source_count = verify_sources(dump,sources)
  for old,new in [('public ChartNote noteInfor;', 'public ChartNote noteInfo;'),
                  ('public float timeOfJudge;', 'public double timeOfJudge;'),
@@ -218,7 +221,7 @@ def main():
    pass
   else:
    raise AssertionError('Failed to reject incorrect runtime namespace: '+old)
- print(f'PASS: {count} gameplay metadata / 55 hook contracts + {source_count} source lookups + 5 negative fixtures')
+ print(f'PASS: {count} gameplay metadata / 57 hook contracts + {source_count} source lookups + 5 negative fixtures')
 
 if __name__=='__main__':
  main()

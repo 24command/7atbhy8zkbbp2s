@@ -70,6 +70,10 @@ void clear(Runtime&r){
  noteBackups.clear();cachedMasks.clear();cachedGeometryRevision=~std::uint64_t(0);cachedWidth=cachedHeight=0;cachedGeometry=false;
  options=phimod::Options{};holes.clear();holdGrace.clear();fxClock.clear();
 }
+void restartSegment(Runtime&r){
+ P level=target(r,levelRoot);if(r.alive(level)){P preview=r.get<P>(level,"previewElementUpdateControl");if(r.alive(preview))r.call(preview,"DestroyAndCreateAllBlocks");}release(r,fullRoot);
+ holes.clear();holdGrace.clear();fxClock.clear();cachedMasks.clear();cachedGeometryRevision=~std::uint64_t(0);cachedWidth=cachedHeight=0;cachedGeometry=false;
+}
 void beforeCodes(Runtime&r,P self){
  if(self!=target(r,levelRoot)||(!options.noise&&!options.unified&&!options.clearNoise))return;
  captureChart(r,self);if(!options.unified)return;
@@ -179,6 +183,7 @@ HoldScope::HoldScope(Runtime&r,P self):r_(r){
 }
 HoldScope::~HoldScope()noexcept{try{restore();}catch(const std::exception&e){NSLog(@"[PhiMod] Hold rollback: %s",e.what());}}
 void validate(Runtime&r){
+ r.resolve(r.type("Phigros2.Level.Scripts","PreviewElementUpdateControl"),"DestroyAndCreateAllBlocks");
  P json=r.type("UnityEngine","JsonUtility");r.resolve(json,"FromJsonOverwrite",{"System.String","System.Object"},true);
  r.resolve(r.type("System","Array"),"SetValue",{"System.Object","System.Int32"});
   r.resolve(r.type("ProjectEditor.PreviewScripts","PreviewBlockControl"),"UpdateBlocksTransform");

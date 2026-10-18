@@ -30,21 +30,38 @@ void PMDiagnosticsWrite(const char *message) {
     @autoreleasepool {
         @synchronized ([PMDiagnosticsFileName self]) {
             NSString *path = PMDiagnosticsResolvedPath();
-            [[NSFileManager defaultManager] createDirectoryAtPath:[path stringByDeletingLastPathComponent]
-                                      withIntermediateDirectories:YES attributes:nil error:nil];
-            NSDateFormatter *formatter = [NSDateFormatter new];
-            formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
-            formatter.dateFormat = @"yyyy-MM-dd HH:mm:ss.SSS";
+            NSFileManager *files = NSFileManager.defaultManager;
+            [files createDirectoryAtPath:[path stringByDeletingLastPathComponent]
+             withIntermediateDirectories:YES attributes:nil error:nil];
+            if (![files fileExistsAtPath:path]) [@"" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+            static NSDateFormatter *formatter;
+            static dispatch_once_t once;
+            dispatch_once(&once, ^{
+                formatter = [NSDateFormatter new];
+                formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+                formatter.dateFormat = @"yyyy-MM-dd HH:mm:ss.SSS";
+            });
             NSString *line = [NSString stringWithFormat:@"[%@] [session %@] %s\n", [formatter stringFromDate:NSDate.date], PMDiagnosticsSessionID ?: @"unknown", message];
-            NSString *existing = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil] ?: @"";
-            NSMutableString *contents = [existing mutableCopy];
-            [contents appendString:line];
-            if ([contents lengthOfBytesUsingEncoding:NSUTF8StringEncoding] > PMDiagnosticsMaxBytes) {
-                NSArray<NSString *> *allLines = [contents componentsSeparatedByString:@"\n"];
-                NSUInteger start = allLines.count > 5001 ? allLines.count - 5001 : 0;
-                contents = [[[allLines subarrayWithRange:NSMakeRange(start, allLines.count - start)] componentsJoinedByString:@"\n"] mutableCopy];
+            NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+            NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
+            if (handle && data) {
+                [handle seekToEndOfFile];
+                [handle writeData:data];
+                unsigned long long size = [handle offsetInFile];
+                [handle closeFile];
+                if (size > PMDiagnosticsMaxBytes) {
+                    NSData *existing = [NSData dataWithContentsOfFile:path];
+                    if (existing.length > PMDiagnosticsMaxBytes / 2) {
+                        NSUInteger start = existing.length - PMDiagnosticsMaxBytes / 2;
+                        const uint8_t *bytes = (const uint8_t *)existing.bytes;
+                        while (start < existing.length && bytes[start] != '\n') ++start;
+                        if (start < existing.length) {
+                            NSData *tail = [existing subdataWithRange:NSMakeRange(start + 1, existing.length - start - 1)];
+                            [tail writeToFile:path atomically:YES];
+                        }
+                    }
+                }
             }
-            [contents writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
             NSLog(@"[PhiMod] %s", message);
         }
     }

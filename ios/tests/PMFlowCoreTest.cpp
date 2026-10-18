@@ -31,6 +31,8 @@ int main(){try{
  retry.request(o);CHECK(retry.begin({}));retry.registerNote({1,1,0,1});CHECK(retry.observe(1,.1f,Rating::Good));
  CHECK(retry.pendingAction(true,false,false)==Action::Retry);CHECK(retry.pendingAction(true,false,false)==Action::Retry);
  retry.acknowledgeAction(Action::Retry);CHECK(retry.pendingAction(true,false,false)==Action::None);
- CHECK(!retry.allowRecordWrite());
+ // AP/FC alone preserves native scores; only the configured assisted modes latch protection.
+ CHECK(retry.allowRecordWrite());
+ o.autoplay=true;retry.request(o);CHECK(retry.sync());CHECK(!retry.allowRecordWrite());
  std::cout<<"PASS: "<<checks<<" flow / transition checks\n";return 0;
  }catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

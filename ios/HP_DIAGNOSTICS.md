@@ -1,13 +1,16 @@
-# HP 调试日志
+# HP 调试日志 · 2026-10-18 / 57 hooks
 
-本次修复把 HP/gameplay tick 移到 `JudgeControl.Update`，与 Android `practiceTick()` 的调用位置一致。日志文件保存在应用 Documents 下的 `PhiMod-diagnostics.log`，悬浮窗“设置”页可复制最近 400 行或清空日志。
+日志保存在应用 Documents 的 PhiMod-diagnostics.log，悬浮窗“设置”页提供 Copy diagnostics 和 Clear diagnostics。每次启动带有独立 session 标记，重启不会自动清除上一会话。
 
-若仍在加载遮罩消失后卡住：
+本次日志已经证明初始生命是 200，而不是 0。IDA 确认原生 LevelControl.Start 会等 levelMods 列表内每个资源的完成回调；本次不再向该列表塞入 MOD 的 HP 特效，而在 chartLoaded 后独立异步加载相同原生资源。另补齐 Android 的 floorPositions 扩容逻辑。
 
-1. 启动新版 IPA，在悬浮窗“设置”页先点 **Clear diagnostics**。
-2. 只开启 HP 生存，进入一首曲目并复现卡住。
-3. 返回悬浮窗“设置”页点 **Copy diagnostics**，把剪贴板内容发回。
+复测顺序：
 
-日志重点包括 hook 安装状态、`LevelControl.Awake` / `ProgressControl.Start`、HP 原生组件初始化、`JudgeControl.Update` 与 `ProgressControl.Update` 的时间/播放状态，以及 HP 失败延迟和 `LevelOver()` 调用阶段。正常等待时按状态变化及约 0.1 秒间隔记录，不会逐帧写盘。
+1. 重新构建并打包当前 57-hook 源码，先只开 HP，开始前清一次日志。
+2. 测试进谱、顶部血条/背景效果、耗尽 HP 后退出、返回选曲后再进一首。
+3. 如果卡住且浮窗不能操作，强制结束并重启，立即到设置复制日志；不要先清空日志或重新进歌。
+4. 把出问题 session 的 LevelControl.Awake 起始到最后一条记录发回。
 
-仅依靠源码测试还不能证明实机修复成功；需要在 iPad 第六代 / iPadOS 15.4.1 上复测。
+新日志包括 ProgressControl.Update、JudgeControl.Update 的独立进入与原函数返回；音频包装器时钟、AudioSource pitch/time、prepared/volume/load、chartLoaded/levelBegan、floorPositions 容量、HP 资源 pending/settled/failed 状态。更新心跳约 0.75 秒一轮，普通 tick 约每个游戏秒一条。HP 特效失败会明确记录并允许谱面继续加载。
+
+源码验证不等于实机修复成功。优先在 iPad 第六代 / iPadOS 15.4.1 测试；练习功能另开第二轮测试，避免混淆 HP 日志。

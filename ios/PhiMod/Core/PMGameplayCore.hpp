@@ -20,17 +20,21 @@ struct Options {
  bool judge=false, autoplay=false, noise=false, clearNoise=false;
  bool fullscreen=false, accuracyOnly=false, hpEnabled=false;
  bool noiseVisual=true, hpTop=true, hpBackground=true;
+ bool practiceMode=false,practiceLoop=true,practiceCountdown=false;
  int unified=0, challenge=0;
  float perfectMs=80,goodMs=180,radius=1,holdGraceMs=100,holdFxMs=150,noiseGraceMs=250;
+ float playbackRate=1,practiceStart=0,practiceEnd=-1,practicePosition=0;
  float hpMax=200; std::array<float,4> hpDelta{1,-4,-16,-25};
  float hpRed=.3f,hpBlue=.6f;
- bool assisted() const { return judge||autoplay||noise||clearNoise||fullscreen||accuracyOnly||unified!=0||hpEnabled||challenge!=0; }
- bool requiresSaveProtection() const { return judge||autoplay||clearNoise||fullscreen||accuracyOnly||unified!=0; }
+ bool assisted() const { return judge||autoplay||noise||clearNoise||fullscreen||accuracyOnly||unified!=0||hpEnabled||challenge!=0||practiceMode||std::fabs(playbackRate-1.f)>.0001f; }
+ bool requiresSaveProtection() const { return judge||autoplay||clearNoise||fullscreen||accuracyOnly||unified!=0||practiceMode||std::fabs(playbackRate-1.f)>.0001f; }
  void validate() const {
   auto range=[](float n,float a,float b){return std::isfinite(n)&&n>=a&&n<=b;};
   if(!range(perfectMs,1,1000)||!range(goodMs,perfectMs,2000)||!range(radius,.3f,3)||
      !range(holdGraceMs,0,500)||!range(holdFxMs,100,2000)||!range(noiseGraceMs,0,1500)||
-     unified<0||unified>4||challenge<0||challenge>2||!range(hpMax,1,10000)||
+     unified<0||unified>4||challenge<0||challenge>2||!range(playbackRate,0,5)||
+     !range(practiceStart,0,100000)||!range(practicePosition,0,100000)||(!range(practiceEnd,0,100000)&&practiceEnd!=-1)||
+     (practiceEnd>=0&&practiceEnd<=practiceStart)||!range(hpMax,1,10000)||
      !range(hpRed,0,1)||!range(hpBlue,hpRed,1))throw std::invalid_argument("Invalid gameplay options");
   for(float d:hpDelta)if(!range(d,-10000,10000))throw std::invalid_argument("Invalid HP delta");
  }
@@ -166,6 +170,11 @@ class Session {
  }
  void result() {if(phase_==Phase::Playing)phase_=Phase::Result;}
  void failClosed() {if(phase_!=Phase::Idle){excluded_=true;failed_=true;}}
+ void restartSegment() {
+  if(phase_!=Phase::Playing||failed_)throw std::logic_error("No active practice segment");
+  lost_=retry_=lostDispatched_=false;hp_=active_.hpMax;
+  notes_.clear();sampled_.clear();credited_.clear();pending_.clear();samples_.clear();dropped_=0;
+ }
  // Called only after all result coroutines/record writes complete, not LevelControl.OnDestroy.
  void finishResult() {
   if(phase_!=Phase::Result)throw std::logic_error("Result completion required before releasing save guard");

@@ -1,22 +1,26 @@
 # PhiMod iOS - device fixes + native gameplay modes
 
-Source revision: **2026-10-17**, protocol **PMGameplay-v2 / 55 hooks**,
-framework version **0.2.0 (55)**. This revision is newer than framework10.
+Source revision: **2026-10-18**, protocol **PMGameplay-v2 / 57 hooks**,
+framework version **0.2.0 (57)**. This revision is newer than framework12.
 **It must be rebuilt with the Apple iOS SDK before creating a new test IPA.**
 
-Start with [DEVICE_FIX_20261017.md](DEVICE_FIX_20261017.md) for the Chinese
+Start with [HP_PRACTICE_20261018.md](HP_PRACTICE_20261018.md) for this revision, [DEVICE_FIX_20261017.md](DEVICE_FIX_20261017.md) for the Chinese
 build/test checklist, and [GAMEPLAY_UI_PORT.md](GAMEPLAY_UI_PORT.md) for scope
-and safety boundaries. Windows host tests have passed; Apple compilation and
-real-device behavior of THIS revision have not been verified.
+and safety boundaries. Portable C++ cores were rebuilt and run with local MSVC. Source-contract, metadata, judge-patch, and real-image hook-gate checks have passed on Windows. This revision still needs the macOS Apple SDK build and real-device verification.
 
 ## Changes
 
 - Practice result coroutine presentation and navigation-only recovery.
-- HP failure delay/transition; native SecretChallengeLifeBar and HPDisplay assets.
+- HP startup no longer adds optional visual assets to the native chart-loading gate. Native SecretChallengeLifeBar and HPDisplay are instantiated asynchronously after chart readiness, with independent resource diagnostics.
+- HP failure delay/transition and native floor-buffer capacity repair.
 - Real Button.OnPointerClick / OnSubmit paths for the MOD tab and song shortcuts.
 - Noise masks and touch blocking; No Noise; unified Tap/Drag/Hold/Flick conversion.
 - Noise Hold grace and AutoPlay Hold effect interval, following Android logic.
-- Save/RKS/reward/unlock protection remains enabled for assisted sessions.
+- Range practice: draggable timeline, paused live note preview, range markers, pause/resume/repeat, looping, three-second count-in, and live rate controls. Crossing Holds are trimmed from restored source data on each rewind.
+- The in-game MOD editor now has categorized mode/practice/judgment/noise/UI pages, with a separate HP rules/visuals page.
+- AddressableAudioSource.Update rate mapping and nested judge-window scaling follow the Android playback-rate path.
+- Android's JudgeControl.Update floor-buffer capacity guard is restored before the native judge update.
+- Save/RKS/reward/unlock protection covers custom judge, AutoPlay, No Noise, full-screen judgment, Accuracy, Unified, range practice, and changed playback rate. HP/AP/FC alone follow the previously requested save policy.
 
 Chart import/storage/navigation, the extended RPE/media/skin ecosystem and exact
 pixel-for-pixel Android settings presentation are **not** finished. The MOD tab
@@ -44,7 +48,7 @@ bash ios/build_unsigned.sh
 
 Use the NEW framework with the NEW packaging tools and the ORIGINAL extracted
 Payload. Merely replacing PhiMod.framework inside an older patched IPA is not
-sufficient: the Unity entry gates changed from 37 to 55 and from v1 to v2.
+sufficient: the Unity entry gates changed from 37 to 57 and from v1 to v2.
 The helper rejects stale frameworks before copying the game.
 
 ```powershell
@@ -56,7 +60,7 @@ python ios\tools\package_unsigned_ipa.py `
 
 The source app is not modified. In a temporary copy, the helper embeds
 PhiMod.framework, adds the load dependency to UnityFramework, installs the
-UUID/prologue-gated judge patch and 55 gameplay gateways, and removes old
+UUID/prologue-gated judge patch and 57 gameplay gateways, and removes old
 signature data. No runtime executable-page writes or external hook library are
 used. Final output is deliberately unsigned.
 

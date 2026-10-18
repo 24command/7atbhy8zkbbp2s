@@ -34,7 +34,7 @@ It was overwritten by the next game frame. A timer cannot reliably solve this.
 - Stored enable/config resumes after game readiness (bounded startup retry).
 - Preview does NOT apply anything. It shows draft values and separately read
   actual values/status. Other gameplay switches were drafts in framework6;
-  the current v2 / 55-hook source connects them (see GAMEPLAY_UI_PORT.md).
+  the current v2 / 56-hook source connects them (see GAMEPLAY_UI_PORT.md).
 
 ## Build and package
 

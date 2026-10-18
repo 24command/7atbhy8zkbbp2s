@@ -61,6 +61,8 @@ enum Index : std::uint32_t {
  dragMove=52,
  flickMove=53,
  judgeUpdate=54,
+ audioUpdate=55,
+ lineCreateNote=56,
  Count
 };
 struct Entry {std::uint32_t site,original;std::uint64_t gateway;};

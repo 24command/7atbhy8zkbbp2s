@@ -5,6 +5,7 @@
 #import "PMGameplay.h"
 #import "PMHookBackend.h"
 #import "PMDiagnostics.h"
+#import "PMPracticeControls.h"
 
 static const NSInteger PMOverlayRootTag = 0x50484D4F;
 static NSString * const PMBubbleXKey = @"phimod.ios.bubble.x";
@@ -30,6 +31,7 @@ static NSString * const PMBubbleYKey = @"phimod.ios.bubble.y";
 @property(nonatomic, strong) PMPassthroughView *root;
 @property(nonatomic, strong) UIButton *bubble;
 @property(nonatomic, strong) UIView *panel;
+@property(nonatomic, strong) PMPracticeControls *practiceControls;
 @property(nonatomic, strong) UIView *panelHeader;
 @property(nonatomic, strong) UILabel *pageTitle;
 @property(nonatomic, strong) UILabel *statusLabel;
@@ -37,6 +39,7 @@ static NSString * const PMBubbleYKey = @"phimod.ios.bubble.y";
 @property(nonatomic, strong) UIStackView *body;
 @property(nonatomic, strong) UIScrollView *scroll;
 @property(nonatomic, assign) NSInteger selectedTab;
+@property(nonatomic, assign) NSInteger selectedModeCategory;
 @property(nonatomic, assign) BOOL open;
 + (instancetype)shared;
 - (void)install;
@@ -131,6 +134,8 @@ static UIColor *PMColor(uint32_t argb) {
     self.root.backgroundColor = UIColor.clearColor;
     self.root.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [window addSubview:self.root];
+    self.practiceControls=[[PMPracticeControls alloc]initWithFrame:CGRectZero];
+    [self.root addSubview:self.practiceControls];
 
     self.bubble = [UIButton buttonWithType:UIButtonTypeCustom];
     self.bubble.frame = CGRectMake(18, 60, 52, 52);
@@ -207,6 +212,7 @@ static UIColor *PMColor(uint32_t argb) {
     ]];
 
     self.selectedTab = 0;
+    self.selectedModeCategory = 0;
     [self renderPage];
     [self layoutOverlay];
     self.open = NO;
@@ -242,7 +248,7 @@ static UIColor *PMColor(uint32_t argb) {
 
 - (void)addSetting:(NSString *)key title:(NSString *)title boolean:(BOOL)boolean {
  BOOL supported=YES;
- UIStackView *row=[UIStackView new];row.alpha=supported?1:.4;row.userInteractionEnabled=supported;row.axis=UILayoutConstraintAxisHorizontal;row.spacing=8;row.alignment=UIStackViewAlignmentCenter;
+ UIStackView *row=[UIStackView new];row.alpha=supported?1:.4;row.userInteractionEnabled=supported;row.axis=UILayoutConstraintAxisHorizontal;row.spacing=8;row.alignment=UIStackViewAlignmentCenter;row.isLayoutMarginsRelativeArrangement=YES;row.layoutMargins=UIEdgeInsetsMake(8,12,8,12);row.backgroundColor=PMColor(0xff222c3c);row.layer.cornerRadius=10;
  UILabel *label=[self label:title size:13 color:PMColor(0xfff1f5fa)];[row addArrangedSubview:label];
  if(boolean){UISwitch *control=[UISwitch new];control.accessibilityIdentifier=key;control.on=[[[PMSettings shared] value:key] boolValue];[control addTarget:self action:@selector(settingSwitch:) forControlEvents:UIControlEventValueChanged];[row addArrangedSubview:control];}
  else {UITextField *field=[UITextField new];field.accessibilityIdentifier=key;field.text=[[[PMSettings shared] value:key] description];field.textColor=PMColor(0xff71e1cf);field.borderStyle=UITextBorderStyleRoundedRect;field.keyboardType=UIKeyboardTypeNumbersAndPunctuation;field.returnKeyType=UIReturnKeyDone;[field.widthAnchor constraintEqualToConstant:100].active=YES;[field addTarget:self action:@selector(settingNumber:) forControlEvents:UIControlEventEditingDidEnd];[field addTarget:field action:@selector(resignFirstResponder) forControlEvents:UIControlEventEditingDidEndOnExit];[row addArrangedSubview:field];}
@@ -271,6 +277,9 @@ static UIColor *PMColor(uint32_t argb) {
 }
 - (void)setChinese {NSDictionary *r=[PMRuntime setGameLanguage:6];self.statusLabel.text=r[@"message"] ?: @"完成";}
 - (void)setEnglish {NSDictionary *r=[PMRuntime setGameLanguage:10];self.statusLabel.text=r[@"message"] ?: @"完成";}
+- (void)selectModeCategory:(UISegmentedControl *)sender {self.selectedModeCategory=sender.selectedSegmentIndex;[self renderPage];}
+- (void)practiceCommand:(UIButton *)sender {NSDictionary *r=[PMHookBackend practiceCommand:sender.tag-700];self.statusLabel.text=r[@"message"] ?: @"Practice command unavailable";}
+- (void)refreshPracticeStatus {NSDictionary *r=[PMHookBackend practiceStatus];self.statusLabel.text=r[@"message"] ?: @"Practice status unavailable";}
 - (void)renderPage {
  for(UIView *view in self.body.arrangedSubviews.copy){[self.body removeArrangedSubview:view];[view removeFromSuperview];}
  NSArray *names=@[@"谱库",@"章节",@"判定",@"模式",@"设置"];
@@ -279,16 +288,52 @@ static UIColor *PMColor(uint32_t argb) {
  if(self.selectedTab==0 || self.selectedTab==1){[self.body addArrangedSubview:[self label:@"等待移植谱面存储、导入和游戏导航；不会修改原版曲库。" size:13 color:PMColor(0xff92a2b9)]];}
  if(self.selectedTab==2){[self addSetting:@"enabled" title:@"Custom judge (apply to game)" boolean:YES];[self addSetting:@"perfect" title:@"Perfect / ms" boolean:NO];[self addSetting:@"good" title:@"Good / ms" boolean:NO];[self addSetting:@"holdGrace" title:@"Noise Hold grace / ms" boolean:NO];}
  if(self.selectedTab==3){
- NSArray *flags=@[@[@"autoplay",@"AutoPlay"],@[@"noise",@"噪域"],@[@"clearOriginalNoise",@"清除原噪域"],@[@"fullScreen",@"全屏判定"],@[@"noCombo",@"Accuracy（去除连击分）"],@[@"hpEnabled",@"HP 生存"],@[@"noiseVisual",@"噪域视觉"],@[@"hpTopEffect",@"顶部 HP 特效"],@[@"hpBackgroundEffect",@"背景 HP 特效"]];
- for(NSArray *p in flags)[self addSetting:p[0] title:p[1] boolean:YES];
- NSArray *numbers=@[@[@"unified",@"统一键型 0–4"],@[@"challenge",@"挑战 0关 / 1AP / 2FC"],@[@"radius",@"噪域半径"],@[@"noiseGrace",@"噪域容错 / ms"],@[@"holdFx",@"Hold 特效间隔 / ms"],@[@"hpMax",@"最大 HP"],@[@"hpPerfect",@"Perfect HP 增减"],@[@"hpGood",@"Good HP 增减"],@[@"hpBad",@"Bad HP 增减"],@[@"hpMiss",@"Miss HP 增减"],@[@"hpRed",@"红色阈值 %"],@[@"hpBlue",@"蓝色阈值 %"]];
- for(NSArray *p in numbers)[self addSetting:p[0] title:p[1] boolean:NO];
+  NSArray *categories=@[@"模式",@"练习",@"噪域",@"HP"];
+  UISegmentedControl *seg=[[UISegmentedControl alloc]initWithItems:categories];seg.selectedSegmentIndex=self.selectedModeCategory;seg.tintColor=PMColor(0xff71e1cf);[seg addTarget:self action:@selector(selectModeCategory:) forControlEvents:UIControlEventValueChanged];[self.body addArrangedSubview:seg];
+  if(self.selectedModeCategory==0){
+   [self.body addArrangedSubview:[self label:@"单曲模式 · 配置对下一首生效" size:12 color:PMColor(0xff92a2b9)]];
+   [self addSetting:@"autoplay" title:@"AutoPlay" boolean:YES];
+   [self addSetting:@"fullScreen" title:@"全屏判定" boolean:YES];
+   [self addSetting:@"noCombo" title:@"Accuracy（去除连击分）" boolean:YES];
+   [self addSetting:@"unified" title:@"统一键型：0 关闭 / 1 Tap / 2 Drag / 3 Hold / 4 Flick" boolean:NO];
+   [self addSetting:@"challenge" title:@"AP / FC 挑战：0 关闭 / 1 AP / 2 FC" boolean:NO];
+  }else if(self.selectedModeCategory==1){
+   [self.body addArrangedSubview:[self label:@"区间练习在谱面与音乐加载后暂停。开始或重复区间会清空本段计分；区间练习及非 1× 倍速不保存成绩。倍速可在练习中应用。" size:12 color:PMColor(0xff92a2b9)]];
+   [self addSetting:@"practiceMode" title:@"启用区间练习（下一首生效）" boolean:YES];
+   [self addSetting:@"playbackRate" title:@"播放倍速 0–5×（下一首生效；练习时可应用）" boolean:NO];
+   [self addSetting:@"practiceStart" title:@"区间起点 / 秒" boolean:NO];
+   [self addSetting:@"practiceEnd" title:@"区间终点 / 秒（-1 为曲尾）" boolean:NO];
+   [self addSetting:@"practicePosition" title:@"定位位置 / 秒" boolean:NO];
+   [self addSetting:@"practiceLoop" title:@"到终点后循环本区间" boolean:YES];
+   [self addSetting:@"practiceCountdown" title:@"开始区间前倒数 3 秒" boolean:YES];
+   for(NSArray *entry in @[@[@"开始区间",@0],@[@"暂停 / 继续",@1],@[@"重播区间",@2],@[@"播放整首",@3],@[@"应用当前练习倍速",@4],@[@"定位并播放",@5],@[@"应用起止 / 循环 / 倒数",@6],@[@"定位并暂停预览",@7]]){UIButton *b=[self textButton:entry[0] action:@selector(practiceCommand:)];b.tag=700+[entry[1] integerValue];[self.body addArrangedSubview:b];}
+   [self.body addArrangedSubview:[self textButton:@"刷新练习状态" action:@selector(refreshPracticeStatus)]];
+  }else if(self.selectedModeCategory==2){
+   [self addSetting:@"noise" title:@"噪域" boolean:YES];
+   [self addSetting:@"clearOriginalNoise" title:@"清除原谱噪域" boolean:YES];
+   [self addSetting:@"noiseVisual" title:@"显示噪域视觉" boolean:YES];
+   [self addSetting:@"radius" title:@"噪域半径" boolean:NO];
+   [self addSetting:@"noiseGrace" title:@"噪域容错 / ms" boolean:NO];
+   [self addSetting:@"holdGrace" title:@"Hold 容错 / ms" boolean:NO];
+   [self addSetting:@"holdFx" title:@"Hold 特效间隔 / ms" boolean:NO];
+  }else{
+   [self addSetting:@"hpEnabled" title:@"HP 生存" boolean:YES];
+   [self addSetting:@"hpTopEffect" title:@"顶部 HP 特效" boolean:YES];
+   [self addSetting:@"hpBackgroundEffect" title:@"背景 HP 特效" boolean:YES];
+   [self addSetting:@"hpMax" title:@"最大 HP" boolean:NO];
+   [self addSetting:@"hpPerfect" title:@"Perfect HP 增减" boolean:NO];
+   [self addSetting:@"hpGood" title:@"Good HP 增减" boolean:NO];
+   [self addSetting:@"hpBad" title:@"Bad HP 增减" boolean:NO];
+   [self addSetting:@"hpMiss" title:@"Miss HP 增减" boolean:NO];
+   [self addSetting:@"hpRed" title:@"红色阈值 %" boolean:NO];
+   [self addSetting:@"hpBlue" title:@"蓝色阈值 %" boolean:NO];
+  }
  }
+
  if(self.selectedTab==4){[self addSetting:@"opacity" title:@"浮窗透明度 0.15–1（立即生效）" boolean:NO];[self addSetting:@"showShortcuts" title:@"选曲快捷按钮" boolean:YES];[self.body addArrangedSubview:[self textButton:@"读取游戏状态（实际读取）" action:@selector(readGameSnapshot)]];[self.body addArrangedSubview:[self textButton:@"切换中文" action:@selector(setChinese)]];[self.body addArrangedSubview:[self textButton:@"切换 English" action:@selector(setEnglish)]];[self.body addArrangedSubview:[self textButton:@"只读探测 IL2CPP" action:@selector(probeRuntime)]];}
  if(self.selectedTab==4){[self.body addArrangedSubview:[self textButton:@"Copy diagnostics" action:@selector(copyDiagnostics)]];[self.body addArrangedSubview:[self textButton:@"Clear diagnostics" action:@selector(clearDiagnostics)]];}
- [self.body addArrangedSubview:[self textButton:@"Validate gameplay config" action:@selector(validateGameplay)]];
- [self.body addArrangedSubview:[self textButton:@"Preview gameplay config (not applied)" action:@selector(previewGameplay)]];
- [self.body addArrangedSubview:[self textButton:@"UI 自检" action:@selector(runSelfTest)]];
+ if(self.selectedTab==2){[self.body addArrangedSubview:[self textButton:@"Validate gameplay config" action:@selector(validateGameplay)]];[self.body addArrangedSubview:[self textButton:@"Preview gameplay config (not applied)" action:@selector(previewGameplay)]];}
+ if(self.selectedTab==4)[self.body addArrangedSubview:[self textButton:@"UI 自检" action:@selector(runSelfTest)]];
  for(UIButton *button in self.tabBar.arrangedSubviews){BOOL selected=button.tag==200+self.selectedTab;button.backgroundColor=selected?PMColor(0xff71e1cf):PMColor(0xff252f40);[button setTitleColor:selected?PMColor(0xff142b35):PMColor(0xfff1f5fa) forState:UIControlStateNormal];}
  self.scroll.contentOffset=CGPointZero;
 }

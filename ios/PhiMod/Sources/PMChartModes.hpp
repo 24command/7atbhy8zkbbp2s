@@ -6,6 +6,7 @@ using pmbridge::P;using pmbridge::Runtime;
 struct Point {float x,y;};
 void prepare(Runtime&,P,const phimod::Options&);
 void clear(Runtime&);
+void restartSegment(Runtime&);
 void beforeCodes(Runtime&,P);
 void afterInformation(Runtime&,P);
 void beginFrame(Runtime&,P);
