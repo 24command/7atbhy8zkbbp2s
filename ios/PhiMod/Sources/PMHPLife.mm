@@ -1,6 +1,7 @@
 #include "PMHPLife.hpp"
 #include "../Core/PMFlowCore.hpp"
 #include <cmath>
+#include <cstdio>
 #import "PMDiagnostics.h"
 namespace pmhp {
 using pmbridge::P;using pmbridge::Runtime;
@@ -23,7 +24,7 @@ float time(Runtime&r){return r.unbox<float>(r.stat(r.type("UnityEngine","Time"),
 bool active(){return enabled;}
 float normalized(){return options.hpMax>0?std::clamp(life/options.hpMax,0.f,1.f):0;}
 void prepare(Runtime&r,P level,const phimod::Options&o){
- clear(r);options=o;enabled=o.hpEnabled;life=o.hpMax;failure.reset();finished=false;
+ clear(r);options=o;enabled=o.hpEnabled;life=std::max(1.f,o.hpMax);failure.reset();finished=false;
  PMDiagnosticsWrite(enabled?"HP prepare: enabled":"HP prepare: disabled");
  if(!enabled)return;
  try{
@@ -39,7 +40,14 @@ void prepare(Runtime&r,P level,const phimod::Options&o){
   P code=r.string_new(key);if(!r.unbox<bool>(r.call(copy,"Contains",{"System.String"},{code})))r.call(copy,"Add",{"System.String"},{code});
  }
  r.put(info,"levelMods",copy);
+  char message[128];snprintf(message,sizeof(message),"HP levelMods replaced count=%d",r.count(copy));PMDiagnosticsWrite(message);
   }catch(const std::exception&e){PMDiagnosticsWrite((std::string("HP prepare failed: ")+e.what()).c_str());clear(r);throw;}
+}
+void beginAttempt(float hp){
+ life=std::max(0.f,std::isfinite(hp)?hp:options.hpMax);
+ if(enabled&&life<=0)life=std::max(1.f,options.hpMax);
+ failure.reset();finished=false;
+ char message[128];snprintf(message,sizeof(message),"HP attempt initialized life=%.2f max=%.2f",life,options.hpMax);PMDiagnosticsWrite(message);
 }
 void barStart(Runtime&r,P self){
  if(!enabled)return;
@@ -109,6 +117,26 @@ void scoreFrame(Runtime&r,P score){
 }
 void flash(Runtime&r){P mod=target(r,modRoot);if(enabled&&!finished&&r.alive(mod))r.call(mod,"FlashLifeText");}
 bool failing(){return failure.started();}
+void finish(Runtime&);
+void finishChallenge(Runtime&r,P progress){
+ PMDiagnosticsWrite("HP challenge failure: preparing ChallengeModeOver");
+ P gi=r.mainGame(),score=r.get<P>(progress,"scoreControl"),info=r.get<P>(progress,"levelInformation");
+ r.call(score,"FreezeScore");
+ P result=r.call(score,"GetLevelResultInfo");
+ r.put(gi,"levelResultInfo",result);
+ P items=r.get<P>(gi,"challengeSongItems");
+ int index=r.get<int>(gi,"nowChallengeIndex")-1;
+ if(!items||index<0||index>=r.count(items))throw std::runtime_error("HP challenge result index invalid");
+ P codes=r.get<P>(gi,"noteCodes");
+ P item=r.at(items,index);r.put(item,"result",result);r.put(item,"noteCodes",codes);
+ for(int i=index+1;i<r.count(items);++i){
+  P empty=r.object_new(r.klass("LevelResultInfo"));r.call(empty,".ctor");r.put(r.at(items,i),"result",empty);
+  P emptyCodes=r.object_new(r.object_get_class(codes));r.call(emptyCodes,".ctor");r.put(r.at(items,i),"noteCodes",emptyCodes);
+ }
+ r.put(progress,"isPlaying",false);r.put(info,"levelOver",true);r.put(info,"canLevelOver",true);r.put(info,"canPause",false);
+ finish(r);r.put(progress,"levelBreak",false);r.call(progress,"LevelBreak",{"System.String"},{r.string_new("ChallengeModeOver")});
+ PMDiagnosticsWrite("HP challenge failure: ChallengeModeOver requested");
+}
 bool failureReady(Runtime&r,P progress){
  if(!failure.started()){
   PMDiagnosticsWrite("HP failureReady: begin freeze/fade");

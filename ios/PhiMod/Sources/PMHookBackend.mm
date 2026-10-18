@@ -81,13 +81,14 @@ void begin(P p){
  attempt->request(options);
  auto jc=r.klass("JudgeControl");r.runtime_class_init(jc);
  phimod::Windows baseline{r.staticValue<float>(jc,"PerfectTimeRange","System.Single"),r.staticValue<float>(jc,"GoodTimeRange","System.Single"),r.staticValue<float>(jc,"BadTimeRange","System.Single")};
- if(!attempt->begin(baseline))throw std::runtime_error("Incomplete hook coverage");
+  if(!attempt->begin(baseline))throw std::runtime_error("Incomplete hook coverage");
+  if(options.hpEnabled)pmhp::beginAttempt(attempt->hp());
  if(options.requiresSaveProtection())guard.store(true);
  lastError="Gameplay hooks armed (device verification pending)";
  diagf("ProgressControl.Start armed baseline P=%.4f G=%.4f B=%.4f",baseline.perfect,baseline.good,baseline.bad);
 }
 void onAwake(P self,P mi){
- diagf("LevelControl.Awake enter hp=%d",frozenOptions.hpEnabled);
+ diagf("LevelControl.Awake enter");
  // A latch survives OnDestroy, disabled switches and the entire result screen.
  // Alternate assisted result never launches the reward/save coroutine.
  if(!broken){
@@ -95,7 +96,8 @@ void onAwake(P self,P mi){
  }
   try{release(progressRoot);release(scoreRoot);attempt.reset();resetChartRegistration();judgeUpdateSeen=false;pmscene::settingsLeave(R());pmscene::clearRecovery(R());pmhp::clear(R());pmmodes::clear(R());}catch(const std::exception&e){fault(e);}
    inResult=false;resultPresented=false;levelOverStarted=false;loadingMaskCleared=false;
- try{frozenOptions=PMReadOptions([[PMSettings shared] snapshot]);diagf("LevelControl.Awake options assisted=%d hp=%d hpMax=%.1f",frozenOptions.assisted(),frozenOptions.hpEnabled,frozenOptions.hpMax);if(!broken){pmhp::prepare(R(),self,frozenOptions);diagf("HP prepare ok");pmmodes::prepare(R(),self,frozenOptions);}}catch(const std::exception&e){diagf("LevelControl.Awake prepare failed: %s",e.what());fault(e);}
+ try{frozenOptions=PMReadOptions([[PMSettings shared] snapshot]);diagf("LevelControl.Awake options assisted=%d hp=%d hpMax=%.1f hpD=[%.1f,%.1f,%.1f,%.1f]",frozenOptions.assisted(),frozenOptions.hpEnabled,frozenOptions.hpMax,frozenOptions.hpDelta[0],frozenOptions.hpDelta[1],frozenOptions.hpDelta[2],frozenOptions.hpDelta[3]);if(!broken){pmhp::prepare(R(),self,frozenOptions);diagf("HP prepare ok active=%d normalized=%.3f",pmhp::active(),pmhp::normalized());pmmodes::prepare(R(),self,frozenOptions);diagf("Chart modes prepare ok");}}catch(const std::exception&e){diagf("LevelControl.Awake prepare failed: %s",e.what());fault(e);}
+ diagf("LevelControl.Awake calling original hpActive=%d",pmhp::active());
  orig<VoidFn>(h::levelAwake)(self,mi);
  diagf("LevelControl.Awake returned");
 }
@@ -190,10 +192,16 @@ void tickGameplay(Runtime&r,P progressControl,const char *source){
    if(attempt->options().requiresSaveProtection())guard.store(true);r.call(progressControl,"LevelBreak",{"System.String"},{r.string_new("Level")});
    r.put(info,"levelOver",true);r.put(info,"canPause",false);r.call(r.get<P>(progressControl,"audioSource"),"Stop");attempt->acknowledgeAction(action);diagf("gameplay retry dispatched");
   }else if(action==phimod::Action::TrackLost&&!levelOverStarted&&pmhp::failureReady(r,progressControl)){
-   diagf("HP failure ready; starting LevelOver");
-   r.call(score(),"FreezeScore");r.put(progressControl,"isPlaying",false);r.put(info,"levelOver",true);r.put(info,"canLevelOver",true);
-   P routine=r.call(progressControl,"LevelOver");r.call(progressControl,"StartCoroutine",{"System.Collections.IEnumerator"},{routine});levelOverStarted=true;attempt->acknowledgeAction(action);r.call(r.get<P>(progressControl,"audioSource"),"Stop");
-   diagf("HP LevelOver coroutine started");
+   bool inChallenge=r.get<bool>(progressControl,"_inChallengeMode");
+   diagf("HP failure ready; challenge=%d",inChallenge);
+   if(inChallenge){
+    pmhp::finishChallenge(r,progressControl);
+    levelOverStarted=true;attempt->acknowledgeAction(action);
+   }else{
+    r.call(score(),"FreezeScore");r.put(progressControl,"isPlaying",false);r.put(info,"levelOver",true);r.put(info,"canLevelOver",true);
+    P routine=r.call(progressControl,"LevelOver");r.call(progressControl,"StartCoroutine",{"System.Collections.IEnumerator"},{routine});levelOverStarted=true;attempt->acknowledgeAction(action);r.call(r.get<P>(progressControl,"audioSource"),"Stop");
+    diagf("HP LevelOver coroutine started");
+   }
   }
   pmhp::frame(r,attempt->hp());
  }catch(const std::exception&e){lastError=std::string("Transition pending: ")+e.what();diagf("Transition pending: %s",e.what());NSLog(@"[PhiMod] %s",lastError.c_str());}
@@ -508,6 +516,12 @@ void onCheckFlick(P s,int f,P m){onCheck(s,f,m,h::checkFlick);}
   r.field(r.klass("ProgressControl"),"lowPassCutoffFrequency","System.Single",false);
   r.field(r.klass("ProgressControl"),"difficultyIndex","System.Int32",false);
   r.field(r.klass("ProgressControl"),"_leaveTime","System.Single",false);
+   r.field(r.klass("GameInformation"),"levelResultInfo","LevelResultInfo",false);
+   r.field(r.klass("GameInformation"),"noteCodes","System.Collections.Generic.List<System.Single>",false);
+   r.field(r.klass("GameInformation"),"nowChallengeIndex","System.Int32",false);
+   r.field(r.klass("GameInformation"),"challengeSongItems","System.Collections.Generic.List<Phigros2.SongSelector.Scripts.ChallengeSongItem>",false);
+   r.field(r.type("Phigros2.SongSelector.Scripts","ChallengeSongItem"),"result","LevelResultInfo",false);
+   r.field(r.type("Phigros2.SongSelector.Scripts","ChallengeSongItem"),"noteCodes","System.Collections.Generic.List<System.Single>",false);
   r.field(r.klass("ScoreControl"),"_score","System.Single",false);
   r.field(r.klass("ScoreControl"),"_percent","System.Single",false);
   r.field(r.klass("ScoreControl"),"scoreOfNote","System.Single",false);

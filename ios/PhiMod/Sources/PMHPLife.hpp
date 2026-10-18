@@ -3,6 +3,7 @@
 #include "../Core/PMGameplayCore.hpp"
 namespace pmhp {
 void prepare(pmbridge::Runtime&,void*,const phimod::Options&);
+void beginAttempt(float hp);
 void clear(pmbridge::Runtime&);
 bool active();
 bool ownsBar(pmbridge::Runtime&,void*);
@@ -16,6 +17,7 @@ void scoreFrame(pmbridge::Runtime&,void*);
 void flash(pmbridge::Runtime&);
 bool failureReady(pmbridge::Runtime&,void*);
 bool failing();
+void finishChallenge(pmbridge::Runtime&,void*);
 void finish(pmbridge::Runtime&);
 void validate(pmbridge::Runtime&);
 }

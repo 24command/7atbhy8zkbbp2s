@@ -366,6 +366,7 @@ void PhiModInstallOverlay(void) {
 }
 
 __attribute__((constructor)) static void PhiModEntry(void) {
+    PMDiagnosticsBeginSession();
     dispatch_async(dispatch_get_main_queue(), ^{
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification
                                                           object:nil

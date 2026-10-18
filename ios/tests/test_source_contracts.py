@@ -159,6 +159,9 @@ class SourceContracts(unittest.TestCase):
   self.assertIn('pendingAction(playing||pmhp::failing()||hpLost',hook)
   self.assertIn('attempt->acknowledgeAction(action)',hook)
   self.assertNotIn('lastTickFrame',hook)
+  self.assertIn('bool inChallenge=r.get<bool>(progressControl,"_inChallengeMode")',hook)
+  self.assertIn('pmhp::finishChallenge(r,progressControl)',hook)
+  self.assertIn('if(options.hpEnabled)pmhp::beginAttempt(attempt->hp())',hook)
  def test_hold_array_edit_is_scoped_and_no_android_layout(self):
   bridge=(ROOT/'PhiMod/Sources/PMIL2CPP.hpp').read_text(encoding='utf-8')
   modes=(ROOT/'PhiMod/Sources/PMChartModes.mm').read_text(encoding='utf-8')
@@ -183,10 +186,14 @@ class SourceContracts(unittest.TestCase):
   hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf-8')
   hp=(ROOT/'PhiMod/Sources/PMHPLife.mm').read_text(encoding='utf-8')
   self.assertIn('PhiMod-diagnostics.log',diagnostics)
+  self.assertIn('PMDiagnosticsBeginSession',diagnostics)
+  self.assertIn('PMDiagnosticsBeginSession();',ui)
   self.assertIn('writeToFile:path atomically:YES',diagnostics)
   self.assertIn('UIPasteboard.generalPasteboard.string=PMDiagnosticsTail(400)',ui)
   self.assertIn('judgeUpdateHook',hook)
   self.assertIn('HP failureReady: begin freeze/fade',hp)
+  self.assertIn('HP attempt initialized life=',hp)
+  self.assertIn('ChallengeModeOver',hp)
  def test_packager_rejects_old_framework_before_copying_payload(self):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp);(root/'source/Payload').mkdir(parents=True);(root/'PhiMod.framework').mkdir()

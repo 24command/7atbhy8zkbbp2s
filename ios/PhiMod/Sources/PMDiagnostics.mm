@@ -2,6 +2,7 @@
 
 static const NSUInteger PMDiagnosticsMaxBytes = 1024 * 1024;
 static NSString * const PMDiagnosticsFileName = @"PhiMod-diagnostics.log";
+static NSString *PMDiagnosticsSessionID;
 
 static NSString *PMDiagnosticsResolvedPath(void) {
     NSArray<NSString *> *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
@@ -16,6 +17,14 @@ static NSString *PMDiagnosticsTailText(NSString *text, NSUInteger maxLines) {
     return [[lines subarrayWithRange:NSMakeRange(start, lines.count - start)] componentsJoinedByString:@"\n"];
 }
 
+void PMDiagnosticsBeginSession(void) {
+    @synchronized ([PMDiagnosticsFileName self]) {
+        PMDiagnosticsSessionID = [NSUUID UUID].UUIDString;
+    }
+    NSString *marker = [NSString stringWithFormat:@"process session %@ pid=%d", PMDiagnosticsSessionID, NSProcessInfo.processInfo.processIdentifier];
+    PMDiagnosticsWrite(marker.UTF8String);
+}
+
 void PMDiagnosticsWrite(const char *message) {
     if (!message || !*message) return;
     @autoreleasepool {
@@ -26,7 +35,7 @@ void PMDiagnosticsWrite(const char *message) {
             NSDateFormatter *formatter = [NSDateFormatter new];
             formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
             formatter.dateFormat = @"yyyy-MM-dd HH:mm:ss.SSS";
-            NSString *line = [NSString stringWithFormat:@"[%@] %s\n", [formatter stringFromDate:NSDate.date], message];
+            NSString *line = [NSString stringWithFormat:@"[%@] [session %@] %s\n", [formatter stringFromDate:NSDate.date], PMDiagnosticsSessionID ?: @"unknown", message];
             NSString *existing = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil] ?: @"";
             NSMutableString *contents = [existing mutableCopy];
             [contents appendString:line];
