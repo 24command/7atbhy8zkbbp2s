@@ -180,7 +180,7 @@ static UIColor *PMColor(uint32_t argb) {
     close.tag = 102;
     [self.panelHeader addSubview:close];
 
-    self.statusLabel = [self label:@"PhiMod gameplay v2 | verify hooks and back up saves" size:11 color:PMColor(0xff92a2b9)];
+    self.statusLabel = [self label:@"PhiMod · 正在连接游戏引擎" size:11 color:PMColor(0xff92a2b9)];
     [self.panel addSubview:self.statusLabel];
 
     self.tabBar = [[UIStackView alloc] init];
@@ -255,20 +255,20 @@ static UIColor *PMColor(uint32_t argb) {
  else {UITextField *field=[UITextField new];field.accessibilityIdentifier=key;field.text=[[[PMSettings shared] value:key] description];field.textColor=PMColor(0xff71e1cf);field.borderStyle=UITextBorderStyleRoundedRect;field.keyboardType=UIKeyboardTypeNumbersAndPunctuation;field.returnKeyType=UIReturnKeyDone;[field.widthAnchor constraintEqualToConstant:100].active=YES;[field addTarget:self action:@selector(settingNumber:) forControlEvents:UIControlEventEditingDidEnd];[field addTarget:field action:@selector(resignFirstResponder) forControlEvents:UIControlEventEditingDidEndOnExit];[row addArrangedSubview:field];}
  [self.body addArrangedSubview:row];
 }
-- (void)settingSwitch:(UISwitch *)sender {[self.root endEditing:YES];NSString *error=nil;BOOL ok=[[PMSettings shared] setValue:@(sender.on) forKey:sender.accessibilityIdentifier error:&error];if(!ok)sender.on=[[[PMSettings shared] value:sender.accessibilityIdentifier] boolValue];self.statusLabel.text=ok?@"Saved; gameplay modes apply next chart":error;
+- (void)settingSwitch:(UISwitch *)sender {[self.root endEditing:YES];NSString *error=nil;BOOL ok=[[PMSettings shared] setValue:@(sender.on) forKey:sender.accessibilityIdentifier error:&error];if(!ok)sender.on=[[[PMSettings shared] value:sender.accessibilityIdentifier] boolValue];self.statusLabel.text=ok?@"已保存；玩法模式在下一首生效":error;
  if(ok && [sender.accessibilityIdentifier isEqualToString:@"enabled"]) { NSDictionary *s=[[PMSettings shared] snapshot]; NSDictionary *r=[PMRuntime applyJudgeSettings:[s[@"enabled"] boolValue] perfectMs:[s[@"perfect"] doubleValue] goodMs:[s[@"good"] doubleValue]]; self.statusLabel.text=r[@"message"] ?: @"Judge apply failed"; if(![r[@"ok"] boolValue]){[[PMSettings shared] setValue:@NO forKey:@"enabled" error:nullptr]; [self renderPage];} }
 }
 - (void)settingNumber:(UITextField *)sender {
  NSScanner *scanner=[NSScanner scannerWithString:sender.text ?: @""];scanner.locale=[NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];double number=0;NSString *error=nil;
  BOOL parsed=[scanner scanDouble:&number] && scanner.isAtEnd;
  BOOL ok=parsed && [[PMSettings shared] setValue:@(number) forKey:sender.accessibilityIdentifier error:&error];
- sender.text=[[[PMSettings shared] value:sender.accessibilityIdentifier] description];self.statusLabel.text=ok?@"Saved; gameplay modes apply next chart":(error ?: @"Enter a valid number");
+ sender.text=[[[PMSettings shared] value:sender.accessibilityIdentifier] description];self.statusLabel.text=ok?@"已保存；玩法模式在下一首生效":(error ?: @"请输入有效数字");
  if(ok && [[[PMSettings shared] value:@"enabled"] boolValue] && ([sender.accessibilityIdentifier isEqualToString:@"perfect"] || [sender.accessibilityIdentifier isEqualToString:@"good"])) { NSDictionary *s=[[PMSettings shared] snapshot]; NSDictionary *r=[PMRuntime applyJudgeSettings:[s[@"enabled"] boolValue] perfectMs:[s[@"perfect"] doubleValue] goodMs:[s[@"good"] doubleValue]]; self.statusLabel.text=r[@"message"] ?: @"Judge apply failed"; if(![r[@"ok"] boolValue]){[[PMSettings shared] setValue:@NO forKey:@"enabled" error:nullptr]; [self renderPage];} }
  if(ok && [sender.accessibilityIdentifier isEqualToString:@"opacity"])self.bubble.alpha=number*(self.open?0.65:1);
 }
 - (void)probeRuntime {self.statusLabel.text=[PMRuntime probe];}
-- (void)copyDiagnostics {UIPasteboard.generalPasteboard.string=PMDiagnosticsTail(400);self.statusLabel.text=[NSString stringWithFormat:@"Diagnostics copied: %@",PMDiagnosticsPath().lastPathComponent];}
-- (void)clearDiagnostics {PMDiagnosticsClear();self.statusLabel.text=@"Diagnostics cleared";}
+- (void)copyDiagnostics {UIPasteboard.generalPasteboard.string=PMDiagnosticsTail(400);self.statusLabel.text=[NSString stringWithFormat:@"诊断日志已复制：%@",PMDiagnosticsPath().lastPathComponent];}
+- (void)clearDiagnostics {PMDiagnosticsClear();self.statusLabel.text=@"诊断日志已清空";}
 - (void)previewGameplay {NSDictionary *r=[PMGameplay previewConfiguration];self.statusLabel.text=r[@"message"] ?: @"配置错误";}
 - (void)validateGameplay {NSDictionary *r=[PMGameplay validateConfiguration];self.statusLabel.text=r[@"message"] ?: @"配置错误";}
 - (void)readGameSnapshot {
@@ -287,9 +287,9 @@ static UIColor *PMColor(uint32_t argb) {
  for(UIView *view in self.body.arrangedSubviews.copy){[self.body removeArrangedSubview:view];[view removeFromSuperview];}
  NSArray *names=@[@"谱库",@"章节",@"判定",@"模式",@"设置"];
  [self.body addArrangedSubview:[self label:names[self.selectedTab] size:18 color:PMColor(0xfff1f5fa)]];
- [self.body addArrangedSubview:[self label:@"Practice hooks + original-style song shortcuts / MOD tab. Back up saves. Native Noise / Unified / Hold tuning connected; device verification pending." size:12 color:PMColor(0xff92a2b9)]];
+ [self.body addArrangedSubview:[self label:@"选曲页可直接切换模式；完整设置位于游戏设置的 MOD 页。请先备份存档。" size:12 color:PMColor(0xff92a2b9)]];
  if(self.selectedTab==0 || self.selectedTab==1){[self.body addArrangedSubview:[self label:@"ZIP / PEZ、原生 JSON / PEC / RPE 谱包。文件保存在应用 Documents/PhiMod，可导入多文件、分组、编辑章节与导出。" size:13 color:PMColor(0xff92a2b9)]];[self.body addArrangedSubview:[self textButton:self.selectedTab==0?@"打开谱库管理":@"打开章节管理" action:self.selectedTab==0?@selector(openLibrary):@selector(openChapters)]];}
- if(self.selectedTab==2){[self addSetting:@"enabled" title:@"Custom judge (apply to game)" boolean:YES];[self addSetting:@"perfect" title:@"Perfect / ms" boolean:NO];[self addSetting:@"good" title:@"Good / ms" boolean:NO];[self addSetting:@"holdGrace" title:@"Noise Hold grace / ms" boolean:NO];}
+ if(self.selectedTab==2){[self addSetting:@"enabled" title:@"自定义判定（应用到游戏）" boolean:YES];[self addSetting:@"perfect" title:@"Perfect / ms" boolean:NO];[self addSetting:@"good" title:@"Good / ms" boolean:NO];[self addSetting:@"holdGrace" title:@"噪域 Hold 容错 / ms" boolean:NO];}
  if(self.selectedTab==3){
   NSArray *categories=@[@"模式",@"练习",@"噪域",@"HP"];
   UISegmentedControl *seg=[[UISegmentedControl alloc]initWithItems:categories];seg.selectedSegmentIndex=self.selectedModeCategory;seg.tintColor=PMColor(0xff71e1cf);[seg addTarget:self action:@selector(selectModeCategory:) forControlEvents:UIControlEventValueChanged];[self.body addArrangedSubview:seg];
@@ -337,8 +337,8 @@ static UIColor *PMColor(uint32_t argb) {
  }
 
  if(self.selectedTab==4){[self addSetting:@"opacity" title:@"浮窗透明度 0.15–1（立即生效）" boolean:NO];[self addSetting:@"showShortcuts" title:@"选曲快捷按钮" boolean:YES];[self.body addArrangedSubview:[self textButton:@"读取游戏状态（实际读取）" action:@selector(readGameSnapshot)]];[self.body addArrangedSubview:[self textButton:@"切换中文" action:@selector(setChinese)]];[self.body addArrangedSubview:[self textButton:@"切换 English" action:@selector(setEnglish)]];[self.body addArrangedSubview:[self textButton:@"只读探测 IL2CPP" action:@selector(probeRuntime)]];}
- if(self.selectedTab==4){[self.body addArrangedSubview:[self textButton:@"Copy diagnostics" action:@selector(copyDiagnostics)]];[self.body addArrangedSubview:[self textButton:@"Clear diagnostics" action:@selector(clearDiagnostics)]];}
- if(self.selectedTab==2){[self.body addArrangedSubview:[self textButton:@"Validate gameplay config" action:@selector(validateGameplay)]];[self.body addArrangedSubview:[self textButton:@"Preview gameplay config (not applied)" action:@selector(previewGameplay)]];}
+ if(self.selectedTab==4){[self.body addArrangedSubview:[self textButton:@"复制诊断日志" action:@selector(copyDiagnostics)]];[self.body addArrangedSubview:[self textButton:@"清空诊断日志" action:@selector(clearDiagnostics)]];}
+ if(self.selectedTab==2){[self.body addArrangedSubview:[self textButton:@"检查玩法配置" action:@selector(validateGameplay)]];[self.body addArrangedSubview:[self textButton:@"预览下局配置（不应用）" action:@selector(previewGameplay)]];}
  if(self.selectedTab==4)[self.body addArrangedSubview:[self textButton:@"UI 自检" action:@selector(runSelfTest)]];
  for(UIButton *button in self.tabBar.arrangedSubviews){BOOL selected=button.tag==200+self.selectedTab;button.backgroundColor=selected?PMColor(0xff71e1cf):PMColor(0xff252f40);[button setTitleColor:selected?PMColor(0xff142b35):PMColor(0xfff1f5fa) forState:UIControlStateNormal];}
  self.scroll.contentOffset=CGPointZero;

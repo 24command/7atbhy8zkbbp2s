@@ -42,7 +42,53 @@ void apply(Runtime&r){capture(r);if(!baseline||playing)return;NSDictionary*db=[P
  P gi=r.mainGame(),newBase=decode(r,songBase,"SongBase");uint32_t baseHandle=r.gchandle_new(newBase,false);P arr=r.array_new(r.klass("Chapter"),chapters.count);uint32_t arrHandle=r.gchandle_new(arr,false);try{for(NSUInteger i=0;i<chapters.count;++i){P c=decode(r,chapters[i],"Chapter");uint32_t h=r.gchandle_new(c,false);P info=r.get<P>(c,"songInfo");r.put(info,"<songsBypassLimited>k__BackingField",r.get<P>(info,"songs"));int index=(int)i;r.invokeOn(r.resolve(r.type("System","Array"),"SetValue",{"System.Object","System.Int32"}),arr,{c,&index});r.gchandle_free(h);}r.call(newBase,"MarkDirty");r.put(gi,"song",newBase);r.put(gi,"chapters",arr);}catch(...){r.gchandle_free(arrHandle);r.gchandle_free(baseHandle);throw;}r.gchandle_free(arrHandle);r.gchandle_free(baseHandle);applied=PMContentStore.shared.revision;log([NSString stringWithFormat:@"Content applied: %lu groups, %lu chapters",(unsigned long)variants.size(),(unsigned long)chapters.count]);}
 P image(Runtime&r,NSString*path){UIImage*img=[UIImage imageWithContentsOfFile:path];if(!img)img=[UIImage systemImageNamed:@"music.note"];CGImageRef cg=img.CGImage;if(!cg){UIGraphicsImageRenderer*render=[[UIGraphicsImageRenderer alloc]initWithSize:CGSizeMake(512,288)];img=[render imageWithActions:^(UIGraphicsImageRendererContext*c){[[UIColor colorWithRed:.1 green:.14 blue:.2 alpha:1]setFill];[c fillRect:CGRectMake(0,0,512,288)];}];cg=img.CGImage;}int w=(int)CGImageGetWidth(cg),h=(int)CGImageGetHeight(cg);if(w<=0||h<=0||w>4096||h>4096)throw std::runtime_error("Cover image size invalid");std::vector<unsigned char>pixels(size_t(w)*h*4);CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();CGContextRef context=CGBitmapContextCreate(pixels.data(),w,h,8,w*4,space,kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big);CGColorSpaceRelease(space);if(!context)throw std::runtime_error("Cover bitmap allocation failed");CGContextTranslateCTM(context,0,h);CGContextScaleCTM(context,1,-1);CGContextDrawImage(context,CGRectMake(0,0,w,h),cg);CGContextRelease(context);
  P texture=r.object_new(r.type("UnityEngine","Texture2D"));uint32_t texRoot=r.gchandle_new(texture,false);try{r.call(texture,".ctor",{"System.Int32","System.Int32"},{&w,&h});void*ptr=pixels.data();int bytes=(int)pixels.size();r.call(texture,"LoadRawTextureData",{"System.IntPtr","System.Int32"},{&ptr,&bytes});bool no=false,yes=true;r.call(texture,"Apply",{"System.Boolean","System.Boolean"},{&no,&yes});Rect rect{0,0,(float)w,(float)h};V2 pivot{.5,.5};float ppu=100;P sprite=r.stat(r.type("UnityEngine","Sprite"),"Create",{"UnityEngine.Texture2D","UnityEngine.Rect","UnityEngine.Vector2","System.Single"},{texture,&rect,&pivot,&ppu});textures[sprite]=texRoot;return sprite;}catch(...){r.gchandle_free(texRoot);throw;}}
-P audio(Runtime&r,NSString*path){NSError*error=nil;AVAudioFile*file=[[AVAudioFile alloc]initForReading:[NSURL fileURLWithPath:path] commonFormat:AVAudioPCMFormatFloat32 interleaved:NO error:&error];if(!file)throw std::runtime_error(error.localizedDescription.UTF8String ?: "Cannot decode custom audio");int channels=file.processingFormat.channelCount,frequency=(int)file.processingFormat.sampleRate,samples=(int)file.length;if(channels<1||channels>8||samples<=0||file.length>INT_MAX)throw std::runtime_error("Custom audio length invalid");bool no=false;P clip=r.stat(r.type("UnityEngine","AudioClip"),"Create",{"System.String","System.Int32","System.Int32","System.Int32","System.Boolean"},{r.string_new("PhiMod custom audio"),&samples,&channels,&frequency,&no});uint32_t clipRoot=r.gchandle_new(clip,false);try{AVAudioPCMBuffer*buffer=[[AVAudioPCMBuffer alloc]initWithPCMFormat:file.processingFormat frameCapacity:16384];int at=0;while(at<samples){AVAudioFrameCount frames=MIN(16384,samples-at);if(![file readIntoBuffer:buffer frameCount:frames error:&error])throw std::runtime_error("Reading custom audio failed");int count=(int)buffer.frameLength*channels;if(!count)break;std::vector<float>pcm(count);for(AVAudioFrameCount i=0;i<buffer.frameLength;++i)for(int c=0;c<channels;++c)pcm[i*channels+c]=buffer.floatChannelData[c][i];P data=r.array_new(r.type("System","Single"),count);uint32_t h=r.gchandle_new(data,false);void*ptr=pcm.data();int zero=0;r.stat(r.type("System.Runtime.InteropServices","Marshal"),"Copy",{"System.IntPtr","System.Single[]","System.Int32","System.Int32"},{&ptr,data,&zero,&count});bool ok=r.unbox<bool>(r.call(clip,"SetData",{"System.Single[]","System.Int32"},{data,&at}));r.gchandle_free(h);if(!ok)throw std::runtime_error("Unity rejected custom audio chunk");at+=buffer.frameLength;}if(at<samples)throw std::runtime_error("Custom audio ended before declared length");r.gchandle_free(clipRoot);return clip;}catch(...){r.gchandle_free(clipRoot);throw;}}
+// iOS 4.0.1 strips Marshal.Copy(IntPtr, Single[], int, int).
+// dump.cs: Marshal.copy_from_unmanaged at RVA 0x2F25960. IDA confirms
+// its native helper copies array_element_size * length, not length bytes.
+// Keep the managed Array API: never assume an Android array-header layout.
+P audio(Runtime&r,NSString*path){
+ NSError*error=nil;
+ AVAudioFile*file=[[AVAudioFile alloc]initForReading:[NSURL fileURLWithPath:path]
+     commonFormat:AVAudioPCMFormatFloat32 interleaved:NO error:&error];
+ if(!file)throw std::runtime_error(error.localizedDescription.UTF8String ?: "Cannot decode custom audio");
+ if(file.length<=0||file.length>INT_MAX)throw std::runtime_error("Custom audio length invalid");
+ int channels=file.processingFormat.channelCount,frequency=(int)file.processingFormat.sampleRate,samples=(int)file.length;
+ if(channels<1||channels>8||frequency<=0)throw std::runtime_error("Custom audio format invalid");
+ bool no=false;
+ P clip=r.stat(r.type("UnityEngine","AudioClip"),"Create",{"System.String","System.Int32","System.Int32","System.Int32","System.Boolean"},
+     {r.string_new("PhiMod custom audio"),&samples,&channels,&frequency,&no});
+ if(!clip)throw std::runtime_error("Unity could not allocate custom audio clip");
+ uint32_t clipRoot=r.gchandle_new(clip,false);
+ try{
+  AVAudioPCMBuffer*buffer=[[AVAudioPCMBuffer alloc]initWithPCMFormat:file.processingFormat frameCapacity:16384];
+  if(!buffer)throw std::runtime_error("Custom audio buffer allocation failed");
+  int at=0;
+  while(at<samples){
+   AVAudioFrameCount frames=MIN(16384,samples-at);
+   if(![file readIntoBuffer:buffer frameCount:frames error:&error])throw std::runtime_error("Reading custom audio failed");
+   int count=(int)buffer.frameLength*channels;
+   if(!count)break;
+   if(!buffer.floatChannelData)throw std::runtime_error("Custom audio float samples unavailable");
+   std::vector<float>pcm(count);
+   for(AVAudioFrameCount i=0;i<buffer.frameLength;++i)
+    for(int c=0;c<channels;++c)pcm[i*channels+c]=buffer.floatChannelData[c][i];
+   P data=r.array_new(r.type("System","Single"),count);
+   if(!data)throw std::runtime_error("Managed PCM array allocation failed");
+   uint32_t chunkRoot=r.gchandle_new(data,false);
+   try{
+    void*ptr=pcm.data();int zero=0;
+    r.stat(r.type("System.Runtime.InteropServices","Marshal"),"copy_from_unmanaged",
+        {"System.IntPtr","System.Int32","System.Array","System.Int32"},{&ptr,&zero,data,&count});
+    bool ok=r.unbox<bool>(r.call(clip,"SetData",{"System.Single[]","System.Int32"},{data,&at}));
+    if(!ok)throw std::runtime_error("Unity rejected custom audio chunk");
+   }catch(...){r.gchandle_free(chunkRoot);throw;}
+   r.gchandle_free(chunkRoot);
+   at+=buffer.frameLength;
+  }
+  if(at<samples)throw std::runtime_error("Custom audio ended before declared length");
+  r.gchandle_free(clipRoot);return clip;
+ }catch(...){r.gchandle_free(clipRoot);throw;}
+}
 NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=key.lowercaseString;*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":@"image";return id;}
 void clearVisuals(Runtime&r){for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();fakeNotes.clear();fakeRenderers.clear();currentChart=nil;}
 }
@@ -81,6 +127,21 @@ void visuals(Runtime&r,P progress){
 void noteMoved(Runtime&r,P controlObject,bool hold){P note=r.get<P>(controlObject,"noteInfor");auto it=extras.find(note);if(it==extras.end())return;NSDictionary*n=it->second;int index=r.get<int>(note,"judgeLineIndex")/2;NSArray*lines=currentChart[@"judgeLineList"];NSDictionary*d=index>=0&&index<(int)lines.count?lines[index][@"pmDecor"]:nil;P progress=r.get<P>(controlObject,"progressControl"),info=r.get<P>(controlObject,"levelInformation"),tr=r.call(controlObject,"get_transform");float now=r.get<float>(progress,"nowTime"),start=r.get<float>(note,"realTime");V3 scale=r.unbox<V3>(r.call(tr,"get_localScale"));if(!noteScales.count(controlObject))noteScales[controlObject]=scale;float delta=scalar(n[@"floorPosition"])-floor(r,info,index);float distance=delta*rpeFloorToDistance+scalar(n[@"pmYOffset"]);scale.x=noteScales[controlObject].x*scalar(n[@"pmSize"],1)*control(d,@"sizeControl",distance);r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});if(n[@"pmRawSpeed"]){float speed=r.staticValue<float>(r.klass("LevelInformation"),"Speed","System.Single");V3 position=r.unbox<V3>(r.call(tr,"get_localPosition"));bool below=r.get<int>(note,"judgeLineIndex")%2;auto geometry=rpeGeometry(delta,scalar(n[@"pmEndFloor"],scalar(n[@"floorPosition"]))-floor(r,info,index),0,scalar(n[@"pmRawSpeed"],1),scalar(n[@"pmYOffset"]),control(d,@"yControl",distance),speed,hold&&now>=start);position.x=r.get<float>(note,"positionX")*control(d,@"posControl",distance);position.y=below?-geometry.head:geometry.head;if(hold){P renderer=r.get<P>(controlObject,"_holdSpriteRenderer");P sprite=r.alive(renderer)?r.call(renderer,"get_sprite"):nullptr;if(sprite){Bounds bounds=r.unbox<Bounds>(r.call(sprite,"get_bounds"));float height=bounds.extents.y*2;if(height>.00001f){auto layout=rpeHoldLayout(geometry,height,bounds.center.y-bounds.extents.y,below);position.y=layout.origin;scale.y=layout.scale;r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});for(const char*name:{"holdHead","holdEnd"}){P child=r.get<P>(controlObject,name);if(!r.alive(child))continue;P childTr=r.call(child,"get_transform");V3 cs=r.unbox<V3>(r.call(childTr,"get_localScale"));cs.y=.22f/std::max(.00001f,std::fabs(scale.y));r.call(childTr,"set_localScale",{"UnityEngine.Vector3"},{&cs});V3 cp=r.unbox<V3>(r.call(childTr,"get_localPosition"));cp.y=std::string(name)=="holdEnd"?bounds.center.y+bounds.extents.y:bounds.center.y-bounds.extents.y;r.call(childTr,"set_localPosition",{"UnityEngine.Vector3"},{&cp});}}}}position.z=0;r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&position});}float alpha=scalar(n[@"pmAlpha"],1)*control(d,@"alphaControl",distance);if(start-now>scalar(n[@"pmVisible"],999999))alpha=0;for(const char*field:hold?std::vector<const char*>{"_holdHeadSpriteRenderer","_holdSpriteRenderer","_holdEndSpriteRenderer1"}:std::vector<const char*>{"_spriteRenderer"}){P renderer=r.get<P>(controlObject,field);if(!r.alive(renderer))continue;Color color=r.unbox<Color>(r.call(renderer,"get_color"));color.a=std::min(color.a,alpha);r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});int order=(int)scalar(d[@"zOrder"])*4+(hold?1:2);r.call(renderer,"set_sortingOrder",{"System.Int32"},{&order});}}
 
 void ranking(Runtime&r,P self,P mi,void(*original)(P,P)){if(!baseline){original(self,mi);return;}P previous=r.get<P>(self,"song");uint32_t oldRoot=r.gchandle_new(previous,false);P official=decode(r,baseline,"SongBase");uint32_t newRoot=r.gchandle_new(official,false);try{r.put(self,"song",official);original(self,mi);r.put(self,"song",previous);}catch(...){try{r.put(self,"song",previous);}catch(...){}r.gchandle_free(oldRoot);r.gchandle_free(newRoot);throw;}r.gchandle_free(oldRoot);r.gchandle_free(newRoot);}
+// Small managed-array round trip before publishing any hook callbacks.
+// Detect invoker/argument-order errors here rather than while importing a song.
+void validatePcmCopy(Runtime&r){
+ float samples[]={.25f,-.5f,0.f,1.f};int zero=0,count=4;void*ptr=samples;
+ P data=r.array_new(r.type("System","Single"),count);
+ if(!data)throw std::runtime_error("PCM preflight allocation failed");
+ uint32_t root=r.gchandle_new(data,false);
+ try{
+  r.stat(r.type("System.Runtime.InteropServices","Marshal"),"copy_from_unmanaged",
+      {"System.IntPtr","System.Int32","System.Array","System.Int32"},{&ptr,&zero,data,&count});
+  for(int i=0;i<count;++i)if(r.unbox<float>(r.arrayAt(data,i))!=samples[i])
+   throw std::runtime_error("PCM preflight readback mismatch");
+ }catch(...){r.gchandle_free(root);throw;}
+ r.gchandle_free(root);PMDiagnosticsWrite("Content PCM copy preflight passed (4 float elements)");
+}
 void validate(Runtime&r){
  r.resolve(r.klass("SongsItem"),"GetLevelStartInfo",{"System.Int32"});r.resolve(r.klass("SongSelectorItem"),"GetLevelStartInfo",{"System.Int32"});
  r.resolve(r.klass("SongSelector"),"get_SongItems");r.resolve(r.klass("SongSelector"),"SetLevel",{"System.Int32"});r.resolve(r.klass("SongSelector"),"NormalStart");
@@ -90,6 +151,8 @@ void validate(Runtime&r){
  r.field(r.klass("LevelInformation"),"floorPositions","System.Single[]",false);r.field(r.klass("LevelInformation"),"Speed","System.Single",true);
  P renderer=r.type("UnityEngine","SpriteRenderer");r.resolve(renderer,"get_sprite");r.resolve(renderer,"set_sprite",{"UnityEngine.Sprite"});r.resolve(renderer,"get_color");r.resolve(renderer,"set_color",{"UnityEngine.Color"});r.resolve(renderer,"set_sortingOrder",{"System.Int32"});r.resolve(r.type("UnityEngine","Sprite"),"Create",{"UnityEngine.Texture2D","UnityEngine.Rect","UnityEngine.Vector2","System.Single"},true);
  P texture=r.type("UnityEngine","Texture2D");r.resolve(texture,".ctor",{"System.Int32","System.Int32"});r.resolve(texture,"LoadRawTextureData",{"System.IntPtr","System.Int32"});r.resolve(texture,"Apply",{"System.Boolean","System.Boolean"});
- r.resolve(r.type("UnityEngine","TextAsset"),".ctor",{"System.String"});r.resolve(r.type("UnityEngine","AudioClip"),"Create",{"System.String","System.Int32","System.Int32","System.Int32","System.Boolean"},true);r.resolve(r.type("System.Runtime.InteropServices","Marshal"),"Copy",{"System.IntPtr","System.Single[]","System.Int32","System.Int32"},true);
+ r.resolve(r.type("UnityEngine","TextAsset"),".ctor",{"System.String"});r.resolve(r.type("UnityEngine","AudioClip"),"Create",{"System.String","System.Int32","System.Int32","System.Int32","System.Boolean"},true);r.resolve(r.type("System.Runtime.InteropServices","Marshal"),"copy_from_unmanaged",{"System.IntPtr","System.Int32","System.Array","System.Int32"},true);
+ r.resolve(r.type("UnityEngine","AudioClip"),"SetData",{"System.Single[]","System.Int32"});
+ validatePcmCopy(r);
 }
 }

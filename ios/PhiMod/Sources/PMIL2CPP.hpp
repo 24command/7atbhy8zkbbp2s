@@ -285,7 +285,7 @@ struct Runtime {
             }
             if(match){methodCache[key]=match;return match;}
         }
-        throw std::runtime_error("Missing overload: "+signature);
+        throw std::runtime_error(std::string("Missing overload: ")+(class_get_name(c)?class_get_name(c):"?")+" :: "+signature);
     }
     P invokeOn(P method,P self,std::initializer_list<P> args={}) {
         std::vector<P> a(args);P ex=nullptr;
