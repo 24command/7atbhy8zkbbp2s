@@ -1,4 +1,5 @@
 #import "PMOfficialUI.h"
+#import "PMDiagnostics.h"
 #import "PMContentUI.h"
 #import "PMContentStore.h"
 #import "PMHookBackend.h"
@@ -53,8 +54,48 @@
 - (void)move:(NSString*)identifier index:(NSIndexPath*)index{UIAlertController*a=[UIAlertController alertControllerWithTitle:@"选择目标章节" message:nil preferredStyle:UIAlertControllerStyleActionSheet];for(NSDictionary*c in self.db[@"chapters"])[a addAction:[UIAlertAction actionWithTitle:c[@"name"] style:UIAlertActionStyleDefault handler:^(UIAlertAction*x){NSMutableDictionary*d=[[PMContentStore.shared snapshot]mutableCopy];for(NSMutableDictionary*v in d[@"chapters"]){[v[@"songs"] removeObject:identifier];if([v[@"id"] isEqualToString:c[@"id"]])[v[@"songs"]addObject:identifier];}for(NSMutableDictionary*s in d[@"songs"])if([s[@"id"] isEqualToString:identifier])s[@"targetChapter"]=c[@"id"];[self save:d];}]];[self sheet:a row:index];}
 - (void)group:(NSDictionary*)song{UIAlertController*a=[UIAlertController alertControllerWithTitle:@"多难度分组" message:@"填写另一谱面的 ID 合并为同一首；留空恢复独立。同难度多版本会以最后选择为准。" preferredStyle:UIAlertControllerStyleAlert];[a addTextFieldWithConfigurationHandler:^(UITextField*f){f.text=song[@"groupId"];f.placeholder=@"pm_... 或原版歌曲 ID";}];[a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];[a addAction:[UIAlertAction actionWithTitle:@"保存并选用此版本" style:UIAlertActionStyleDefault handler:^(UIAlertAction*x){NSString*group=a.textFields.firstObject.text.length?a.textFields.firstObject.text:song[@"id"];NSMutableDictionary*d=[[PMContentStore.shared snapshot]mutableCopy];for(NSMutableDictionary*s in d[@"songs"])if([s[@"id"] isEqualToString:song[@"id"]])s[@"groupId"]=group;NSMutableDictionary*choices=[d[@"chartSelections"]mutableCopy] ?: [NSMutableDictionary new];NSInteger slot=[@[@"EZ",@"HD",@"IN",@"AT"]indexOfObject:song[@"level"]];choices[[NSString stringWithFormat:@"%@@%ld",group,(long)slot]]=song[@"id"];d[@"chartSelections"]=choices;[self save:d];}]];[self presentViewController:a animated:YES completion:nil];}
 - (void)orderChapter:(NSString*)identifier{UIAlertController*a=[UIAlertController alertControllerWithTitle:@"排列到此章节之前" message:nil preferredStyle:UIAlertControllerStyleActionSheet];NSMutableArray*chapters=[self.db[@"chapters"]mutableCopy];[chapters addObjectsFromArray:[PMHookBackend contentSnapshot][@"chapters"] ?: @[]];for(NSDictionary*c in chapters){NSString*id=c[@"id"] ?: c[@"chapterCode"];if([id isEqualToString:identifier])continue;[a addAction:[UIAlertAction actionWithTitle:c[@"name"] ?: c[@"songInfo"][@"title"] style:UIAlertActionStyleDefault handler:^(UIAlertAction*x){NSMutableDictionary*d=[[PMContentStore.shared snapshot]mutableCopy];for(NSMutableDictionary*v in d[@"chapters"])if([v[@"id"]isEqualToString:identifier])v[@"before"]=id;[self save:d];}]];}a.popoverPresentationController.barButtonItem=self.navigationItem.rightBarButtonItem;[a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];[self presentViewController:a animated:YES completion:nil];}
-- (void)importFiles {if(self.busy)return;self.imageID=nil;UIDocumentPickerViewController*p=[[UIDocumentPickerViewController alloc]initForOpeningContentTypes:@[UTTypeData,UTTypeZIP] asCopy:NO];p.allowsMultipleSelection=YES;p.delegate=self;[self presentViewController:p animated:YES completion:nil];}
-- (void)documentPicker:(UIDocumentPickerViewController*)picker didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls {if(!urls.count)return;self.busy=YES;[self reload];NSString*imageID=self.imageID,*chapter=self.selectedChapter;self.imageID=nil;dispatch_async(self.worker,^{NSMutableArray*errors=[NSMutableArray new];NSUInteger done=0;for(NSURL*url in urls){@autoreleasepool{NSError*e=nil;BOOL ok;if(imageID){BOOL access=[url startAccessingSecurityScopedResource];ok=[PMContentStore.shared replaceImage:url identifier:imageID error:&e];if(access)[url stopAccessingSecurityScopedResource];}else ok=[PMContentStore.shared importURL:url chapter:chapter error:&e];if(ok)done++;else[errors addObject:[NSString stringWithFormat:@"%@: %@",url.lastPathComponent,e.localizedDescription ?: @"失败"]];}}dispatch_async(dispatch_get_main_queue(),^{self.busy=NO;[self reload];[self message:[NSString stringWithFormat:@"完成 %lu / %lu\n%@",(unsigned long)done,(unsigned long)urls.count,[errors componentsJoinedByString:@"\n"]]];});});}
+- (void)importFiles {
+ if(self.busy)return;self.imageID=nil;
+ PMDiagnosticsWrite("Content picker presenting (copy import)");
+ UIDocumentPickerViewController*p=[[UIDocumentPickerViewController alloc]initForOpeningContentTypes:@[UTTypeData,UTTypeZIP] asCopy:YES];
+ p.allowsMultipleSelection=YES;p.delegate=self;[self presentViewController:p animated:YES completion:nil];
+}
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController*)picker {
+ PMDiagnosticsWrite("Content picker cancelled");self.imageID=nil;
+ [picker dismissViewControllerAnimated:YES completion:nil];
+}
+- (void)documentPicker:(UIDocumentPickerViewController*)picker didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls {
+ if(self.busy||!urls.count)return;
+ PMDiagnosticsWrite([NSString stringWithFormat:@"Content picker selected %lu files",(unsigned long)urls.count].UTF8String);
+ self.busy=YES;NSString*imageID=self.imageID,*chapter=self.selectedChapter;self.imageID=nil;
+ NSArray<NSURL*>*selected=[urls copy];
+ // Dismiss before doing any import or presenting its result. Imported URLs are
+ // local copies, so File Provider access is not held across the conversion.
+ void (^start)(void)=^{
+  self.navigationItem.prompt=@"正在导入文件，请稍候…";
+  self.navigationItem.rightBarButtonItem.enabled=NO;
+  dispatch_async(self.worker,^{
+   NSMutableArray*errors=[NSMutableArray new];NSUInteger done=0;
+   for(NSURL*url in selected){@autoreleasepool{
+    NSError*e=nil;BOOL ok=NO;
+    PMDiagnosticsWrite([NSString stringWithFormat:@"Content import begin: %@",url.lastPathComponent].UTF8String);
+    @try{
+     if(imageID){BOOL access=[url startAccessingSecurityScopedResource];
+      @try{ok=[PMContentStore.shared replaceImage:url identifier:imageID error:&e];}
+      @finally{if(access)[url stopAccessingSecurityScopedResource];}
+     }else ok=[PMContentStore.shared importURL:url chapter:chapter error:&e];
+    }@catch(NSException*exception){e=[NSError errorWithDomain:@"PhiMod.Import" code:1 userInfo:@{NSLocalizedDescriptionKey:exception.reason ?: exception.name}];}
+    if(ok)done++;else[errors addObject:[NSString stringWithFormat:@"%@: %@",url.lastPathComponent,e.localizedDescription ?: @"失败"]];
+    PMDiagnosticsWrite([NSString stringWithFormat:@"Content import %@: %@ %@",ok?@"ok":@"failed",url.lastPathComponent,e.localizedDescription ?: @""].UTF8String);
+   }}
+   dispatch_async(dispatch_get_main_queue(),^{
+    self.busy=NO;self.navigationItem.rightBarButtonItem.enabled=YES;[self reload];
+    [self message:[NSString stringWithFormat:@"完成 %lu / %lu\n%@",(unsigned long)done,(unsigned long)selected.count,[errors componentsJoinedByString:@"\n"]]];
+   });
+  });
+ };
+ if(picker.presentingViewController)[picker dismissViewControllerAnimated:YES completion:start];else start();
+}
 - (void)export:(NSString*)identifier chapter:(BOOL)chapter {if(self.busy)return;self.busy=YES;[self reload];dispatch_async(self.worker,^{NSError*e=nil;NSURL*url=chapter?[PMContentStore.shared exportChapter:identifier error:&e]:[PMContentStore.shared exportSong:identifier error:&e];dispatch_async(dispatch_get_main_queue(),^{self.busy=NO;[self reload];if(!url){[self message:e.localizedDescription];return;}UIDocumentPickerViewController*p=[[UIDocumentPickerViewController alloc]initForExportingURLs:@[url] asCopy:YES];[self presentViewController:p animated:YES completion:nil];});});}
 - (void)apply {if(self.busy)return;NSDictionary*r=[PMHookBackend contentCommand:@"apply" identifier:@"" slot:0];if([r[@"ok"] boolValue])[self dismissViewControllerAnimated:YES completion:nil];else[self message:r[@"message"]];}
 @end

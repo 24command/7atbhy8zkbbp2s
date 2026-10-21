@@ -240,16 +240,15 @@ void tickGameplay(Runtime&r,P progressControl,const char *source){
    if(attempt->options().requiresSaveProtection())guard.store(true);r.call(progressControl,"LevelBreak",{"System.String"},{r.string_new("Level")});
    r.put(info,"levelOver",true);r.put(info,"canPause",false);r.call(r.get<P>(progressControl,"audioSource"),"Stop");attempt->acknowledgeAction(action);diagf("gameplay retry dispatched");
   }else if(action==phimod::Action::TrackLost&&!levelOverStarted&&pmhp::failureReady(r,progressControl)){
-   bool inChallenge=r.get<bool>(progressControl,"_inChallengeMode");
-   diagf("HP failure ready; challenge=%d",inChallenge);
-   if(inChallenge){
-    pmhp::finishChallenge(r,progressControl);
-    levelOverStarted=true;attempt->acknowledgeAction(action);
-   }else{
-    r.call(score(),"FreezeScore");r.put(progressControl,"isPlaying",false);r.put(info,"levelOver",true);r.put(info,"canLevelOver",true);
-    P routine=r.call(progressControl,"LevelOver");r.call(progressControl,"StartCoroutine",{"System.Collections.IEnumerator"},{routine});levelOverStarted=true;attempt->acknowledgeAction(action);r.call(r.get<P>(progressControl,"audioSource"),"Stop");
-    diagf("HP LevelOver coroutine started");
-   }
+   // Abort through the native exit path, never create a completed-chart result.
+   diagf("HP failure ready; returning to SongSelector");
+   guard.store(true);
+   r.call(progressControl,"LevelBreak",{"System.String"},{r.string_new("SongSelector")});
+   levelOverStarted=true;attempt->acknowledgeAction(action);
+   r.put(info,"levelOver",true);r.put(info,"canPause",false);
+   r.call(r.get<P>(progressControl,"audioSource"),"Stop");
+   pmhp::finish(r);
+   diagf("HP exit dispatched: SongSelector (no result)");
   }
   pmhp::frame(r,attempt->hp());
  }catch(const std::exception&e){lastError=std::string("Transition pending: ")+e.what();diagf("Transition pending: %s",e.what());NSLog(@"[PhiMod] %s",lastError.c_str());}

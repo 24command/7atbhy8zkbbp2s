@@ -96,7 +96,37 @@ void attach(Runtime&r){runtime=&r;}
 bool customLevel(){return levelID.length>0||lastCustom;}
 void pulse(){if(!runtime||playing||![NSThread isMainThread])return;try{capture(*runtime);}catch(...){} }
 NSDictionary*officialSnapshot(){pulse();return @{@"songBase":baseline ?: @{},@"chapters":originalChapters ?: @[],@"applied":@(applied),@"revision":@(PMContentStore.shared.revision),@"playing":@(playing)};}
-NSDictionary*command(NSString*action,NSString*identifier,int slot){if(!runtime)return @{@"ok":@NO,@"message":@"请先等待游戏加载完成"};if(playing)return @{@"ok":@NO,@"message":@"打歌中不能切换谱库或章节"};try{auto&r=*runtime;apply(r);if(!baseline)throw std::runtime_error("Game library is not ready");if([action isEqualToString:@"apply"]){r.stat(r.type("UnityEngine.SceneManagement","SceneManager"),"LoadScene",{"System.String"},{r.string_new("ChapterSelector")});}else{NSString*chapterID=identifier;if([action isEqualToString:@"play"]){NSString*group=groupFor(identifier);for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"] isEqualToString:identifier]){chapterID=s[@"targetChapter"] ?: @"pm_local";break;}pendingSong=group;pendingSlot=std::clamp(slot,0,3);}r.setStaticValue<P>(r.klass("GameInformation"),"nowChapterCode","System.String",r.managedString(chapterID));r.setStaticValue<P>(r.klass("GameInformation"),"nextScene","System.String",r.string_new("ChapterSelector"));r.stat(r.type("UnityEngine.SceneManagement","SceneManager"),"LoadScene",{"System.String"},{r.string_new("SongSelector")});}return @{@"ok":@YES,@"message":@"已提交到原版选曲流程"};}catch(const std::exception&e){return @{@"ok":@NO,@"message":[NSString stringWithUTF8String:e.what()]};}}
+NSDictionary*command(NSString*action,NSString*identifier,int slot){
+ if(!runtime)return @{ @"ok":@NO,@"message":@"请先等待游戏加载完成"};
+ if(playing)return @{ @"ok":@NO,@"message":@"打歌中不能切换谱库或章节"};
+ if(![NSThread isMainThread])return @{ @"ok":@NO,@"message":@"请在主线程提交操作"};
+ if(![@[@"apply",@"chapter",@"play"] containsObject:action])return @{ @"ok":@NO,@"message":@"未知谱库操作"};
+ @try{try{
+  auto&r=*runtime;log([NSString stringWithFormat:@"Content command begin: %@ %@",action,identifier]);
+  apply(r);if(!baseline)throw std::runtime_error("Game library is not ready");
+  log(@"Content references published and read back");
+  const char*scene="ChapterSelector";
+  if(![action isEqualToString:@"apply"]){
+   NSString*chapterID=identifier;
+   if([action isEqualToString:@"play"]){
+    NSDictionary*chosen=nil;for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"]isEqualToString:identifier]){chosen=s;break;}
+    if(!chosen)throw std::runtime_error("Custom chart no longer exists");
+    chapterID=chosen[@"targetChapter"] ?: @"pm_local";pendingSong=groupFor(identifier);pendingSlot=std::clamp(slot,0,3);
+   }
+   P chapter=r.call(r.mainGame(),"GetChapterWithCode",{"System.String"},{r.managedString(chapterID)});
+   if(!chapter)throw std::runtime_error("Requested chapter does not exist");
+   P songs=r.get<P>(r.get<P>(chapter,"songInfo"),"songs");
+   if(r.count(songs)==0)throw std::runtime_error("Chapter is empty; import charts before opening it");
+   r.setStaticValue<P>(r.klass("GameInformation"),"nowChapterCode","System.String",r.managedString(chapterID));
+   r.setStaticValue<P>(r.klass("GameInformation"),"nextScene","System.String",r.string_new("ChapterSelector"));
+   log([@"Content navigation fields verified: " stringByAppendingString:chapterID]);scene="SongSelector";
+  }
+  log([NSString stringWithFormat:@"Content LoadScene begin: %s",scene]);
+  r.stat(r.type("UnityEngine.SceneManagement","SceneManager"),"LoadScene",{"System.String"},{r.string_new(scene)});
+  log(@"Content LoadScene returned");return @{ @"ok":@YES,@"message":@"已提交到原版选曲流程"};
+ }catch(const std::exception&e){pendingSong=nil;log([NSString stringWithFormat:@"Content command failed: %s",e.what()]);return @{ @"ok":@NO,@"message":[NSString stringWithUTF8String:e.what()]};}
+ }@catch(NSException*e){pendingSong=nil;log([NSString stringWithFormat:@"Content command exception: %@ %@",e.name,e.reason]);return @{ @"ok":@NO,@"message":e.reason ?: e.name};}
+}
 void selectorFrame(Runtime&r,P selector){if(!pendingSong.length||r.get<bool>(selector,"exit")||r.get<bool>(selector,"isMoving"))return;P items=r.call(selector,"get_SongItems");int n=r.count(items);for(int i=0;i<n;++i){P item=r.at(items,i),song=r.get<P>(item,"songInfo");if(![r.string(r.get<P>(song,"songsId")) isEqualToString:pendingSong])continue;r.put(selector,"nowSong",i);r.put(selector,"nowLevel",pendingSlot);int level=pendingSlot;r.call(selector,"SetLevel",{"System.Int32"},{&level});pendingSong=nil;r.call(selector,"NormalStart");return;}}
 void levelBegin(Runtime&r){playing=true;P info=r.get<P>(r.mainGame(),"levelStartInfo");NSString*id=info?r.string(r.get<P>(info,"songsId")):@"";levelID=[PMContentStore.shared asset:id]?id:nil;lastCustom=levelID.length>0;}
 void levelEnd(Runtime&r){playing=false;levelID=nil;lastCustom=false;pendingSong=nil;clearVisuals(r);}
@@ -143,6 +173,17 @@ void validatePcmCopy(Runtime&r){
  r.gchandle_free(root);PMDiagnosticsWrite("Content PCM copy preflight passed (4 float elements)");
 }
 void validate(Runtime&r){
+ // Exercise the same reference setter used when publishing the song database.
+ P probe=r.object_new(r.klass("Chapter"));
+ if(!probe)throw std::runtime_error("Reference preflight allocation failed");
+ uint32_t probeRoot=r.gchandle_new(probe,false);
+ try{
+  P text=r.string_new("PhiMod reference probe");
+  r.put(probe,"chapterCode",text);
+  if(r.get<P>(probe,"chapterCode")!=text)throw std::runtime_error("Reference preflight mismatch");
+  r.put<P>(probe,"chapterCode",nullptr);
+ }catch(...){r.gchandle_free(probeRoot);throw;}
+ r.gchandle_free(probeRoot);log(@"Content reference write preflight passed");
  r.resolve(r.klass("SongsItem"),"GetLevelStartInfo",{"System.Int32"});r.resolve(r.klass("SongSelectorItem"),"GetLevelStartInfo",{"System.Int32"});
  r.resolve(r.klass("SongSelector"),"get_SongItems");r.resolve(r.klass("SongSelector"),"SetLevel",{"System.Int32"});r.resolve(r.klass("SongSelector"),"NormalStart");
  r.field(r.klass("SongSelector"),"nowSong","System.Int32",false);r.field(r.klass("SongSelector"),"nowLevel","System.Int32",false);r.field(r.klass("SongSelector"),"exit","System.Boolean",false);r.field(r.klass("SongSelector"),"isMoving","System.Boolean",false);

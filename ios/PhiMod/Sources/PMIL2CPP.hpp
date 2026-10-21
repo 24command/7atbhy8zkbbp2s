@@ -202,7 +202,15 @@ struct Runtime {
         T v{}; field_static_get_value(field(c,name,type,true),&v); return v;
     }
     template<class T> void setStaticValue(P c,const char *name,const char *type,T value) {
-        P f=field(c,name,type,true); field_static_set_value(f,&value);
+        P f=field(c,name,type,true);
+        checkClass<T>(class_from_type(field_get_type(f)));
+        // This UUID takes managed references directly, value types by address.
+        if constexpr(std::is_same_v<T,P>) {
+            field_static_set_value(f,value);
+            P actual=nullptr;field_static_get_value(f,&actual);
+            if(actual!=value)throw std::runtime_error(std::string("Static reference readback failed: ")+name);
+        }
+        else field_static_set_value(f,&value);
     }
     P mainGame() {
         // The static field itself keeps this object alive. Do not retain across UI callbacks.
@@ -270,7 +278,15 @@ struct Runtime {
         }
     }
     template<class T> T get(P obj,const char *name) {P f=objectField(obj,name);checkClass<T>(class_from_type(field_get_type(f)));T v{};field_get_value(obj,f,&v);return v;}
-    template<class T> void put(P obj,const char *name,T value){P f=objectField(obj,name);checkClass<T>(class_from_type(field_get_type(f)));field_set_value(obj,f,&value);}
+    template<class T> void put(P obj,const char *name,T value){
+        P f=objectField(obj,name);checkClass<T>(class_from_type(field_get_type(f)));
+        if constexpr(std::is_same_v<T,P>) {
+            field_set_value(obj,f,value);
+            P actual=nullptr;field_get_value(obj,f,&actual);
+            if(actual!=value)throw std::runtime_error(std::string("Instance reference readback failed: ")+name);
+        }
+        else field_set_value(obj,f,&value);
+    }
     P resolve(P c,const char *name,std::initializer_list<const char*> params={},bool isStatic=false) {
         std::string signature=std::string(isStatic?"static:":"instance:")+name;
         for(auto p:params)signature+=std::string("|")+p;
