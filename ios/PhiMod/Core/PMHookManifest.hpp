@@ -64,6 +64,8 @@ inline constexpr ExpectedEntry expected[]={
  {0x209fbfcu,0xa9be4ff4u}, // assetRelease
  {0x14a2ce8u,0xd10183ffu}, // songInfo
  {0x15c1280u,0xa9bd57f6u}, // itemInfo
+ {0x209fe1cu,0xd101c3ffu}, // assetReleaseResource
+ {0x155ad08u,0xd10283ffu}, // chapterStart
 };
 static_assert(sizeof(expected)/sizeof(expected[0])==Count,"Offline hook manifest must match callback protocol");
 }

@@ -14,6 +14,7 @@ using pmbridge::P;using pmbridge::Runtime;
 namespace {
 struct V2{float x,y;};struct V3{float x,y,z;};struct Rect{float x,y,w,h;};struct Color{float r,g,b,a;};struct Bounds{V3 center,extents;};
 Runtime*runtime=nullptr;bool playing=false,lastCustom=false;NSUInteger applied=0;NSString*levelID=nil,*pendingSong=nil;int pendingSlot=0;
+int hiddenChapterCards=0;
 NSDictionary*baseline=nil;NSArray*originalChapters=nil;NSDictionary*currentChart=nil;NSString*resourceSubdir=@"";
 std::map<P,uint32_t>textures;std::map<std::string,uint32_t>assets;std::map<P,std::string>refs;std::map<std::string,int>users;
 std::map<std::string,std::map<int,NSDictionary*>>variants;std::map<P,NSDictionary*>extras;std::map<P,V3>noteScales,lineScales;std::map<int,uint32_t>decorText,decorImage;
@@ -35,13 +36,17 @@ void apply(Runtime&r){capture(r);if(!baseline||playing)return;NSDictionary*db=[P
  for(NSString*id in db[@"overrides"]){NSMutableDictionary*s=official[id];if(s){NSDictionary*patch=db[@"overrides"][id];for(NSString*k in @[@"songsName",@"songsTitle",@"composer",@"illustrator",@"difficulty",@"charter"])if(patch[k])s[k]=patch[k];}}
  NSMutableArray*chapters=[NSJSONSerialization JSONObjectWithData:[NSJSONSerialization dataWithJSONObject:originalChapters options:0 error:nil] options:NSJSONReadingMutableContainers error:nil];for(NSDictionary*c in db[@"chapters"]){NSMutableArray*items=[NSMutableArray new];NSMutableSet*seen=[NSMutableSet new];for(NSString*id in c[@"songs"]){NSString*g=groupFor(id);if([seen containsObject:g])continue;[seen addObject:g];[items addObject:@{@"songsId":g,@"unlockType":@(-1),@"secretType":@0,@"unlockInfo":@[],@"secretInfo":@[]}];}[chapters addObject:@{@"chapterCode":c[@"id"],@"songInfo":@{@"title":c[@"name"] ?: @"",@"subTitle":c[@"subtitle"] ?: @"",@"banner":c[@"banner"] ?: @"自制谱 · 本地练习",@"songs":items},@"unlockInfo":@{@"unlockMode":@0,@"unlockFlag":@"",@"unlockTip":@"",@"fakeCoverFlag":@"",@"fakeCoverCode":@"",@"fakeCoverBlurCode":@""}}];}
  for(NSDictionary*s in db[@"songs"]){NSString*destination=s[@"targetChapter"],*group=groupFor(s[@"id"]);for(NSMutableDictionary*c in chapters)if([c[@"chapterCode"] isEqualToString:destination]){NSMutableArray*a=c[@"songInfo"][@"songs"];BOOL exists=NO;for(NSDictionary*i in a)if([i[@"songsId"] isEqualToString:group])exists=YES;if(!exists)[a addObject:@{@"songsId":group,@"unlockType":@(-1),@"secretType":@0,@"unlockInfo":@[],@"secretInfo":@[]}];}}
- // Hidden official chapters remain in the lookup array; only their visible song
- // list is empty. This avoids breaking built-in chapter/secret lookups.
- for(NSMutableDictionary*c in chapters){NSString*id=c[@"chapterCode"];NSDictionary*patch=db[@"chapterOverrides"][id];for(NSString*k in @[@"title",@"subTitle",@"banner"])if(patch[k])c[@"songInfo"][k]=patch[k];if([db[@"hiddenChapters"] containsObject:id])c[@"songInfo"][@"songs"]=[NSMutableArray new];}
+ // Preserve hidden chapter data for native lookups; hide the UI cards instead.
+ for(NSMutableDictionary*c in chapters){NSString*id=c[@"chapterCode"];NSDictionary*patch=db[@"chapterOverrides"][id];for(NSString*k in @[@"title",@"subTitle",@"banner"])if(patch[k])c[@"songInfo"][k]=patch[k];}
  for(NSDictionary*c in db[@"chapters"]){NSString*before=c[@"before"];if(!before.length)continue;NSUInteger from=NSNotFound,to=NSNotFound;for(NSUInteger i=0;i<chapters.count;++i){if([chapters[i][@"chapterCode"] isEqualToString:c[@"id"]])from=i;if([chapters[i][@"chapterCode"] isEqualToString:before])to=i;}if(from!=NSNotFound&&to!=NSNotFound&&from!=to){id v=chapters[from];[chapters removeObjectAtIndex:from];if(from<to)--to;[chapters insertObject:v atIndex:to];}}
  P gi=r.mainGame(),newBase=decode(r,songBase,"SongBase");uint32_t baseHandle=r.gchandle_new(newBase,false);P arr=r.array_new(r.klass("Chapter"),chapters.count);uint32_t arrHandle=r.gchandle_new(arr,false);try{for(NSUInteger i=0;i<chapters.count;++i){P c=decode(r,chapters[i],"Chapter");uint32_t h=r.gchandle_new(c,false);P info=r.get<P>(c,"songInfo");r.put(info,"<songsBypassLimited>k__BackingField",r.get<P>(info,"songs"));int index=(int)i;r.invokeOn(r.resolve(r.type("System","Array"),"SetValue",{"System.Object","System.Int32"}),arr,{c,&index});r.gchandle_free(h);}r.call(newBase,"MarkDirty");r.put(gi,"song",newBase);r.put(gi,"chapters",arr);}catch(...){r.gchandle_free(arrHandle);r.gchandle_free(baseHandle);throw;}r.gchandle_free(arrHandle);r.gchandle_free(baseHandle);applied=PMContentStore.shared.revision;log([NSString stringWithFormat:@"Content applied: %lu groups, %lu chapters",(unsigned long)variants.size(),(unsigned long)chapters.count]);}
-P image(Runtime&r,NSString*path){UIImage*img=[UIImage imageWithContentsOfFile:path];if(!img)img=[UIImage systemImageNamed:@"music.note"];CGImageRef cg=img.CGImage;if(!cg){UIGraphicsImageRenderer*render=[[UIGraphicsImageRenderer alloc]initWithSize:CGSizeMake(512,288)];img=[render imageWithActions:^(UIGraphicsImageRendererContext*c){[[UIColor colorWithRed:.1 green:.14 blue:.2 alpha:1]setFill];[c fillRect:CGRectMake(0,0,512,288)];}];cg=img.CGImage;}int w=(int)CGImageGetWidth(cg),h=(int)CGImageGetHeight(cg);if(w<=0||h<=0||w>4096||h>4096)throw std::runtime_error("Cover image size invalid");std::vector<unsigned char>pixels(size_t(w)*h*4);CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();CGContextRef context=CGBitmapContextCreate(pixels.data(),w,h,8,w*4,space,kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big);CGColorSpaceRelease(space);if(!context)throw std::runtime_error("Cover bitmap allocation failed");CGContextTranslateCTM(context,0,h);CGContextScaleCTM(context,1,-1);CGContextDrawImage(context,CGRectMake(0,0,w,h),cg);CGContextRelease(context);
- P texture=r.object_new(r.type("UnityEngine","Texture2D"));uint32_t texRoot=r.gchandle_new(texture,false);try{r.call(texture,".ctor",{"System.Int32","System.Int32"},{&w,&h});void*ptr=pixels.data();int bytes=(int)pixels.size();r.call(texture,"LoadRawTextureData",{"System.IntPtr","System.Int32"},{&ptr,&bytes});bool no=false,yes=true;r.call(texture,"Apply",{"System.Boolean","System.Boolean"},{&no,&yes});Rect rect{0,0,(float)w,(float)h};V2 pivot{.5,.5};float ppu=100;P sprite=r.stat(r.type("UnityEngine","Sprite"),"Create",{"UnityEngine.Texture2D","UnityEngine.Rect","UnityEngine.Vector2","System.Single"},{texture,&rect,&pivot,&ppu});textures[sprite]=texRoot;return sprite;}catch(...){r.gchandle_free(texRoot);throw;}}
+P image(Runtime&r,NSString*path){
+ if(![NSFileManager.defaultManager fileExistsAtPath:path]){
+  NSString*chapterID=path.stringByDeletingLastPathComponent.lastPathComponent;
+  for(NSDictionary*song in [PMContentStore.shared snapshot][@"songs"])if([song[@"targetChapter"]isEqualToString:chapterID]){NSString*fallback=[[PMContentStore.shared asset:song[@"id"]]stringByAppendingPathComponent:@"image.png"];if([NSFileManager.defaultManager fileExistsAtPath:fallback]){path=fallback;break;}}
+ }
+ UIImage*img=[UIImage imageWithContentsOfFile:path];if(!img)img=[UIImage systemImageNamed:@"music.note"];CGImageRef cg=img.CGImage;if(!cg){UIGraphicsImageRenderer*render=[[UIGraphicsImageRenderer alloc]initWithSize:CGSizeMake(512,288)];img=[render imageWithActions:^(UIGraphicsImageRendererContext*c){[[UIColor colorWithRed:.1 green:.14 blue:.2 alpha:1]setFill];[c fillRect:CGRectMake(0,0,512,288)];}];cg=img.CGImage;}int w=(int)CGImageGetWidth(cg),h=(int)CGImageGetHeight(cg);if(w<=0||h<=0||w>4096||h>4096)throw std::runtime_error("Cover image size invalid");std::vector<unsigned char>pixels(size_t(w)*h*4);CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();CGContextRef context=CGBitmapContextCreate(pixels.data(),w,h,8,w*4,space,kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big);CGColorSpaceRelease(space);if(!context)throw std::runtime_error("Cover bitmap allocation failed");CGContextTranslateCTM(context,0,h);CGContextScaleCTM(context,1,-1);CGContextDrawImage(context,CGRectMake(0,0,w,h),cg);CGContextRelease(context);
+ P texture=r.object_new(r.type("UnityEngine","Texture2D"));uint32_t texRoot=r.gchandle_new(texture,false);try{int format=4;bool mipmaps=false;r.call(texture,".ctor",{"System.Int32","System.Int32","UnityEngine.TextureFormat","System.Boolean"},{&w,&h,&format,&mipmaps});void*ptr=pixels.data();int bytes=(int)pixels.size();r.call(texture,"LoadRawTextureData",{"System.IntPtr","System.Int32"},{&ptr,&bytes});bool no=false,yes=true;r.call(texture,"Apply",{"System.Boolean","System.Boolean"},{&no,&yes});Rect rect{0,0,(float)w,(float)h};V2 pivot{.5,.5};float ppu=100;P sprite=r.stat(r.type("UnityEngine","Sprite"),"Create",{"UnityEngine.Texture2D","UnityEngine.Rect","UnityEngine.Vector2","System.Single"},{texture,&rect,&pivot,&ppu});if(!sprite)throw std::runtime_error("Sprite creation returned null");textures[sprite]=texRoot;return sprite;}catch(...){r.gchandle_free(texRoot);throw;}}
 // iOS 4.0.1 strips Marshal.Copy(IntPtr, Single[], int, int).
 // dump.cs: Marshal.copy_from_unmanaged at RVA 0x2F25960. IDA confirms
 // its native helper copies array_element_size * length, not length bytes.
@@ -92,6 +97,75 @@ P audio(Runtime&r,NSString*path){
 NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=key.lowercaseString;*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":@"image";return id;}
 void clearVisuals(Runtime&r){for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();fakeNotes.clear();fakeRenderers.clear();currentChart=nil;}
 }
+// Match Android prepareChapterCards: clone before hiding the active template,
+// then publish the ordered ChapterInfo array before native Start wires buttons.
+void chapterPrepare(Runtime&r,P self){
+ if(playing)throw std::runtime_error("Chapter prepare during gameplay");
+ capture(r);if(!baseline)throw std::runtime_error("Chapter library is not ready");hiddenChapterCards=0;
+ if(applied!=PMContentStore.shared.revision)apply(r);
+ NSDictionary*db=[PMContentStore.shared snapshot];P panel=r.get<P>(self,"chapterPanel");
+ P panelObject=r.call(panel,"get_gameObject");bool includeInactive=false;
+ P infos=r.call(panelObject,"GetComponentsInChildren",{"System.Type","System.Boolean"},{r.type_get_object(r.class_get_type(r.klass("ChapterInfo"))),&includeInactive});
+ if(!infos||!r.array_length(infos))throw std::runtime_error("ChapterInfo template missing");
+ uint32_t infosRoot=r.gchandle_new(infos,false);std::vector<uint32_t>roots;std::vector<P>clones,original,cards;
+ P previous=r.get<P>(self,"_chapterInfos");uint32_t previousRoot=r.gchandle_new(previous,false);bool committed=false;
+ try{
+  P templateCard=nullptr;
+  for(uintptr_t i=0;i<r.array_length(infos);++i){P card=r.arrayAt(infos,(int)i);original.push_back(card);NSString*id=r.string(r.get<P>(card,"chapterCode"));if([id isEqualToString:@"Single"])templateCard=card;if(![db[@"hiddenChapters"]containsObject:id])cards.push_back(card);else ++hiddenChapterCards;}
+  if(!templateCard)templateCard=original.front();
+  P go=r.call(templateCard,"get_gameObject"),parent=r.call(r.call(templateCard,"get_transform"),"get_parent");
+  for(NSDictionary*c in db[@"chapters"]){NSString*id=c[@"id"];if([db[@"hiddenChapters"]containsObject:id])continue;
+   bool world=false;P clone=r.stat(r.type("UnityEngine","Object"),"Instantiate",{"UnityEngine.Object","UnityEngine.Transform","System.Boolean"},{go,parent,&world});
+   if(!clone)throw std::runtime_error("Chapter clone failed");roots.push_back(r.gchandle_new(clone,false));clones.push_back(clone);
+   P card=r.component(clone,r.klass("ChapterInfo"));if(!card)throw std::runtime_error("Chapter clone missing ChapterInfo");
+   r.put(card,"chapterCode",r.managedString(id));
+   r.put(card,"coverAssetCode",r.managedString([NSString stringWithFormat:@"PM/%@/image@%lu",id,(unsigned long)applied]));
+   r.put(card,"coverBlurAssetCode",r.managedString([NSString stringWithFormat:@"PM/%@/blur@%lu",id,(unsigned long)applied]));
+   bool yes=true;r.call(clone,"SetActive",{"System.Boolean"},{&yes});cards.push_back(card);
+  }
+  // Same before-anchor order semantics as Android, retaining native indices.
+  for(NSDictionary*c in db[@"chapters"]){NSString*before=c[@"before"];if(!before.length)continue;
+   auto from=std::find_if(cards.begin(),cards.end(),[&](P card){return [r.string(r.get<P>(card,"chapterCode"))isEqualToString:c[@"id"]];});
+   if(from==cards.end()||[c[@"id"]isEqualToString:before])continue;P card=*from;cards.erase(from);
+   auto to=std::find_if(cards.begin(),cards.end(),[&](P v){return [r.string(r.get<P>(v,"chapterCode"))isEqualToString:before];});cards.insert(to,card);
+  }
+  if(cards.empty())throw std::runtime_error("At least one chapter must remain visible");
+  P array=r.array_new(r.klass("ChapterInfo"),cards.size());roots.push_back(r.gchandle_new(array,false));
+  for(int i=0;i<(int)cards.size();++i)r.invokeOn(r.resolve(r.type("System","Array"),"SetValue",{"System.Object","System.Int32"}),array,{cards[i],&i});
+  for(P card:original){bool visible=std::find(cards.begin(),cards.end(),card)!=cards.end();r.call(r.call(card,"get_gameObject"),"SetActive",{"System.Boolean"},{&visible});}
+  for(int i=0;i<(int)cards.size();++i)r.call(r.call(cards[i],"get_transform"),"SetSiblingIndex",{"System.Int32"},{&i});
+  r.put(self,"_chapterInfos",array);committed=true;
+  log([NSString stringWithFormat:@"Content chapter cards prepared: visible=%lu custom=%lu",(unsigned long)cards.size(),(unsigned long)clones.size()]);
+ }catch(...){
+  if(!committed){for(P card:original)try{bool yes=true;r.call(r.call(card,"get_gameObject"),"SetActive",{"System.Boolean"},{&yes});}catch(...){}
+   for(P obj:clones)try{bool no=false;r.call(obj,"SetActive",{"System.Boolean"},{&no});r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{obj});}catch(...){}
+   try{r.put(self,"_chapterInfos",previous);}catch(...){}
+  }
+  for(auto h:roots)r.gchandle_free(h);r.gchandle_free(previousRoot);r.gchandle_free(infosRoot);throw;
+ }
+ for(auto h:roots)r.gchandle_free(h);r.gchandle_free(previousRoot);r.gchandle_free(infosRoot);
+}
+void chapterReady(Runtime&r,P self){
+ P cards=r.get<P>(self,"_chapterInfos");
+ for(uintptr_t i=0;cards&&i<r.array_length(cards);++i){P card=r.arrayAt(cards,(int)i);NSString*id=r.string(r.get<P>(card,"chapterCode"));if(![id hasPrefix:@"pm_"])continue;
+  P chapter=r.call(r.mainGame(),"GetChapterWithCode",{"System.String"},{r.managedString(id)});if(!chapter)continue;
+  P info=r.get<P>(chapter,"songInfo");r.put(card,"songInfo",info);
+  r.text(r.get<P>(card,"title"),r.string(r.get<P>(info,"title")).UTF8String);r.text(r.get<P>(card,"subTitle"),r.string(r.get<P>(info,"subTitle")).UTF8String);
+  bool no=false;r.call(r.get<P>(card,"locked"),"SetActive",{"System.Boolean"},{&no});
+  bool hasSongs=r.count(r.get<P>(info,"songs"))>0;r.call(r.get<P>(card,"play"),"set_interactable",{"System.Boolean"},{&hasSongs});
+ }
+ r.stat(r.type("UnityEngine.UI","LayoutRebuilder"),"ForceRebuildLayoutImmediate",{"UnityEngine.RectTransform"},{r.get<P>(self,"chapterPanel")});
+ // Native chapter panels can use fixed width rather than a LayoutGroup.
+ if(hiddenChapterCards>0&&cards&&r.array_length(cards)>1){
+  P panel=r.get<P>(self,"chapterPanel");std::vector<float>gaps;V3 previous{};bool havePrevious=false;
+  for(uintptr_t i=0;i<r.array_length(cards);++i){P card=r.arrayAt(cards,(int)i),tr=r.call(card,"get_transform");
+   for(int depth=0;depth<16;++depth){P parent=r.call(tr,"get_parent");if(!parent||parent==panel)break;tr=parent;}
+   V3 position=r.unbox<V3>(r.call(tr,"get_localPosition"));if(havePrevious&&std::fabs(position.x-previous.x)>1)gaps.push_back(std::fabs(position.x-previous.x));previous=position;havePrevious=true;
+  }
+  if(!gaps.empty()){std::sort(gaps.begin(),gaps.end());float step=gaps[gaps.size()/2];V2 size=r.unbox<V2>(r.call(panel,"get_sizeDelta"));size.x=std::max(step,size.x-hiddenChapterCards*step);r.call(panel,"set_sizeDelta",{"UnityEngine.Vector2"},{&size});}
+ }
+ log(@"Content ChapterSelector.Start completed");
+}
 void attach(Runtime&r){runtime=&r;}
 bool customLevel(){return levelID.length>0||lastCustom;}
 void pulse(){if(!runtime||playing||![NSThread isMainThread])return;try{capture(*runtime);}catch(...){} }
@@ -130,8 +204,24 @@ NSDictionary*command(NSString*action,NSString*identifier,int slot){
 void selectorFrame(Runtime&r,P selector){if(!pendingSong.length||r.get<bool>(selector,"exit")||r.get<bool>(selector,"isMoving"))return;P items=r.call(selector,"get_SongItems");int n=r.count(items);for(int i=0;i<n;++i){P item=r.at(items,i),song=r.get<P>(item,"songInfo");if(![r.string(r.get<P>(song,"songsId")) isEqualToString:pendingSong])continue;r.put(selector,"nowSong",i);r.put(selector,"nowLevel",pendingSlot);int level=pendingSlot;r.call(selector,"SetLevel",{"System.Int32"},{&level});pendingSong=nil;r.call(selector,"NormalStart");return;}}
 void levelBegin(Runtime&r){playing=true;P info=r.get<P>(r.mainGame(),"levelStartInfo");NSString*id=info?r.string(r.get<P>(info,"songsId")):@"";levelID=[PMContentStore.shared asset:id]?id:nil;lastCustom=levelID.length>0;}
 void levelEnd(Runtime&r){playing=false;levelID=nil;lastCustom=false;pendingSong=nil;clearVisuals(r);}
-bool assetConstructor(Runtime&r,P self,P key){NSString*kind=nil,*identifier=keyID(r.string(key),&kind);if(!identifier)return false;r.put(self,"key",key);r.put(self,"refCount",1);try{std::string cacheKey=r.string(key).UTF8String;P obj=nullptr;auto found=assets.find(cacheKey);if(found!=assets.end())obj=target(r,found->second);if(!r.alive(obj)){NSString*folder=[PMContentStore.shared asset:identifier];if([kind isEqualToString:@"chart"]){NSString*json=[NSString stringWithContentsOfFile:[folder stringByAppendingPathComponent:@"chart-native.json"] encoding:NSUTF8StringEncoding error:nil];if(!json)throw std::runtime_error("Custom chart not found");obj=r.object_new(r.type("UnityEngine","TextAsset"));uint32_t h=r.gchandle_new(obj,false);r.call(obj,".ctor",{"System.String"},{r.managedString(json)});r.gchandle_free(h);}else if([kind isEqualToString:@"music"])obj=audio(r,[folder stringByAppendingPathComponent:@"music.caf"]);else obj=image(r,[folder stringByAppendingPathComponent:@"image.png"]);assets[cacheKey]=r.gchandle_new(obj,false);}refs[self]=cacheKey;users[cacheKey]++;r.put(self,"obj",obj);r.put(self,"<IsDone>k__BackingField",true);r.put(self,"<IsFailed>k__BackingField",false);log([@"Content asset loaded: " stringByAppendingString:r.string(key)]);}catch(const std::exception&e){r.put<P>(self,"obj",nullptr);r.put(self,"<IsDone>k__BackingField",true);r.put(self,"<IsFailed>k__BackingField",true);log([NSString stringWithFormat:@"Content asset failed: %@ (%s)",r.string(key),e.what()]);}return true;}
-bool assetRelease(Runtime&r,P self){NSString*kind=nil;P key=r.get<P>(self,"key");if(!keyID(r.string(key),&kind))return false;int n=r.get<int>(self,"refCount");if(n>1){r.put(self,"refCount",n-1);return true;}P klass=r.klass("AssetStore");r.runtime_class_init(klass);P contents=nullptr;r.field_static_get_value(r.class_get_field_from_name(klass,"contents"),&contents);r.call(contents,"Remove",{"System.String"},{key});auto it=refs.find(self);if(it!=refs.end()){auto k=it->second;refs.erase(it);if(--users[k]<=0){auto asset=assets.find(k);if(asset!=assets.end()){P obj=target(r,asset->second);if(r.alive(obj))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{obj});auto tex=textures.find(obj);if(tex!=textures.end()){P t=target(r,tex->second);if(r.alive(t))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{t});r.gchandle_free(tex->second);textures.erase(tex);}r.gchandle_free(asset->second);assets.erase(asset);}users.erase(k);}}r.put<P>(self,"obj",nullptr);r.put(self,"refCount",0);return true;}
+bool assetConstructor(Runtime&r,P self,P key){NSString*kind=nil,*identifier=keyID(r.string(key),&kind);if(!identifier)return false;r.put(self,"key",key);r.put(self,"refCount",1);try{std::string cacheKey=r.string(key).UTF8String;P obj=nullptr;auto found=assets.find(cacheKey);if(found!=assets.end())obj=target(r,found->second);if(!r.alive(obj)){NSString*folder=[PMContentStore.shared asset:identifier];if([kind isEqualToString:@"chart"]){NSString*json=[NSString stringWithContentsOfFile:[folder stringByAppendingPathComponent:@"chart-native.json"] encoding:NSUTF8StringEncoding error:nil];if(!json)throw std::runtime_error("Custom chart not found");log([NSString stringWithFormat:@"Content chart text ready: chars=%lu",(unsigned long)json.length]);obj=r.object_new(r.type("UnityEngine","TextAsset"));uint32_t h=r.gchandle_new(obj,false);try{r.call(obj,".ctor",{"System.String"},{r.managedString(json)});}catch(...){r.gchandle_free(h);throw;}r.gchandle_free(h);}else if([kind isEqualToString:@"music"])obj=audio(r,[folder stringByAppendingPathComponent:@"music.caf"]);else obj=image(r,[folder stringByAppendingPathComponent:@"image.png"]);assets[cacheKey]=r.gchandle_new(obj,false);}refs[self]=cacheKey;users[cacheKey]++;r.put(self,"obj",obj);r.put(self,"<IsDone>k__BackingField",true);r.put(self,"<IsFailed>k__BackingField",false);log([@"Content asset loaded: " stringByAppendingString:r.string(key)]);}catch(const std::exception&e){r.put<P>(self,"obj",nullptr);r.put(self,"<IsDone>k__BackingField",true);r.put(self,"<IsFailed>k__BackingField",true);log([NSString stringWithFormat:@"Content asset failed: %@ (%s)",r.string(key),e.what()]);}return true;}
+bool assetRelease(Runtime&r,P self,bool force){
+ NSString*kind=nil;P key=r.get<P>(self,"key");if(!keyID(r.string(key),&kind))return false;
+ int n=r.get<int>(self,"refCount");if(!force&&n>1){r.put(self,"refCount",n-1);return true;}
+ auto it=refs.find(self);
+ if(it!=refs.end()){
+  auto k=it->second;refs.erase(it);
+  if(--users[k]<=0){auto asset=assets.find(k);if(asset!=assets.end()){
+   P obj=target(r,asset->second);if(r.alive(obj))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{obj});
+   auto tex=textures.find(obj);if(tex!=textures.end()){P t=target(r,tex->second);if(r.alive(t))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{t});r.gchandle_free(tex->second);textures.erase(tex);}
+   r.gchandle_free(asset->second);assets.erase(asset);
+  }users.erase(k);}
+ }
+ r.put<P>(self,"obj",nullptr);r.put(self,"refCount",0);
+ P klass=r.klass("AssetStore");r.runtime_class_init(klass);P contents=nullptr;r.field_static_get_value(r.class_get_field_from_name(klass,"contents"),&contents);
+ if(contents&&r.unbox<bool>(r.call(contents,"ContainsKey",{"System.String"},{key}))&&r.call(contents,"get_Item",{"System.String"},{key})==self)r.call(contents,"Remove",{"System.String"},{key});
+ log([NSString stringWithFormat:@"Content custom release (%@): %@",force?@"ReleaseResource":@"Release",r.string(key)]);return true;
+}
 void levelInfo(Runtime&r,P song,int slot,P info){NSString*id=r.string(r.get<P>(song,"songsId"));NSDictionary*custom=songFor(id,slot);if(!custom||!info)return;NSString*identifier=custom[@"id"];for(const auto&entry:std::vector<std::pair<const char*,NSString*>>{{"songsId",identifier},{"songsName",custom[@"title"] ?: @""},{"composer",custom[@"composer"] ?: @""},{"charter",custom[@"charter"] ?: @""},{"illustrator",custom[@"illustrator"] ?: @""},{"songsDifficulty",[custom[@"difficulty"] description]}})r.put(info,entry.first,r.managedString(entry.second));for(auto pair:std::vector<std::pair<const char*,const char*>>{{"musicAddressableKey","music"},{"chartAddressableKey","chart"},{"illustrationKey","image"}}){NSString*k=[NSString stringWithFormat:@"PM/%@/%s@%lu",identifier,pair.second,(unsigned long)PMContentStore.shared.revision];r.put(info,pair.first,r.managedString(k));}}
 void beforeChart(Runtime&r,P level){if(!levelID.length)return;NSString*path=[[PMContentStore.shared asset:levelID]stringByAppendingPathComponent:@"chart.json"];NSData*d=[NSData dataWithContentsOfFile:path];currentChart=d?[NSJSONSerialization JSONObjectWithData:d options:0 error:nil]:nil;if(!currentChart)throw std::runtime_error("Custom visual chart missing");resourceSubdir=@"";for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"]isEqualToString:levelID])resourceSubdir=s[@"resourceRoot"] ?: @"";}
 void afterChart(Runtime&r,P level){if(!currentChart)return;P chart=r.get<P>(level,"chart"),lines=r.get<P>(chart,"judgeLineList");NSArray*data=currentChart[@"judgeLineList"];for(int i=0,n=std::min<int>(r.count(lines),(int)data.count);i<n;++i){P line=r.at(lines,i);for(NSString*side in @[@"notesAbove",@"notesBelow"]){P list=r.get<P>(line,side.UTF8String);NSMutableArray*real=[NSMutableArray new];for(NSDictionary*note in data[i][side])if(![note[@"pmFake"] boolValue])[real addObject:note];for(int j=0,total=std::min<int>(r.count(list),(int)real.count);j<total;++j){P note=r.at(list,j);extras[note]=real[j];if(real[j][@"pmTime"])r.put(note,"realTime",[real[j][@"pmTime"] floatValue]);if(real[j][@"pmDuration"]&&r.get<int>(note,"type")==3)r.put(note,"holdTime",[real[j][@"pmDuration"] floatValue]);}}}}
@@ -173,6 +263,18 @@ void validatePcmCopy(Runtime&r){
  r.gchandle_free(root);PMDiagnosticsWrite("Content PCM copy preflight passed (4 float elements)");
 }
 void validate(Runtime&r){
+ r.field(r.klass("ChapterSelector"),"_chapterInfos","ChapterInfo[]",false);
+ r.field(r.klass("ChapterSelector"),"chapterPanel","UnityEngine.RectTransform",false);
+ r.field(r.klass("ChapterInfo"),"chapterCode","System.String",false);
+ r.field(r.klass("ChapterInfo"),"coverAssetCode","System.String",false);
+ r.field(r.klass("ChapterInfo"),"coverBlurAssetCode","System.String",false);
+ r.field(r.klass("ChapterInfo"),"play","UnityEngine.UI.Button",false);
+ r.field(r.klass("ChapterInfo"),"locked","UnityEngine.GameObject",false);
+ r.field(r.klass("ChapterInfo"),"songInfo","ChapterSongInfo",false);
+ r.field(r.klass("ChapterInfo"),"title","UnityEngine.UI.Text",false);
+ r.field(r.klass("ChapterInfo"),"subTitle","UnityEngine.UI.Text",false);
+ r.resolve(r.type("UnityEngine","Texture2D"),".ctor",{"System.Int32","System.Int32","UnityEngine.TextureFormat","System.Boolean"});
+ r.resolve(r.type("UnityEngine","Transform"),"SetSiblingIndex",{"System.Int32"});
  // Exercise the same reference setter used when publishing the song database.
  P probe=r.object_new(r.klass("Chapter"));
  if(!probe)throw std::runtime_error("Reference preflight allocation failed");
@@ -191,7 +293,7 @@ void validate(Runtime&r){
  r.field(r.klass("ChartNote"),"judgeLineIndex","System.Int32",false);r.field(r.klass("LevelControl"),"chart","Chart",false);r.field(r.klass("LevelControl"),"songsName","UnityEngine.UI.Text",false);
  r.field(r.klass("LevelInformation"),"floorPositions","System.Single[]",false);r.field(r.klass("LevelInformation"),"Speed","System.Single",true);
  P renderer=r.type("UnityEngine","SpriteRenderer");r.resolve(renderer,"get_sprite");r.resolve(renderer,"set_sprite",{"UnityEngine.Sprite"});r.resolve(renderer,"get_color");r.resolve(renderer,"set_color",{"UnityEngine.Color"});r.resolve(renderer,"set_sortingOrder",{"System.Int32"});r.resolve(r.type("UnityEngine","Sprite"),"Create",{"UnityEngine.Texture2D","UnityEngine.Rect","UnityEngine.Vector2","System.Single"},true);
- P texture=r.type("UnityEngine","Texture2D");r.resolve(texture,".ctor",{"System.Int32","System.Int32"});r.resolve(texture,"LoadRawTextureData",{"System.IntPtr","System.Int32"});r.resolve(texture,"Apply",{"System.Boolean","System.Boolean"});
+ P texture=r.type("UnityEngine","Texture2D");r.resolve(texture,".ctor",{"System.Int32","System.Int32","UnityEngine.TextureFormat","System.Boolean"});r.resolve(texture,"LoadRawTextureData",{"System.IntPtr","System.Int32"});r.resolve(texture,"Apply",{"System.Boolean","System.Boolean"});
  r.resolve(r.type("UnityEngine","TextAsset"),".ctor",{"System.String"});r.resolve(r.type("UnityEngine","AudioClip"),"Create",{"System.String","System.Int32","System.Int32","System.Int32","System.Boolean"},true);r.resolve(r.type("System.Runtime.InteropServices","Marshal"),"copy_from_unmanaged",{"System.IntPtr","System.Int32","System.Array","System.Int32"},true);
  r.resolve(r.type("UnityEngine","AudioClip"),"SetData",{"System.Single[]","System.Int32"});
  validatePcmCopy(r);

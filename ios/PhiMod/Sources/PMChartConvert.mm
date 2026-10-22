@@ -44,4 +44,17 @@ NSDictionary*pec(NSString*text){
 }
 }
 NSDictionary*PMConvertChart(NSData*data,NSError**error){try{NSString*text=[[NSString alloc]initWithData:data encoding:NSUTF8StringEncoding];text=[[text stringByReplacingOccurrencesOfString:@"\ufeff" withString:@""]stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];if(!text.length)throw std::runtime_error("Chart text is empty or not UTF-8");NSDictionary*c;if([text hasPrefix:@"{"]){id json=[NSJSONSerialization JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding] options:NSJSONReadingMutableContainers error:error];if(![json isKindOfClass:NSDictionary.class])return nil;c=json[@"BPMList"]?rpe(json):json;}else c=pec(text);validate(c);return c;}catch(const std::exception&e){if(error)*error=[NSError errorWithDomain:@"PhiMod.Chart" code:1 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithUTF8String:e.what()]}];return nil;}}
-NSDictionary*PMNativeChart(NSDictionary*chart){NSMutableDictionary*out=[chart mutableCopy];NSMutableArray*lines=[NSMutableArray new];for(NSDictionary*line in chart[@"judgeLineList"]){NSMutableDictionary*l=[line mutableCopy];[l removeObjectForKey:@"pmDecor"];for(NSString*side in @[@"notesAbove",@"notesBelow"]){NSMutableArray*notes=[NSMutableArray new];for(NSDictionary*n in line[side])if(![n[@"pmFake"] boolValue])[notes addObject:n];l[side]=notes;}[lines addObject:l];}out[@"judgeLineList"]=lines;return out;}
+NSDictionary*PMNativeChart(NSDictionary*chart){
+ NSMutableArray*lines=[NSMutableArray new];
+ for(NSDictionary*line in chart[@"judgeLineList"]){
+  NSMutableDictionary*l=[NSMutableDictionary new];l[@"bpm"]=line[@"bpm"];
+  for(NSString*key in @[@"speedEvents",@"judgeLineDisappearEvents",@"judgeLineMoveEvents",@"judgeLineRotateEvents"])l[key]=line[key] ?: @[];
+  for(NSString*side in @[@"notesAbove",@"notesBelow"]){NSMutableArray*notes=[NSMutableArray new];
+   for(NSDictionary*n in line[side])if(![n[@"pmFake"] boolValue]){NSMutableDictionary*note=[NSMutableDictionary new];
+    for(NSString*key in @[@"type",@"time",@"positionX",@"holdTime",@"speed",@"floorPosition"])if(n[key])note[key]=n[key];
+    [notes addObject:note];
+   }l[side]=notes;
+  }[lines addObject:l];
+ }
+ return @{@"formatVersion":chart[@"formatVersion"] ?: @3,@"offset":chart[@"offset"] ?: @0,@"judgeLineList":lines,@"blockAreaList":chart[@"blockAreaList"] ?: @[]};
+}

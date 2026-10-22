@@ -2,8 +2,9 @@
 #include "PMIL2CPP.hpp"
 namespace pmcontent {
 void attach(pmbridge::Runtime&);void pulse();
+void chapterPrepare(pmbridge::Runtime&,void*);void chapterReady(pmbridge::Runtime&,void*);
 bool customLevel();void levelBegin(pmbridge::Runtime&);void levelEnd(pmbridge::Runtime&);
-bool assetConstructor(pmbridge::Runtime&,void*self,void*key);bool assetRelease(pmbridge::Runtime&,void*self);
+bool assetConstructor(pmbridge::Runtime&,void*self,void*key);bool assetRelease(pmbridge::Runtime&,void*self,bool force=false);
 void levelInfo(pmbridge::Runtime&,void*song,int slot,void*info);
 void selectorFrame(pmbridge::Runtime&,void*selector);
 NSDictionary*officialSnapshot();NSDictionary*command(NSString*action,NSString*identifier,int slot);
