@@ -7,6 +7,7 @@
 #import "PMDiagnostics.h"
 #import "PMPracticeControls.h"
 #import "PMContentUI.h"
+#import "PMResourcePackUI.h"
 
 static const NSInteger PMOverlayRootTag = 0x50484D4F;
 static NSString * const PMBubbleXKey = @"phimod.ios.bubble.x";
@@ -248,7 +249,7 @@ static UIColor *PMColor(uint32_t argb) {
 }
 
 - (void)addSetting:(NSString *)key title:(NSString *)title boolean:(BOOL)boolean {
- BOOL supported=YES;
+ NSSet *pending=[NSSet setWithArray:@[@"skinEnabled",@"unlockAnimation",@"mainlineUnlock",@"customDrawer",@"rpeVideo",@"rpeShader",@"legacyEffects"]];BOOL supported=![pending containsObject:key];
  UIStackView *row=[UIStackView new];row.alpha=supported?1:.4;row.userInteractionEnabled=supported;row.axis=UILayoutConstraintAxisHorizontal;row.spacing=8;row.alignment=UIStackViewAlignmentCenter;row.layoutMarginsRelativeArrangement=YES;row.layoutMargins=UIEdgeInsetsMake(8,12,8,12);row.backgroundColor=PMColor(0xff222c3c);row.layer.cornerRadius=10;
  UILabel *label=[self label:title size:13 color:PMColor(0xfff1f5fa)];[row addArrangedSubview:label];
  if(boolean){UISwitch *control=[UISwitch new];control.accessibilityIdentifier=key;control.on=[[[PMSettings shared] value:key] boolValue];[control addTarget:self action:@selector(settingSwitch:) forControlEvents:UIControlEventValueChanged];[row addArrangedSubview:control];}
@@ -283,6 +284,7 @@ static UIColor *PMColor(uint32_t argb) {
 - (void)refreshPracticeStatus {NSDictionary *r=[PMHookBackend practiceStatus];self.statusLabel.text=r[@"message"] ?: @"Practice status unavailable";}
 - (void)openLibrary {self.open=NO;self.panel.hidden=YES;PMShowContent(self.root,NO);}
 - (void)openChapters {self.open=NO;self.panel.hidden=YES;PMShowContent(self.root,YES);}
+- (void)openResourcePack {PMShowResourcePackPicker(self.root);}
 - (void)renderPage {
  for(UIView *view in self.body.arrangedSubviews.copy){[self.body removeArrangedSubview:view];[view removeFromSuperview];}
  NSArray *names=@[@"谱库",@"章节",@"判定",@"模式",@"设置"];
@@ -297,7 +299,8 @@ static UIColor *PMColor(uint32_t argb) {
    [self.body addArrangedSubview:[self label:@"单曲模式 · 配置对下一首生效" size:12 color:PMColor(0xff92a2b9)]];
    [self addSetting:@"autoplay" title:@"AutoPlay" boolean:YES];
    [self addSetting:@"fullScreen" title:@"全屏判定" boolean:YES];
-   [self addSetting:@"noCombo" title:@"Accuracy（去除连击分）" boolean:YES];
+   [self addSetting:@"accuracy" title:@"Accuracy（选曲页实时 ACC）" boolean:YES];
+   [self addSetting:@"noCombo" title:@"去连击分（MOD 计分模式）" boolean:YES];
    [self addSetting:@"unified" title:@"统一键型：0 关闭 / 1 Tap / 2 Drag / 3 Hold / 4 Flick" boolean:NO];
    [self addSetting:@"challenge" title:@"AP / FC 挑战：0 关闭 / 1 AP / 2 FC" boolean:NO];
   }else if(self.selectedModeCategory==1){
@@ -336,7 +339,7 @@ static UIColor *PMColor(uint32_t argb) {
   }
  }
 
- if(self.selectedTab==4){[self addSetting:@"opacity" title:@"浮窗透明度 0.15–1（立即生效）" boolean:NO];[self addSetting:@"showShortcuts" title:@"选曲快捷按钮" boolean:YES];[self.body addArrangedSubview:[self textButton:@"读取游戏状态（实际读取）" action:@selector(readGameSnapshot)]];[self.body addArrangedSubview:[self textButton:@"切换中文" action:@selector(setChinese)]];[self.body addArrangedSubview:[self textButton:@"切换 English" action:@selector(setEnglish)]];[self.body addArrangedSubview:[self textButton:@"只读探测 IL2CPP" action:@selector(probeRuntime)]];}
+ if(self.selectedTab==4){[self addSetting:@"opacity" title:@"浮窗透明度 0.15–1（立即生效）" boolean:NO];[self addSetting:@"showShortcuts" title:@"选曲快捷按钮" boolean:YES];[self addSetting:@"shortcutAutoPlay" title:@"\u9009\u66f2\u5feb\u6377\uff1aAutoPlay" boolean:YES];[self addSetting:@"shortcutNoise" title:@"\u9009\u66f2\u5feb\u6377\uff1a\u566a\u57df" boolean:YES];[self addSetting:@"shortcutUnified" title:@"\u9009\u66f2\u5feb\u6377\uff1a\u7edf\u4e00\u952e\u578b" boolean:YES];[self addSetting:@"shortcutChallenge" title:@"\u9009\u66f2\u5feb\u6377\uff1aAP / FC" boolean:YES];[self addSetting:@"shortcutHp" title:@"\u9009\u66f2\u5feb\u6377\uff1aHP" boolean:YES];[self addSetting:@"shortcutFullScreen" title:@"\u9009\u66f2\u5feb\u6377\uff1a\u5168\u5c4f\u5224\u5b9a" boolean:YES];[self addSetting:@"shortcutAccuracy" title:@"\u9009\u66f2\u5feb\u6377\uff1a\u5b9e\u65f6 ACC" boolean:YES];[self addSetting:@"dynamicLargeTextures" title:@"大型纹理（最长边 4096；更高内存占用）" boolean:YES];[self addSetting:@"skinEnabled" title:@"\u5934\u50cf / \u8d44\u6e90\u5305\uff08\u6e38\u620f\u5185\u5e94\u7528\u5f85\u63a5\u5165\uff09" boolean:YES];[self addSetting:@"unlockAnimation" title:@"\u89e3\u9501\u89c4\u5219\u52a8\u753b / \u89c6\u9891\uff08\u5f85\u63a5\u5165\uff09" boolean:YES];[self addSetting:@"mainlineUnlock" title:@"\u4e3b\u7ebf\u5168\u89e3\u9501\uff08\u5f85\u63a5\u5165\uff09" boolean:YES];[self addSetting:@"customDrawer" title:@"\u81ea\u5b9a\u4e49\u5feb\u6377\u62bd\u5c49\uff08\u5f85\u63a5\u5165\uff09" boolean:YES];[self addSetting:@"rpeVideo" title:@"RPE \u89c6\u9891\uff08\u5f85\u63a5\u5165\uff09" boolean:YES];[self addSetting:@"rpeShader" title:@"RPE Shader \u6267\u884c\uff08\u5f85\u63a5\u5165\uff09" boolean:YES];[self addSetting:@"legacyEffects" title:@"\u65e7\u8c31\u4e13\u5c5e\u7279\u6548\uff08\u5f85\u63a5\u5165\uff09" boolean:YES];[self.body addArrangedSubview:[self label:@"The feature switches above are disabled until their runtime adapters are implemented. The pack importer validates ZIP contents and stores them locally; runtime application is not implemented." size:12 color:PMColor(0xffffca80)]];[self.body addArrangedSubview:[self textButton:@"\u5bfc\u5165\u8d44\u6e90\u5305\u538b\u7f29\u6587\u4ef6" action:@selector(openResourcePack)]];[self.body addArrangedSubview:[self textButton:@"读取游戏状态（实际读取）" action:@selector(readGameSnapshot)]];[self.body addArrangedSubview:[self textButton:@"切换中文" action:@selector(setChinese)]];[self.body addArrangedSubview:[self textButton:@"切换 English" action:@selector(setEnglish)]];[self.body addArrangedSubview:[self textButton:@"只读探测 IL2CPP" action:@selector(probeRuntime)]];}
  if(self.selectedTab==4){[self.body addArrangedSubview:[self textButton:@"复制诊断日志" action:@selector(copyDiagnostics)]];[self.body addArrangedSubview:[self textButton:@"清空诊断日志" action:@selector(clearDiagnostics)]];}
  if(self.selectedTab==2){[self.body addArrangedSubview:[self textButton:@"检查玩法配置" action:@selector(validateGameplay)]];[self.body addArrangedSubview:[self textButton:@"预览下局配置（不应用）" action:@selector(previewGameplay)]];}
  if(self.selectedTab==4)[self.body addArrangedSubview:[self textButton:@"UI 自检" action:@selector(runSelfTest)]];

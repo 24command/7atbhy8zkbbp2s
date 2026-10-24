@@ -29,20 +29,78 @@ NSDictionary*rpe(NSDictionary*input){NSArray*source=array(input[@"judgeLineList"
 }
 void validate(NSDictionary*c){NSArray*lines=array(c[@"judgeLineList"]);if(!lines.count||lines.count>2048||number(c[@"formatVersion"],3)!=3)throw std::runtime_error("Supports Phigros v3 JSON, PEC and RPE");size_t notes=0,events=0;for(NSDictionary*l in lines){if(number(l[@"bpm"])<=0)throw std::runtime_error("Invalid BPM");for(NSString*key in @[@"notesAbove",@"notesBelow"]){for(NSDictionary*n in array(l[key])){int type=int(number(n[@"type"]));if(type<1||type>4||number(n[@"time"])<0||number(n[@"holdTime"])<0)throw std::runtime_error("Invalid note");if(![n[@"pmFake"] boolValue])++notes;}}for(NSString*key in @[@"speedEvents",@"judgeLineMoveEvents",@"judgeLineRotateEvents",@"judgeLineDisappearEvents"]){NSArray*track=array(l[key]);if(!track.count)throw std::runtime_error("Missing chart event track");double last=-1e99;for(NSDictionary*e in track){double s=number(e[@"startTime"]),end=number(e[@"endTime"]);if(s<last-.001||end<s)throw std::runtime_error("Invalid chart event ordering");last=end;if(++events>2000000)throw std::runtime_error("Chart exceeds two million events");}}}if(!notes||notes>100000)throw std::runtime_error("Chart has no scoring notes or too many notes");}
 NSDictionary*pec(NSString*text){
- struct Cmd{NSString*op;std::vector<double>v;};std::vector<Cmd>cmds;std::vector<std::pair<double,double>>bp;int maxId=0,total=0;NSArray*rows=[text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];double offset=0;BOOL readOffset=NO;
- auto parseNumber=[](NSString*t){NSScanner*s=[NSScanner scannerWithString:t];double n=0;if(![s scanDouble:&n]||!s.isAtEnd||!std::isfinite(n))throw std::runtime_error("Invalid PEC number");return n;};
- for(NSString*raw in rows){NSArray*parts=[raw componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet];NSMutableArray*tokens=[NSMutableArray new];for(NSString*s in parts)if(s.length)[tokens addObject:s];if(!tokens.count)continue;if(!readOffset){if(tokens.count!=1)throw std::runtime_error("PEC offset is invalid");offset=parseNumber(tokens[0]);readOffset=YES;continue;}
-  for(NSUInteger at=0;at<tokens.count;){NSString*op=tokens[at++];NSUInteger stop=at;while(stop<tokens.count&&![tokens[stop]isEqualToString:@"#"]&&![tokens[stop]isEqualToString:@"&"])++stop;std::vector<double>v;for(NSUInteger i=at;i<stop;++i)v.push_back(parseNumber(tokens[i]));at=stop;int expected=[op isEqualToString:@"bp"]?2:[op isEqualToString:@"n2"]?6:([@[@"n1",@"n3",@"n4"]containsObject:op]?5:[op isEqualToString:@"cp"]?4:[op isEqualToString:@"cm"]?6:[op isEqualToString:@"cr"]?5:[op isEqualToString:@"cf"]?4:[@[@"cv",@"cd",@"ca"]containsObject:op]?3:[@[@"#",@"&"]containsObject:op]?1:-1);if(expected<0||v.size()!=size_t(expected))throw std::runtime_error("Unsupported PEC command or wrong argument count");if([op isEqualToString:@"bp"]){if(v[1]<=0)throw std::runtime_error("PEC BPM must be positive");bp.push_back({v[0],v[1]});}else{if(![op isEqualToString:@"#"]&&![op isEqualToString:@"&"]){if(v[0]<0||v[0]>511||floor(v[0])!=v[0])throw std::runtime_error("Invalid PEC line id");maxId=std::max(maxId,int(v[0]));}cmds.push_back({op,v});}}
+ struct Cmd{NSString*op;std::vector<double>v;};
+ std::vector<Cmd>cmds;std::vector<std::pair<double,double>>bp;
+ int maxId=0,total=0;NSArray*rows=[text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
+ double offset=0;BOOL readOffset=NO;
+ auto parseNumber=[](NSString*t){NSScanner*s=[NSScanner scannerWithString:t];s.locale=[NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];double n=0;if(![s scanDouble:&n]||!s.isAtEnd||!std::isfinite(n))throw std::runtime_error("Invalid PEC number");return n;};
+ for(NSUInteger row=0;row<rows.count;++row){NSString*raw=rows[row];NSArray*parts=[raw componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];NSMutableArray*tokens=[NSMutableArray new];for(NSString*t in parts)if(t.length)[tokens addObject:t];if(!tokens.count)continue;
+  if(!readOffset){if(tokens.count!=1)throw std::runtime_error("PEC offset is invalid");offset=parseNumber(tokens[0]);readOffset=YES;continue;}
+  for(NSUInteger begin=0;begin<tokens.count;){NSString*op=tokens[begin++];NSUInteger stop=begin;while(stop<tokens.count&&![tokens[stop]isEqualToString:@"#"]&&![tokens[stop]isEqualToString:@"&"])++stop;std::vector<double>v;for(NSUInteger i=begin;i<stop;++i)v.push_back(parseNumber(tokens[i]));
+   int expected=[op isEqualToString:@"bp"]?2:[op isEqualToString:@"n2"]?6:([@[@"n1",@"n3",@"n4"]containsObject:op]?5:[op isEqualToString:@"cp"]?4:[op isEqualToString:@"cm"]?6:[op isEqualToString:@"cr"]?5:[op isEqualToString:@"cf"]?4:[@[@"cv",@"cd",@"ca"]containsObject:op]?3:[@[@"#",@"&"]containsObject:op]?1:-1);
+   if(expected<0||v.size()!=size_t(expected))throw std::runtime_error("Unsupported PEC command or argument count");
+   if([op isEqualToString:@"bp"]){if(v[1]<=0)throw std::runtime_error("PEC BPM must be positive");bp.push_back({v[0],v[1]});}
+   else{if(![@[@"#",@"&"]containsObject:op]){if(v[0]<0||v[0]>2047||floor(v[0])!=v[0])throw std::runtime_error("PEC judge line id must be 0-2047");maxId=std::max(maxId,int(v[0]));}cmds.push_back({op,std::move(v)});}
+   begin=stop;
+  }
  }
- if(bp.empty())throw std::runtime_error("PEC has no BPM");std::sort(bp.begin(),bp.end());if(bp.front().first>0)bp.insert(bp.begin(),{0,bp.front().second});auto ticks=[&](double beat){double sec=0;for(size_t i=0;i<bp.size();++i){double from=bp[i].first,to=i+1<bp.size()?bp[i+1].first:beat;if(beat<=from)break;sec+=(std::min(beat,to)-from)*60/bp[i].second;if(beat<=to)break;}return sec*64;};
- auto eventJSON=[](double s,double e,double a,double b,double c,double d){return [@{@"startTime":@(s),@"endTime":@(e),@"start":@(a),@"end":@(b),@"start2":@(c),@"end2":@(d)}mutableCopy];};
- auto events=[&](std::vector<Cmd>changes,int kind){std::stable_sort(changes.begin(),changes.end(),[](const Cmd&a,const Cmd&b){return a.v[1]<b.v[1];});NSMutableArray*out=[NSMutableArray new];double x=kind==0?.5:kind==2?1:0,y=kind==0?.5:0,initialX=x,initialY=y,at=0;for(const auto&cmd:changes){auto&v=cmd.v;double start=ticks(v[1]);if(start<at-.001){while(out.count&&[out.lastObject[@"startTime"]doubleValue]>=start)[out removeLastObject];x=initialX;y=initialY;if(out.count){NSMutableDictionary*p=out.lastObject;double ps=[p[@"startTime"]doubleValue],pe=[p[@"endTime"]doubleValue],q=pe>ps?std::clamp((start-ps)/(pe-ps),0.,1.):1;x=[p[@"start"]doubleValue]+([p[@"end"]doubleValue]-[p[@"start"]doubleValue])*q;y=[p[@"start2"]doubleValue]+([p[@"end2"]doubleValue]-[p[@"start2"]doubleValue])*q;p[@"endTime"]=@(start);p[@"end"]=@(x);p[@"end2"]=@(y);}at=start;}if(start>at)[out addObject:eventJSON(at,start,x,x,y,y)];bool instant=[@[@"cp",@"cd",@"ca"]containsObject:cmd.op];double end=instant?start:ticks(v[2]);if(end<start)throw std::runtime_error("PEC event ends before start");double nx=kind==0?v[instant?2:3]/2048:kind==1?-v[instant?2:3]:v[instant?2:3]/255,ny=kind==0?v[instant?3:4]/1400:0;int ease=instant?0:kind==2?1:int(v.back());if(ease<0||ease>29)throw std::runtime_error("Unsupported PEC easing");if(end>start){int count=std::min(8192,std::max(1,int(ceil((end-start)*(ease>1?1:.25)))));for(int j=0;j<count;++j){double p=double(j)/count,q=double(j+1)/count,a=legacyEase(ease,p),b=legacyEase(ease,q);[out addObject:eventJSON(start+(end-start)*p,start+(end-start)*q,x+(nx-x)*a,x+(nx-x)*b,y+(ny-y)*a,y+(ny-y)*b)];}}x=nx;y=ny;at=end;}[out addObject:eventJSON(at,1e9,x,x,y,y)];return out;};
- NSMutableArray*lines=[NSMutableArray new];for(int id=0;id<=maxId;++id){NSMutableArray*above=[NSMutableArray new],*below=[NSMutableArray new],*speeds=[NSMutableArray new];std::vector<Cmd>speedCmd,move,rotate,alpha;NSMutableDictionary*last=nil;for(const auto&cmd:cmds){auto&v=cmd.v;if([cmd.op isEqualToString:@"#"]){if(last)last[@"speed"]=@(v[0]);continue;}if([cmd.op isEqualToString:@"&"]){if(v[0]<=0||v[0]>10)throw std::runtime_error("PEC note size invalid");if(last)last[@"pmSize"]=@(v[0]);continue;}if(int(v[0])!=id){last=nil;continue;}if([cmd.op hasPrefix:@"n"]){bool hold=[cmd.op isEqualToString:@"n2"];int type=[cmd.op isEqualToString:@"n1"]?1:hold?3:[cmd.op isEqualToString:@"n3"]?4:2;double t=ticks(v[1]),duration=hold?ticks(v[2])-t:0;if(t<0||duration<0)throw std::runtime_error("Invalid PEC note timing");last=[@{@"type":@(type),@"time":@(llround(t)),@"holdTime":@(llround(duration)),@"positionX":@(v[hold?3:2]/115.2),@"speed":@1,@"pmFake":@(v[hold?5:4]!=0),@"pmSize":@1,@"pmAlpha":@1,@"pmTime":@(t/64),@"pmDuration":@(duration/64)} mutableCopy];[(v[hold?4:3]==1?above:below)addObject:last];++total;}else if([cmd.op isEqualToString:@"cv"])speedCmd.push_back(cmd);else if([@[@"cp",@"cm"]containsObject:cmd.op])move.push_back(cmd);else if([@[@"cd",@"cr"]containsObject:cmd.op])rotate.push_back(cmd);else alpha.push_back(cmd);}
- std::stable_sort(speedCmd.begin(),speedCmd.end(),[](auto&a,auto&b){return a.v[1]<b.v[1];});auto floorAt=[&](double seconds){NSDictionary*last=speeds.firstObject;for(NSDictionary*e in speeds){if([e[@"startTime"]doubleValue]/64>seconds)break;last=e;}return [last[@"floorPosition"]doubleValue]+(seconds-[last[@"startTime"]doubleValue]/64)*[last[@"value"]doubleValue];};auto speedAt=[&](double seconds){NSDictionary*last=speeds.firstObject;for(NSDictionary*e in speeds){if([e[@"startTime"]doubleValue]/64>seconds)break;last=e;}return [last[@"value"]doubleValue];};double cursor=0,floor=0,speed=1;for(auto&cmd:speedCmd){double end=std::max(cursor,ticks(cmd.v[1]));if(end>cursor){[speeds addObject:@{@"startTime":@(cursor),@"endTime":@(end),@"value":@(speed),@"floorPosition":@(floor)}];floor+=(end-cursor)/64*speed;}cursor=end;speed=cmd.v[2]/7;}[speeds addObject:@{@"startTime":@(cursor),@"endTime":@1e9,@"value":@(speed),@"floorPosition":@(floor)}];for(NSMutableArray*notes in @[above,below]){for(NSMutableDictionary*n in notes){double t=[n[@"time"]doubleValue];n[@"floorPosition"]=@(floorAt(t/64));if([n[@"type"]intValue]==3)n[@"speed"]=@([n[@"speed"]doubleValue]*speedAt(t/64));}[notes sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b){return [a[@"floorPosition"] compare:b[@"floorPosition"]];}];}
- [lines addObject:@{@"bpm":@120,@"notesAbove":above,@"notesBelow":below,@"speedEvents":speeds,@"judgeLineMoveEvents":events(move,0),@"judgeLineRotateEvents":events(rotate,1),@"judgeLineDisappearEvents":events(alpha,2)}];}if(!total)throw std::runtime_error("PEC has no notes");return @{@"formatVersion":@3,@"offset":@((offset-175)/1000),@"pmFormat":@"PEC",@"judgeLineList":lines,@"blockAreaList":@[]};
+ if(!readOffset)throw std::runtime_error("PEC offset is missing");
+ if(bp.empty())throw std::runtime_error("PEC BPM list is empty");
+ std::stable_sort(bp.begin(),bp.end(),[](auto&a,auto&b){return a.first<b.first;});
+ if(bp.front().first>0)bp.insert(bp.begin(),{0,bp.front().second});
+ auto ticks=[&](double beatValue){double seconds=0;for(size_t i=0;i<bp.size();++i){double from=bp[i].first,to=i+1<bp.size()?bp[i+1].first:beatValue;if(beatValue<=from)break;seconds+=(std::min(beatValue,to)-from)*60/bp[i].second;if(beatValue<=to)break;}return seconds*64;};
+ auto eventJSON=[](double start,double end,double x0,double x1,double y0,double y1)->NSDictionary*{return @{@"startTime":@(start),@"endTime":@(end),@"start":@(x0),@"end":@(x1),@"start2":@(y0),@"end2":@(y1)};};
+ std::function<void(NSMutableArray*,double,double,double,double,double,double,double,double,int,int,int)> curve;
+ curve=[&](NSMutableArray*out,double start,double end,double x0,double x1,double y0,double y1,double p,double q,int easing,int kind,int depth){
+  double a=phimod::rpe::ease(easing,p),b=phimod::rpe::ease(easing,q),error=0;
+  if(easing>1&&depth<14)for(double f:{.25,.5,.75}){double t=p+(q-p)*f;error=std::max(error,std::fabs(phimod::rpe::ease(easing,t)-(a+(b-a)*f)));}
+  double tolerance=kind==0?.0002:kind==1?.025:.001;
+  if(error*std::max(std::fabs(x1-x0),std::fabs(y1-y0))>tolerance){double mid=(p+q)*.5;curve(out,start,end,x0,x1,y0,y1,p,mid,easing,kind,depth+1);curve(out,start,end,x0,x1,y0,y1,mid,q,easing,kind,depth+1);return;}
+  if(out.count>=2000000)throw std::runtime_error("PEC converted event count exceeds two million");
+  [out addObject:eventJSON(start+(end-start)*p,start+(end-start)*q,x0+(x1-x0)*a,x0+(x1-x0)*b,y0+(y1-y0)*a,y0+(y1-y0)*b)];
+ };
+ auto events=[&](std::vector<Cmd> changes,int kind){
+  auto isInstant=[](NSString*op){return [@[@"cp",@"cd",@"ca"]containsObject:op];};
+  std::stable_sort(changes.begin(),changes.end(),[&](const Cmd&a,const Cmd&b){double ae=isInstant(a.op)?a.v[1]:a.v[2],be=isInstant(b.op)?b.v[1]:b.v[2];return ae==be?a.v[1]<b.v[1]:ae<be;});
+  NSMutableArray*out=[NSMutableArray new];double x=kind==0?.5:kind==2?1:0,y=kind==0?.5:0,at=0;
+  for(const auto&cmd:changes){const auto&v=cmd.v;double start=std::max(at,ticks(v[1]));if(start>at)[out addObject:eventJSON(at,start,x,x,y,y)];bool instant=isInstant(cmd.op);double end=instant?start:ticks(v[2]);if(end<start)throw std::runtime_error("PEC event ends before start");
+   double nx=kind==0?v[instant?2:3]/2048:kind==1?-v[instant?2:3]:v[instant?2:3]/255;
+   double ny=kind==0?v[instant?3:4]/1400:0;int easing=instant?0:kind==2?1:int(v.back());if(easing<0||easing>29)throw std::runtime_error("Unsupported PEC easing");
+   if(end>start)curve(out,start,end,x,nx,y,ny,0,1,easing,kind,0);x=nx;y=ny;at=end;
+  }
+  [out addObject:eventJSON(at,1e9,x,x,y,y)];return out;
+ };
+ NSMutableArray*lines=[NSMutableArray new];
+ for(int lineId=0;lineId<=maxId;++lineId){
+  NSMutableArray*above=[NSMutableArray new],*below=[NSMutableArray new],*speeds=[NSMutableArray new];
+  std::vector<Cmd>speedCmd,move,rotate,alpha;NSMutableDictionary*last=nil;
+  for(const auto&cmd:cmds){const auto&v=cmd.v;
+   if([cmd.op isEqualToString:@"#"]){if(last)last[@"speed"]=@(v[0]);continue;}
+   if([cmd.op isEqualToString:@"&"]){if(v[0]<=0||v[0]>10)throw std::runtime_error("PEC note size outside 0-10");if(last)last[@"pmSize"]=@(v[0]);continue;}
+   if(int(v[0])!=lineId){last=nil;continue;}
+   if([cmd.op hasPrefix:@"n"]){bool hold=[cmd.op isEqualToString:@"n2"];int type=[cmd.op isEqualToString:@"n1"]?1:hold?3:[cmd.op isEqualToString:@"n3"]?4:2;double time=ticks(v[1]),duration=hold?std::max(0.,ticks(v[2])-time):0;if(time<0||!std::isfinite(time))throw std::runtime_error("Invalid PEC note time");
+    last=[@{@"type":@(type),@"time":@(llround(time)),@"holdTime":@(llround(duration)),@"pmSourceTime":@(time/64),@"pmSourceDuration":@(duration/64),@"pmTime":@(time/64),@"pmDuration":@(duration/64),@"positionX":@(v[hold?3:2]/115.2),@"speed":@1,@"pmFake":@(v[hold?5:4]!=0),@"pmSize":@1}mutableCopy];
+    [(v[hold?4:3]==1?above:below)addObject:last];++total;
+   }else if([cmd.op isEqualToString:@"cv"])speedCmd.push_back(cmd);
+   else if([@[@"cp",@"cm"]containsObject:cmd.op])move.push_back(cmd);
+   else if([@[@"cd",@"cr"]containsObject:cmd.op])rotate.push_back(cmd);
+   else alpha.push_back(cmd);
+  }
+  std::stable_sort(speedCmd.begin(),speedCmd.end(),[](const Cmd&a,const Cmd&b){return a.v[1]<b.v[1];});
+  double cursor=0,floorPosition=0,speed=1;
+  for(const auto&cmd:speedCmd){double end=std::max(cursor,ticks(cmd.v[1]));if(end>cursor){[speeds addObject:@{@"startTime":@(cursor),@"endTime":@(end),@"value":@(speed),@"floorPosition":@(floorPosition)}];floorPosition+=(end-cursor)/64*speed;}cursor=end;speed=cmd.v[2]/7.;}
+  [speeds addObject:@{@"startTime":@(cursor),@"endTime":@1e9,@"value":@(speed),@"floorPosition":@(floorPosition)}];
+  auto floorAt=[&](double t){double result=0;for(NSDictionary*e in speeds){double begin=[e[@"startTime"]doubleValue],end=[e[@"endTime"]doubleValue];if(t<begin)break;result=[e[@"floorPosition"]doubleValue]+(std::min(t,end)-begin)/64*[e[@"value"]doubleValue];}return result;};
+  auto speedAt=[&](double t){double result=1;for(NSDictionary*e in speeds){if(t<[e[@"startTime"]doubleValue])break;result=[e[@"value"]doubleValue];}return result;};
+  for(NSMutableArray*notes in @[above,below]){for(NSMutableDictionary*n in notes){double t=[n[@"pmSourceTime"]doubleValue]*64,raw=[n[@"speed"]doubleValue],localSpeed=speedAt(t);n[@"floorPosition"]=@(floorAt(t));n[@"pmRawSpeed"]=@(raw);n[@"pmEndFloor"]=@(floorAt(t+[n[@"pmSourceDuration"]doubleValue]*64));if([n[@"type"]intValue]==3)n[@"speed"]=@(std::fabs(raw*localSpeed)<1e-6?1:raw*localSpeed);}
+   [notes sortUsingComparator:^NSComparisonResult(NSDictionary*a,NSDictionary*b){double x=[a[@"time"]doubleValue],y=[b[@"time"]doubleValue];return x<y?NSOrderedAscending:x>y?NSOrderedDescending:NSOrderedSame;}];
+  }
+  [lines addObject:@{@"bpm":@120,@"notesAbove":above,@"notesBelow":below,@"speedEvents":speeds,@"judgeLineMoveEvents":events(move,0),@"judgeLineRotateEvents":events(rotate,1),@"judgeLineDisappearEvents":events(alpha,2)}];
+ }
+ if(!total)throw std::runtime_error("PEC has no notes");
+ return @{@"formatVersion":@3,@"offset":@((offset-175)/1000),@"pmFormat":@"PEC",@"judgeLineList":lines,@"blockAreaList":@[]};
+}
 
-}
-}
 NSDictionary*PMConvertChart(NSData*data,NSError**error){try{NSString*text=[[NSString alloc]initWithData:data encoding:NSUTF8StringEncoding];text=[[text stringByReplacingOccurrencesOfString:@"\ufeff" withString:@""]stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];if(!text.length)throw std::runtime_error("Chart text is empty or not UTF-8");NSDictionary*c;if([text hasPrefix:@"{"]){id json=[NSJSONSerialization JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding] options:NSJSONReadingMutableContainers error:error];if(![json isKindOfClass:NSDictionary.class])return nil;c=json[@"BPMList"]?rpe(json):json;}else c=pec(text);validate(c);return c;}catch(const std::exception&e){if(error)*error=[NSError errorWithDomain:@"PhiMod.Chart" code:1 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithUTF8String:e.what()]}];return nil;}}
 NSDictionary*PMNativeChart(NSDictionary*chart){
  NSMutableArray*lines=[NSMutableArray new];

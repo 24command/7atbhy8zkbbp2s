@@ -57,17 +57,22 @@ void prepareRange(Runtime&r,P progress,float current){
  P info=r.get<P>(progress,"levelInformation"),judge=r.get<P>(progress,"judgeControl");
  P manager=r.get<P>(judge,"noteUpdateManager"),notes=r.get<P>(judge,"chartNoteSortByTime");
  if(!r.alive(info)||!r.get<bool>(info,"chartLoaded")||!notes)throw std::runtime_error("Practice chart is not ready");
- pmpracticepreview::reset(r,progress,current);
+ int skippedNotes=pmpracticepreview::reset(r,progress,current);
  clearControllers(r,manager);
  int noteCount=r.count(notes);if(noteCount<0||noteCount>200000)throw std::runtime_error("Practice chart note count invalid");
- // reset() restores source notes and preserves crossing Holds at the new start.
+ // Old note objects are marked judged and counted as misses by reset(); leave
+ // NoteUpdateManager.i alone because the game uses it as a per-list iteration
+ // scratch variable, not a chart-note cursor.
  r.put(judge,"startIndex",0);r.put(judge,"endIndex",0);
+ PMDiagnosticsWrite((std::string("Practice range positioned cursor=")+std::to_string(current)+" skipped="+std::to_string(skippedNotes)+" total="+std::to_string(noteCount)).c_str());
  P lines=r.get<P>(judge,"judgeLineControls");int lineCount=r.count(lines);if(lineCount<0||lineCount>10000)throw std::runtime_error("Practice judge-line count invalid");
  for(int i=0;i<lineCount;++i){P line=r.at(lines,i);for(const char*field:{"nowSpeedIndex","nowDisappearIndex","nowMoveIndex","nowRotateIndex","nowProductIndexAbove","nowProductIndexBelow"})r.put(line,field,0);r.put(line,"lastProductIndexAbove",-1);r.put(line,"lastProductIndexBelow",-1);r.put(line,"numOfFingers",0);}
  P score=r.get<P>(progress,"scoreControl");
  for(const char*field:{"perfect","good","bad","miss","early","late","_combo","maxcombo"})r.put(score,field,0);
- r.put(score,"_score",0.f);r.put(score,"_percent",0.f);r.put(score,"isAllPerfect",true);r.put(score,"isFullCombo",true);r.put(score,"scoreFrozen",false);
+ r.put(score,"_score",0.f);r.put(score,"_percent",0.f);r.put(score,"miss",skippedNotes);r.put(score,"isAllPerfect",skippedNotes==0);r.put(score,"isFullCombo",skippedNotes==0);r.put(score,"scoreFrozen",false);
  r.call(score,"SetNoteCodeList");
+ // SetNoteCodeList resets counters on this UUID; restore the range's initial misses afterward.
+ if(skippedNotes>0){r.put(score,"miss",skippedNotes);r.put(score,"isAllPerfect",false);r.put(score,"isFullCombo",false);}
  if(segmentEnd<=segmentStart)throw std::runtime_error("Practice range end must exceed start");
  segmentCursor=std::clamp(current,segmentStart,segmentEnd);segmentEnded=false;
  r.put(progress,"nowTime",segmentCursor);r.put(progress,"audioTime",std::max(0.f,segmentCursor+clipOffset(r,progress)));
@@ -147,7 +152,10 @@ bool beforeProgress(Runtime&r,P progress){
  if(countdownActive){countdownTick(r,progress);return true;}
  if(entryPending)return false;
  if(segmentPaused&&r.get<bool>(progress,"isPlaying")){startAt(r,progress,segmentEnded?segmentStart:segmentCursor);return countdownActive;}
- if(!segmentPaused&&!r.get<bool>(progress,"isPlaying")&&r.get<bool>(info,"chartLoaded")){pauseAt(r,progress,r.get<float>(progress,"nowTime"),false);return true;}
+ if(!segmentPaused&&!r.get<bool>(progress,"isPlaying")&&r.get<bool>(info,"chartLoaded")){
+  P pauseBar=r.get<P>(progress,"pauseBar");bool nativePause=r.alive(pauseBar)&&r.unbox<bool>(r.call(pauseBar,"get_activeSelf"));
+  if(nativePause){pauseAt(r,progress,r.get<float>(progress,"nowTime"),false);return true;}
+ }
  if(!segmentPaused)return false;
  r.put(progress,"nowTime",segmentCursor);r.put(progress,"audioTime",std::max(0.f,segmentCursor+clipOffset(r,progress)));return true;
 }
@@ -176,7 +184,8 @@ bool afterProgress(Runtime&r,P progress){
  return false;
 }
 bool paused(){return segmentPaused||countdownActive;}
-bool allowNoteCreation(){return !paused()||pmpracticepreview::creating();}
+bool entryLoading(Runtime&,P){return segment&&entryPending;}
+bool allowNoteCreation(){return (!entryPending&&!paused())||pmpracticepreview::creating();}
 bool previewFrame(Runtime&r,P manager){if(!paused())return false;pmpracticepreview::render(r,manager,segmentCursor,countdownActive,countdownTarget);return true;}
 bool updateRange(Runtime&r,const phimod::Options&changed){
  if(!active||!segment||entryPending||segmentDuration<=0)return false;
@@ -189,7 +198,7 @@ bool updateRange(Runtime&r,const phimod::Options&changed){
 State state(Runtime&r){State s{};s.active=active;s.segment=segment;s.paused=segmentPaused;s.countdown=countdownActive;s.ended=segmentEnded;s.loop=options.practiceLoop;s.countIn=options.practiceCountdown;s.ready=active&&!entryPending&&segmentDuration>0;s.start=segmentStart;s.end=segmentEnd;s.duration=segmentDuration;s.cursor=segmentCursor;s.rate=options.playbackRate;s.effectiveRate=effectiveRate;P p=progressObject(r);if(p){s.cursor=r.get<float>(p,"nowTime");s.playing=r.get<bool>(p,"isPlaying");}return s;}
 bool command(Runtime&r,int action,float requestedRate,float requestedPosition){
  P progress=progressObject(r);if(!progress||!active||entryPending||r.get<bool>(progress,"leave")||r.get<bool>(progress,"levelBreak"))return false;
- if(action==8){P klass=r.klass("LevelInformation");r.runtime_class_init(klass);if(!flowCaptured){originalFlowSpeed=r.staticValue<float>(klass,"Speed","System.Single");flowCaptured=true;}float flow=[[[PMSettings shared]value:@"noteFlowEnabled"]boolValue]?[[[PMSettings shared]value:@"noteFlow"]floatValue]:1;if(!std::isfinite(flow)||flow<0||flow>5)return false;r.setStaticValue<float>(klass,"Speed","System.Single",originalFlowSpeed*flow);return true;}
+ if(action==8){P klass=r.klass("LevelInformation");r.runtime_class_init(klass);if(!flowCaptured){originalFlowSpeed=r.staticValue<float>(klass,"Speed","System.Single");flowCaptured=true;}float flow=PMSettingBool("noteFlowEnabled")?PMSettingFloat("noteFlow"):1;if(!std::isfinite(flow)||flow<0||flow>5)return false;r.setStaticValue<float>(klass,"Speed","System.Single",originalFlowSpeed*flow);return true;}
  if(action==4){
   if(!std::isfinite(requestedRate)||requestedRate<0||requestedRate>5)return false;
   P source=sourceObject(r);float clipNow=source?r.get<float>(source,"time"):0;

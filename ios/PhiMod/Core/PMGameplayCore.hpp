@@ -18,7 +18,7 @@ enum class Action { None, Retry, TrackLost };
 struct Windows { float perfect=.08f, good=.18f, bad=.22f; };
 struct Options {
  bool judge=false, autoplay=false, noise=false, clearNoise=false;
- bool fullscreen=false, accuracyOnly=false, hpEnabled=false;
+ bool fullscreen=false, accuracyDisplay=false, noComboScore=false, hpEnabled=false;
  bool noiseVisual=true, hpTop=true, hpBackground=true;
  bool practiceMode=false,practiceLoop=true,practiceCountdown=false;
  int unified=0, challenge=0;
@@ -26,8 +26,8 @@ struct Options {
  float playbackRate=1,practiceStart=0,practiceEnd=-1,practicePosition=0;
  float hpMax=200; std::array<float,4> hpDelta{1,-4,-16,-25};
  float hpRed=.3f,hpBlue=.6f;
- bool assisted() const { return judge||autoplay||noise||clearNoise||fullscreen||accuracyOnly||unified!=0||hpEnabled||challenge!=0||practiceMode||std::fabs(playbackRate-1.f)>.0001f; }
- bool requiresSaveProtection() const { return judge||autoplay||clearNoise||fullscreen||accuracyOnly||unified!=0||practiceMode||std::fabs(playbackRate-1.f)>.0001f; }
+ bool assisted() const { return judge||autoplay||noise||clearNoise||fullscreen||accuracyDisplay||noComboScore||unified!=0||hpEnabled||challenge!=0||practiceMode||std::fabs(playbackRate-1.f)>.0001f; }
+ bool requiresSaveProtection() const { return judge||autoplay||clearNoise||fullscreen||noComboScore||unified!=0||practiceMode||std::fabs(playbackRate-1.f)>.0001f; }
  void validate() const {
   auto range=[](float n,float a,float b){return std::isfinite(n)&&n>=a&&n<=b;};
   if(!range(perfectMs,1,1000)||!range(goodMs,perfectMs,2000)||!range(radius,.3f,3)||

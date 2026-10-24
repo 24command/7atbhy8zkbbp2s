@@ -21,7 +21,9 @@ P mirror=nullptr,mirrorText=nullptr,mirrorTransform=nullptr,mirrorButton=nullptr
 std::array<Item,7> items{};std::map<P,int> buttons;bool built=false,layoutReady=false,modEditorOpen=false,tabFailed=false;unsigned ticks=0;
 std::vector<std::pair<uint32_t,bool>> hidden,animations,mutes;
 static const char *labels[]={"AutoPlay","Noise","Unified","AP / FC","HP","Full Screen","Accuracy"};
-static NSString *keys[]={@"autoplay",@"noise",@"unified",@"challenge",@"hpEnabled",@"fullScreen",@"noCombo"};
+static NSString *keys[]={@"autoplay",@"noise",@"unified",@"challenge",@"hpEnabled",@"fullScreen",@"accuracy"};
+static NSString *shortcutKeys[]={@"shortcutAutoPlay",@"shortcutNoise",@"shortcutUnified",@"shortcutChallenge",@"shortcutHp",@"shortcutFullScreen",@"shortcutAccuracy"};
+BOOL shortcutVisible(NSDictionary*s,int i){return i>=0&&i<7&&[s[shortcutKeys[i]] boolValue];}
 P target(Runtime&r,uint32_t root){return root?r.gchandle_get_target(root):nullptr;}
 P go(Runtime&r,P p){return r.call(p,"get_gameObject");}
 P transform(Runtime&r,P p){return r.call(p,"get_transform");}
@@ -69,15 +71,7 @@ void makeSelector(Runtime&r,P self){
  built=true;ticks=0;
 }
 void selectorLayout(Runtime&r){
- P parent=r.call(mirrorTransform,"get_parent");V3 position=r.unbox<V3>(r.call(mirrorTransform,"get_localPosition")),scale=r.unbox<V3>(r.call(mirrorTransform,"get_localScale"));
- Bounds b=bounds(r,mirror,parent);Rect area=r.unbox<Rect>(r.call(parent,"get_rect"));float gap=std::max(4.f,b.height()*.18f),available=area.x+area.w-b.l-gap;
- if(!std::isfinite(available)||available<=b.width())throw std::runtime_error("Mirror layout area invalid");
- std::array<float,7> widths{};for(int i=0;i<7;++i){auto&s=items[i];setV3(r,s.tr,"set_localScale",scale);setV3(r,s.tr,"set_localPosition",position);rebuild(r,s.tr);widths[i]=std::max(1.f,bounds(r,s.bg,parent).width());}
- float first=widths[0]+widths[1]+widths[2],second=widths[3]+widths[4]+widths[5]+widths[6];float fit=std::clamp(std::min((available-b.width()-gap*3)/first,(available-gap*3)/second),.1f,1.f);
- V3 fitted{scale.x*fit,scale.y*fit,scale.z};float edge=b.r+gap,row=b.height()+gap;
- for(int i=0;i<7;++i){auto&s=items[i];if(i==3)edge=b.l-row*.267949f;setV3(r,s.tr,"set_localScale",fitted);Bounds q=bounds(r,s.bg,parent);s.offset={edge-q.l,i<3?0:-row,0};s.fit=fit;edge+=q.width()+gap;}
- layoutReady=true;
-}
+ NSDictionary*s=[[PMSettings shared] snapshot];std::vector<int>activeIndices;for(int i=0;i<7;++i)if(shortcutVisible(s,i))activeIndices.push_back(i);P parent=r.call(mirrorTransform,"get_parent");V3 position=r.unbox<V3>(r.call(mirrorTransform,"get_localPosition")),scale=r.unbox<V3>(r.call(mirrorTransform,"get_localScale"));Bounds b=bounds(r,mirror,parent);Rect area=r.unbox<Rect>(r.call(parent,"get_rect"));float gap=std::max(4.f,b.height()*.18f),available=area.x+area.w-b.l-gap;if(!std::isfinite(available)||available<=b.width())throw std::runtime_error("Mirror layout area invalid");std::array<float,7>widths{};for(int i:activeIndices){auto&sItem=items[i];setV3(r,sItem.tr,"set_localScale",scale);setV3(r,sItem.tr,"set_localPosition",position);rebuild(r,sItem.tr);widths[i]=std::max(1.f,bounds(r,sItem.bg,parent).width());}if(activeIndices.empty()){layoutReady=true;return;}size_t firstCount=std::min<size_t>(3,activeIndices.size());float first=0,second=0;for(size_t k=0;k<activeIndices.size();++k)(k<firstCount?first:second)+=widths[activeIndices[k]];float fit=std::clamp(std::min((available-b.width()-gap*3)/std::max(1.f,first),(available-gap*3)/std::max(1.f,second)),.1f,1.f);V3 fitted{scale.x*fit,scale.y*fit,scale.z};float edge=b.r+gap,row=b.height()+gap;for(size_t k=0;k<activeIndices.size();++k){int i=activeIndices[k];auto&sItem=items[i];if(k==firstCount)edge=b.l-row*.267949f;setV3(r,sItem.tr,"set_localScale",fitted);Bounds q=bounds(r,sItem.bg,parent);sItem.offset={edge-q.l,k<firstCount?0:-row,0};sItem.fit=fit;edge+=q.width()+gap;}layoutReady=true;}
 void restore(Runtime&r,std::vector<std::pair<uint32_t,bool>>&v,const char*method){for(auto x:v){P p=target(r,x.first);try{if(r.alive(p))r.call(p,method,{"System.Boolean"},{&x.second});}catch(...){}r.gchandle_free(x.first);}v.clear();}
 void stash(Runtime&r,std::vector<std::pair<uint32_t,bool>>&v,P p,const char*getter,const char*setter,bool value){if(!r.alive(p))return;bool old=r.unbox<bool>(r.call(p,getter));v.emplace_back(r.gchandle_new(p,false),old);r.call(p,setter,{"System.Boolean"},{&value});}
 UIWindow *window(){for(UIScene *scene in UIApplication.sharedApplication.connectedScenes)if([scene isKindOfClass:UIWindowScene.class]&&scene.activationState==UISceneActivationStateForegroundActive)for(UIWindow*w in ((UIWindowScene*)scene).windows)if(w.isKeyWindow)return w;return nil;}
@@ -148,7 +142,7 @@ void projectTab(Runtime&r){P tab=target(r,tabRoot);if(!r.alive(tab))return;P txt
   [self.body addArrangedSubview:[self button:chapters?@"打开章节管理  ›":@"打开谱库管理  ›" action:chapters?@selector(contentChapters):@selector(contentLibrary)]];
  }else if(self.category==2){[self addToggle:@"enabled" title:@"自定义判定"];[self addNumber:@"perfect" title:@"Perfect / ms"];[self addNumber:@"good" title:@"Good / ms"];[self.body addArrangedSubview:[self label:@"原版：Perfect ±80 / Good ±180 ms。自定义判定启用后不保存成绩。" size:13]];
  }else if(self.category==3){
-  [self addCards:@[[self modeCard:@"AutoPlay" detail:@"自动演示 · 不保存成绩" key:@"autoplay" page:4],[self modeCard:@"噪域" detail:@"噪域范围与 Hold 容错" key:@"noise" page:3],[self modeCard:@"去噪域" detail:@"清除原谱噪域 · 不保存成绩" key:@"clearOriginalNoise" page:0],[self modeCard:@"HP 生存" detail:@"生命规则与原生 HP 特效" key:@"hpEnabled" page:1],[self modeCard:@"全屏判定" detail:@"保留时间 / 键型判定 · 不保存成绩" key:@"fullScreen" page:0],[self modeCard:@"Accuracy（去连击分）" detail:@"沿用当前 iOS 计分规则 · 不保存成绩" key:@"noCombo" page:0],[self modeCard:@"区间练习" detail:@"起止、循环、倒数与暂停预览" key:@"practiceMode" page:2],[self modeCard:@"音符流速 / 播放倍速" detail:@"0–5× · 区间练习内可调整" key:@"noteFlowEnabled" page:2]]];
+  [self addCards:@[[self modeCard:@"AutoPlay" detail:@"自动演示 · 不保存成绩" key:@"autoplay" page:4],[self modeCard:@"噪域" detail:@"噪域范围与 Hold 容错" key:@"noise" page:3],[self modeCard:@"去噪域" detail:@"清除原谱噪域 · 不保存成绩" key:@"clearOriginalNoise" page:0],[self modeCard:@"HP 生存" detail:@"生命规则与原生 HP 特效" key:@"hpEnabled" page:1],[self modeCard:@"全屏判定" detail:@"保留时间 / 键型判定 · 不保存成绩" key:@"fullScreen" page:0],[self modeCard:@"实时 ACC" detail:@"在当前分数下方显示即时准确率，不改变计分" key:@"accuracy" page:0],[self modeCard:@"去连击分" detail:@"按全谱 note 数计算 Perfect/Good 成绩 · 不保存记录" key:@"noCombo" page:0],[self modeCard:@"区间练习" detail:@"起止、循环、倒数与暂停预览" key:@"practiceMode" page:2],[self modeCard:@"音符流速 / 播放倍速" detail:@"0–5× · 区间练习内可调整" key:@"noteFlowEnabled" page:2]]];
   [self addChoice:@"unified" title:@"统一键型"];[self addChoice:@"challenge" title:@"自动重开挑战"];
  }else{
   [self addToggle:@"showShortcuts" title:@"选曲页快捷模式按钮"];[self addNumber:@"opacity" title:@"浮窗透明度 0.15–1"];[self.body addArrangedSubview:[self button:@"复制诊断日志" action:@selector(copyDiagnostics)]];
@@ -192,7 +186,7 @@ void selectorFrame(Runtime&r,P self){runtime=&r;if(modEditorOpen)settingsLeave(r
  visible=visible&&layoutReady;
  Color fill=r.unbox<Color>(r.call(mirror,"get_color")),fg=r.unbox<Color>(r.call(mirrorText,"get_color"));float alpha=mirrorGroup?r.unbox<float>(r.call(mirrorGroup,"get_alpha")):1;
  bool interactive=visible&&!r.get<bool>(self,"isMoving")&&r.unbox<bool>(r.call(mirrorButton,"get_interactable"))&&[[PMHookBackend status][@"ok"] boolValue];
- for(int i=0;i<7;++i){auto &it=items[i];bool supported=true;active(r,target(r,it.root),visible);bool click=interactive&&supported;r.call(it.button,"set_interactable",{"System.Boolean"},{&click});if(it.group){r.call(it.group,"set_alpha",{"System.Single"},{&alpha});
+ for(int i=0;i<7;++i){auto &it=items[i];bool supported=shortcutVisible(s,i);active(r,target(r,it.root),visible&&supported);bool click=interactive&&supported;r.call(it.button,"set_interactable",{"System.Boolean"},{&click});if(it.group){r.call(it.group,"set_alpha",{"System.Single"},{&alpha});
    bool interact=mirrorGroup?r.unbox<bool>(r.call(mirrorGroup,"get_interactable")):true;
    bool raycasts=mirrorGroup?r.unbox<bool>(r.call(mirrorGroup,"get_blocksRaycasts")):true;
    r.call(it.group,"set_interactable",{"System.Boolean"},{&interact});r.call(it.group,"set_blocksRaycasts",{"System.Boolean"},{&raycasts});}

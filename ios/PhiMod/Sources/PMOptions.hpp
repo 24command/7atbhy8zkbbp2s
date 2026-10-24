@@ -5,7 +5,7 @@ inline phimod::Options PMReadOptions(NSDictionary *s) {
  phimod::Options o;
  o.judge=[s[@"enabled"] boolValue];o.autoplay=[s[@"autoplay"] boolValue];
  o.noise=[s[@"noise"] boolValue];o.clearNoise=[s[@"clearOriginalNoise"] boolValue];
- o.fullscreen=[s[@"fullScreen"] boolValue];o.accuracyOnly=[s[@"noCombo"] boolValue];
+ o.fullscreen=[s[@"fullScreen"] boolValue];o.accuracyDisplay=[s[@"accuracy"] boolValue];o.noComboScore=[s[@"noCombo"] boolValue];
  o.hpEnabled=[s[@"hpEnabled"] boolValue];o.noiseVisual=[s[@"noiseVisual"] boolValue];
  o.practiceMode=[s[@"practiceMode"] boolValue];o.practiceLoop=[s[@"practiceLoop"] boolValue];o.practiceCountdown=[s[@"practiceCountdown"] boolValue];
  o.hpTop=[s[@"hpTopEffect"] boolValue];o.hpBackground=[s[@"hpBackgroundEffect"] boolValue];

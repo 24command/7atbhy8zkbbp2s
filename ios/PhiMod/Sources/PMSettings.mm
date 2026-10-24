@@ -10,7 +10,7 @@
 - (instancetype)init {
  if ((self=[super init])) {
  self.store=NSUserDefaults.standardUserDefaults;
- self.defaults=@{@"enabled":@NO,@"autoplay":@NO,@"noise":@NO,@"unified":@0,@"perfect":@80,@"good":@180,@"radius":@1,@"holdGrace":@100,@"holdFx":@150,@"noiseGrace":@250,@"noiseVisual":@YES,@"clearOriginalNoise":@NO,@"fullScreen":@NO,@"noCombo":@NO,@"challenge":@0,@"hpEnabled":@NO,@"hpMax":@200,@"hpPerfect":@1,@"hpGood":@(-4),@"hpBad":@(-16),@"hpMiss":@(-25),@"hpTopEffect":@YES,@"hpBackgroundEffect":@YES,@"hpRed":@30,@"hpBlue":@60,@"practiceMode":@NO,@"practiceLoop":@YES,@"practiceCountdown":@NO,@"practiceStart":@0,@"practiceEnd":@(-1),@"practicePosition":@0,@"playbackRate":@1,@"practiceWhiteUi":@NO,@"noteFlowEnabled":@NO,@"noteFlow":@1,@"showShortcuts":@YES,@"opacity":@0.96};
+ self.defaults=@{@"enabled":@NO,@"autoplay":@NO,@"noise":@NO,@"unified":@0,@"perfect":@80,@"good":@180,@"radius":@1,@"holdGrace":@100,@"holdFx":@150,@"noiseGrace":@250,@"noiseVisual":@YES,@"clearOriginalNoise":@NO,@"fullScreen":@NO,@"accuracy":@NO,@"noCombo":@NO,@"challenge":@0,@"hpEnabled":@NO,@"hpMax":@200,@"hpPerfect":@1,@"hpGood":@(-4),@"hpBad":@(-16),@"hpMiss":@(-25),@"hpTopEffect":@YES,@"hpBackgroundEffect":@YES,@"hpRed":@30,@"hpBlue":@60,@"practiceMode":@NO,@"practiceLoop":@YES,@"practiceCountdown":@NO,@"practiceStart":@0,@"practiceEnd":@(-1),@"practicePosition":@0,@"playbackRate":@1,@"practiceWhiteUi":@NO,@"noteFlowEnabled":@NO,@"noteFlow":@1,@"showShortcuts":@YES,@"dynamicLargeTextures":@NO,@"skinEnabled":@NO,@"unlockAnimation":@NO,@"mainlineUnlock":@NO,@"customDrawer":@NO,@"rpeVideo":@NO,@"rpeShader":@NO,@"legacyEffects":@NO,@"shortcutAutoPlay":@YES,@"shortcutNoise":@YES,@"shortcutUnified":@YES,@"shortcutChallenge":@YES,@"shortcutHp":@YES,@"shortcutFullScreen":@YES,@"shortcutAccuracy":@YES,@"opacity":@0.96};
  self.ranges=@{@"perfect":@[@1,@1000],@"good":@[@1,@2000],@"radius":@[@0.3,@3],@"holdGrace":@[@0,@500],@"holdFx":@[@100,@2000],@"noiseGrace":@[@0,@1500],@"unified":@[@0,@4],@"challenge":@[@0,@2],@"practiceStart":@[@0,@100000],@"practiceEnd":@[@(-1),@100000],@"practicePosition":@[@0,@100000],@"playbackRate":@[@0,@5],@"hpMax":@[@1,@10000],@"hpPerfect":@[@(-10000),@10000],@"hpGood":@[@(-10000),@10000],@"hpBad":@[@(-10000),@10000],@"hpMiss":@[@(-10000),@10000],@"hpRed":@[@0,@100],@"hpBlue":@[@0,@100],@"noteFlow":@[@0,@5],@"opacity":@[@0.15,@1]};
  } return self;
 }
@@ -19,6 +19,8 @@
  NSDictionary *saved=[self.store dictionaryForKey:@"phimod.ios.config.snapshot.v2"];
  NSMutableDictionary *v=[NSMutableDictionary new];
  for(NSString *key in self.defaults)v[key]=saved[key] ?: [self.store objectForKey:[@"phimod.ios.config." stringByAppendingString:key]] ?: self.defaults[key];
+ // Migrate the old single Accuracy switch, which changed score, to the explicit no-combo mode.
+ if(!saved[@"noCombo"]){id legacy=saved[@"accuracy"] ?: [self.store objectForKey:@"phimod.ios.config.noCombo"];if(legacy)v[@"noCombo"]=legacy;}
  return v;
 }
 - (BOOL)validateSnapshot:(NSDictionary *)values error:(NSString **)error {

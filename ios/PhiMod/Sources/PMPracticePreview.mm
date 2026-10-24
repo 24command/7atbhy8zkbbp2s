@@ -30,8 +30,8 @@ void showRenderer(Runtime&r,P control,const char*field,bool visible){P renderer=
 bool creating(){return inCreate;}
 void discardControls(){controls.clear();dirty=true;lastCursor=-1e9f;previewOwned=false;}
 void clear(){previewOwned=false;originals.clear();tracks.clear();controls.clear();owner=nullptr;inCreate=false;dirty=true;lastCursor=-1e9f;}
-void reset(Runtime&r,P progress,float current){
- P judge=r.get<P>(progress,"judgeControl");capture(r,judge);controls.clear();dirty=true;lastCursor=-1e9f;
+int reset(Runtime&r,P progress,float current){
+ P judge=r.get<P>(progress,"judgeControl");capture(r,judge);controls.clear();dirty=true;lastCursor=-1e9f;int skippedCount=0;
  // Restore chart source before every rewind: trimming a crossing Hold must
  // never accumulate across repeats or corrupt a later seek to an earlier time.
  for(const auto&n:originals){r.put(n.note,"realTime",n.time);r.put(n.note,"holdTime",n.duration);r.put(n.note,"floorPosition",n.floor);
@@ -41,8 +41,10 @@ void reset(Runtime&r,P progress,float current){
    for(const auto&line:tracks)if(line.index==lineIndex){P events=r.get<P>(line.owner,"speedEvents");for(int i=0,total=count(r,events,200000);i<total;++i){P e=r.at(events,i);float begin=r.get<float>(e,"startTime"),end=r.get<float>(e,"endTime");if(current>=begin&&current<=end){floor=r.get<float>(e,"floorPosition")+(current-begin)*r.get<float>(e,"value");break;}}break;}
    r.put(n.note,"realTime",current);r.put(n.note,"holdTime",n.time+n.duration-current);r.put(n.note,"floorPosition",floor);skipped=false;
   }
+  if(skipped)++skippedCount;
   r.put(n.note,"isJudged",skipped);r.put(n.note,"isJudgedForFlick",skipped);
  }
+ return skippedCount;
 }
 void render(Runtime&r,P manager,float current,bool countdown,float targetTime){
  P info=r.get<P>(manager,"levelInformation");if(!r.get<bool>(info,"chartLoaded"))return;

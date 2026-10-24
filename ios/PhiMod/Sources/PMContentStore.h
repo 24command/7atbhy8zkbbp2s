@@ -10,5 +10,7 @@
 - (NSURL*)exportSong:(NSString*)identifier error:(NSError**)error;
 - (NSURL*)exportChapter:(NSString*)identifier error:(NSError**)error;
 - (BOOL)removeSong:(NSString*)identifier error:(NSError**)error;
+- (BOOL)removeSongs:(NSArray<NSString*>*)identifiers error:(NSError**)error;
 - (BOOL)replaceImage:(NSURL*)url identifier:(NSString*)identifier error:(NSError**)error;
+- (BOOL)replaceImageData:(NSData*)data identifier:(NSString*)identifier error:(NSError**)error;
 @end

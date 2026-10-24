@@ -14,6 +14,7 @@ void audioAfter(Runtime&,P);
 bool beforeProgress(Runtime&,P);
 bool afterProgress(Runtime&,P);
 bool paused();
+bool entryLoading(Runtime&,P manager);
 bool allowNoteCreation();
 bool previewFrame(Runtime&,P manager);
 bool updateRange(Runtime&,const phimod::Options&);

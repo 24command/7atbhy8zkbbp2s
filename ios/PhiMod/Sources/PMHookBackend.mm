@@ -9,6 +9,8 @@
 #include "PMChartModes.hpp"
 #include "PMPractice.hpp"
 #include "PMContentRuntime.hpp"
+#include "PMRuntimeFeatures.hpp"
+#include "PMUnlockRuntime.hpp"
 #include "../Core/PMFlowCore.hpp"
 #include "../Core/PMHookProtocol.hpp"
 #include "../Core/PMHookManifest.hpp"
@@ -53,6 +55,22 @@ using JudgeFn=bool(*)(P,P);
 using PerfectFn=void(*)(P,float,float,V3,bool,P);
 void diagf(const char *format,...){
  char buffer[768];va_list args;va_start(args,format);vsnprintf(buffer,sizeof(buffer),format,args);va_end(args);PMDiagnosticsWrite(buffer);
+}
+uint32_t realtimeAccuracyRoot=0;P realtimeAccuracyOwner=nullptr,realtimeAccuracyText=nullptr;std::string realtimeAccuracyLast;
+void clearRealtimeAccuracy(Runtime&r){if(realtimeAccuracyRoot){P go=r.gchandle_get_target(realtimeAccuracyRoot);if(r.alive(go))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{go});r.gchandle_free(realtimeAccuracyRoot);}realtimeAccuracyRoot=0;realtimeAccuracyOwner=realtimeAccuracyText=nullptr;realtimeAccuracyLast.clear();diagf("Live ACC display cleared");}
+void updateRealtimeAccuracy(Runtime&r,P score,bool enabled){
+ if(!enabled){if(realtimeAccuracyRoot)clearRealtimeAccuracy(r);return;}
+ P official=r.get<P>(score,"score");if(!r.alive(official))return;
+ if(realtimeAccuracyOwner!=score&&realtimeAccuracyRoot)clearRealtimeAccuracy(r);
+ if(!realtimeAccuracyRoot){P sourceTransform=r.call(official,"get_transform"),parent=r.call(sourceTransform,"get_parent"),sourceGo=r.call(official,"get_gameObject");bool world=false;P clone=r.stat(r.type("UnityEngine","Object"),"Instantiate",{"UnityEngine.Object","UnityEngine.Transform","System.Boolean"},{sourceGo,parent,&world});if(!clone)throw std::runtime_error("Could not clone score label for live ACC");uint32_t root=r.gchandle_new(clone,false);try{
+  r.call(clone,"set_name",{"System.String"},{r.string_new("PhiMod_LiveAccuracy")});P label=r.component(clone,r.type("UnityEngine.UI","Text"));if(!r.alive(label))throw std::runtime_error("Cloned score label has no Text component");
+  P sourceRect=r.call(official,"get_rectTransform"),rect=r.call(label,"get_rectTransform");V2 middle{.5f,.5f};for(const char*name:{"set_anchorMin","set_anchorMax","set_pivot"})r.call(rect,name,{"UnityEngine.Vector2"},{&middle});
+  V2 oldSize=r.unbox<V2>(r.call(sourceRect,"get_sizeDelta")),position=r.unbox<V2>(r.call(sourceRect,"get_anchoredPosition"));int oldFont=r.unbox<int>(r.call(official,"get_fontSize")),font=std::max(10,(int)std::lround(oldFont*.42));V2 size{oldSize.x,std::max(14.f,font*1.6f)};position.y-=oldSize.y*.72f+size.y*.48f;
+  r.call(rect,"set_sizeDelta",{"UnityEngine.Vector2"},{&size});r.call(rect,"set_anchoredPosition",{"UnityEngine.Vector2"},{&position});bool no=false;int align=4;
+  r.call(label,"set_fontSize",{"System.Int32"},{&font});r.call(label,"set_resizeTextForBestFit",{"System.Boolean"},{&no});r.call(label,"set_raycastTarget",{"System.Boolean"},{&no});r.call(label,"set_alignment",{"UnityEngine.TextAnchor"},{&align});
+  Color tint=r.unbox<Color>(r.call(official,"get_color"));r.call(label,"set_color",{"UnityEngine.Color"},{&tint});realtimeAccuracyText=label;realtimeAccuracyOwner=score;realtimeAccuracyRoot=root;diagf("Live ACC display attached to native score HUD");
+ }catch(...){r.gchandle_free(root);throw;}}
+ int p=r.get<int>(score,"perfect"),g=r.get<int>(score,"good"),b=r.get<int>(score,"bad"),m=r.get<int>(score,"miss"),judged=p+g+b+m;double accuracy=judged>0?100.0*(p+.65*g)/judged:100.0;char text[32];snprintf(text,sizeof(text),"%.2f%%",accuracy);bool visible=r.unbox<bool>(r.call(official,"get_isActiveAndEnabled"));r.call(realtimeAccuracyText,"set_enabled",{"System.Boolean"},{&visible});if(realtimeAccuracyLast!=text){r.text(realtimeAccuracyText,text);realtimeAccuracyLast=text;}
 }
 struct PlaybackJudgeScope{Runtime&r;explicit PlaybackJudgeScope(Runtime&value):r(value){pmpractice::judgeRateEnter(r);}~PlaybackJudgeScope(){pmpractice::judgeRateLeave();}};
 void resetChartRegistration(){registered.clear();}
@@ -119,7 +137,7 @@ void begin(P p){
 }
 void onAwake(P self,P mi){
  diagf("LevelControl.Awake enter");
- try{pmcontent::levelBegin(R());}catch(const std::exception&e){diagf("Content begin: %s",e.what());}
+ try{pmcontent::levelBegin(R());pmfeatures::levelBegin(R(),self);pmunlock::clear(R());}catch(const std::exception&e){diagf("Content/feature begin: %s",e.what());}
  progressUpdateCalls=judgeUpdateCalls=0;lastProgressHeartbeat=lastJudgeHeartbeat={};diagHaveState=false;
  // A latch survives OnDestroy, disabled switches and the entire result screen.
  // Alternate assisted result never launches the reward/save coroutine.
@@ -135,11 +153,12 @@ void onAwake(P self,P mi){
 }
 void onDestroy(P self,P mi){
  diagf("LevelControl.OnDestroy enter");
+ try{clearRealtimeAccuracy(R());}catch(const std::exception&e){diagf("Live ACC cleanup: %s",e.what());}
   if(attempt){attempt->result();if(attempt->excluded())guard.store(true);}
   resultPresented=false;levelOverStarted=false;loadingMaskCleared=false;judgeUpdateSeen=false;
   try{pmhp::clear(R());pmmodes::clear(R());pmpractice::clear(R());}catch(const std::exception&e){fault(e);}
   resetChartRegistration();
-  try{pmcontent::levelEnd(R());}catch(const std::exception&e){diagf("Content cleanup: %s",e.what());}
+  try{pmfeatures::levelEnd(R());pmunlock::clear(R());pmcontent::levelEnd(R());}catch(const std::exception&e){diagf("Content/feature cleanup: %s",e.what());}
   orig<VoidFn>(h::levelDestroy)(self,mi);
   diagf("LevelControl.OnDestroy returned");
 }
@@ -187,7 +206,7 @@ void onPerfect(P self,float code,float offset,V3 pos,bool hold,P mi){
    if(!attempt->creditOnce(code))return;
   }catch(const std::exception&e){fault(e);return;}
  }
- observe(code,offset,phimod::Rating::Perfect);credit(self,code,offset,pos,hold,mi);
+ observe(code,offset,phimod::Rating::Perfect);pmfeatures::observe(0);credit(self,code,offset,pos,hold,mi);
 }
 void onMiss(P self,float code,P mi){
  if(applying()&&attempt->options().autoplay){
@@ -197,10 +216,10 @@ void onMiss(P self,float code,P mi){
   bool hold=attempt->noteType(code)==3;
   onPerfect(self,code,0,{0,0,0},hold,nullptr);return;
  }
- observe(code,0,phimod::Rating::Miss);if(pmhp::active())diagf("HP Miss original enter code=%.3f hp=%.2f",code,attempt?attempt->hp():-1);orig<void(*)(P,float,P)>(h::miss)(self,code,mi);if(pmhp::active())diagf("HP Miss original returned code=%.3f",code);
+ observe(code,0,phimod::Rating::Miss);pmfeatures::observe(3);if(pmhp::active())diagf("HP Miss original enter code=%.3f hp=%.2f",code,attempt?attempt->hp():-1);orig<void(*)(P,float,P)>(h::miss)(self,code,mi);if(pmhp::active())diagf("HP Miss original returned code=%.3f",code);
 }
-void onBad(P self,float code,float offset,P mi){observe(code,offset,phimod::Rating::Bad);orig<void(*)(P,float,float,P)>(h::bad)(self,code,offset,mi);}
-void onGood(P self,float code,float offset,V3 pos,bool hold,P mi){observe(code,offset,phimod::Rating::Good);orig<PerfectFn>(h::good)(self,code,offset,pos,hold,mi);}
+void onBad(P self,float code,float offset,P mi){observe(code,offset,phimod::Rating::Bad);pmfeatures::observe(2);orig<void(*)(P,float,float,P)>(h::bad)(self,code,offset,mi);}
+void onGood(P self,float code,float offset,V3 pos,bool hold,P mi){observe(code,offset,phimod::Rating::Good);pmfeatures::observe(1);orig<PerfectFn>(h::good)(self,code,offset,pos,hold,mi);}
 void diagnosticTick(Runtime&r,P progressControl,const char *source){
  if(!progressControl)return;
  bool playing=r.get<bool>(progressControl,"isPlaying");
@@ -268,6 +287,7 @@ void onProgressUpdate(P self,P mi){
 }
 void onJudgeUpdate(P self,P mi){
  judgeUpdateSeen=true;
+ if(pmpractice::entryLoading(R(),r.get<P>(self,"progressControl"))){if(++judgeUpdateCalls==1)diagf("Practice entry: native judging held until range reset");return;}
  uint64_t count=++judgeUpdateCalls;bool heartbeat=heartbeatDue(lastJudgeHeartbeat,count);
  if(heartbeat)diagf("JudgeControl.Update enter n=%llu",(unsigned long long)count);
  if(pmpractice::paused()){if(heartbeat)diagf("JudgeControl.Update skipped practice-paused n=%llu",(unsigned long long)count);return;}
@@ -277,7 +297,7 @@ void onJudgeUpdate(P self,P mi){
   orig<VoidFn>(h::judgeUpdate)(self,mi);
  }
  if(heartbeat)diagf("JudgeControl.Update original returned n=%llu",(unsigned long long)count);
- try{auto &r=R();P progressControl=r.get<P>(self,"progressControl");if(heartbeat)logProgressSnapshot(r,progressControl,"JudgeControl.Update",count);tickGameplay(r,progressControl,"JudgeControl.Update");pmcontent::visuals(r,progressControl);}
+ try{auto &r=R();P progressControl=r.get<P>(self,"progressControl");if(heartbeat)logProgressSnapshot(r,progressControl,"JudgeControl.Update",count);tickGameplay(r,progressControl,"JudgeControl.Update");pmcontent::visuals(r,progressControl);pmfeatures::tick(r,progressControl);}
  catch(const std::exception&e){lastError=std::string("JudgeControl.Update: ")+e.what();diagf("JudgeControl.Update failed: %s",e.what());}
 }
 void onAddressableAudioUpdate(P self,P mi){
@@ -337,24 +357,19 @@ bool readAccuracy(P self,float &outScore,int &outTotal){
  }catch(...){return false;}
 }
 void onScoreUpdate(P self,P mi){
-  // ScoreControl must update its native counters first. During level setup the
-  // note count is transiently zero, so invalid reads are ignored rather than
-  // fail-closing the entire gameplay backend.
   orig<VoidFn>(h::scoreUpdate)(self,mi);
-  if(!applying())return;
+  if(!applying()){if(liveAccuracyRoot)try{clearRealtimeAccuracy(R());}catch(...){}return;}
   try{auto &r=R();auto o=attempt->options();
-   if(o.accuracyOnly){float value=0;int total=0;if(readAccuracy(self,value,total)){
-    r.put(self,"scoreOfNote",1000000.f/total);r.put(self,"_score",value);r.put(self,"_percent",value/1000000.f);
-    char digits[32];snprintf(digits,sizeof(digits),"%07d",int(std::round(value)));r.text(r.get<P>(self,"score"),digits);
-   }}
+   if(o.noComboScore){float accuracy=0;int total=0;if(readAccuracy(self,accuracy,total)){float value=accuracy*10000.f;r.put(self,"scoreOfNote",1000000.f/total);r.put(self,"_score",value);r.put(self,"_percent",value/1000000.f);char digits[32];snprintf(digits,sizeof(digits),"%07d",int(std::round(value)));r.text(r.get<P>(self,"score"),digits);r.text(r.get<P>(self,"comboText"),"NO COMBO");}}
+   updateRealtimeAccuracy(r,self,o.accuracyDisplay);
    if(o.hpEnabled){pmhp::frame(r,attempt->hp());pmhp::scoreFrame(r,self);r.text(r.get<P>(self,"comboText"),"LIFE");r.text(r.get<P>(self,"combo"),std::to_string(int(std::ceil(attempt->hp()))).c_str());}
    else if(o.autoplay)r.text(r.get<P>(self,"comboText"),"AUTOPLAY");
   }catch(const std::exception&e){lastError=std::string("Score update: ")+e.what();NSLog(@"[PhiMod] %s",lastError.c_str());}
- }
- P onResultInfo(P self,P mi){
-  P result=orig<P(*)(P,P)>(h::resultInfo)(self,mi);
-  if(attempt&&attempt->options().accuracyOnly&&(applying()||inResult))try{float value=0;int total=0;if(readAccuracy(self,value,total))R().call(result,"set_Score",{"System.Single"},{&value});}catch(const std::exception&e){lastError=std::string("Accuracy result: ")+e.what();}
-  return result;
+}
+P onResultInfo(P self,P mi){
+ P result=orig<P(*)(P,P)>(h::resultInfo)(self,mi);
+ if(attempt&&attempt->options().noComboScore&&(applying()||inResult))try{float accuracy=0;int total=0;if(readAccuracy(self,accuracy,total)){float value=accuracy*10000.f;R().call(result,"set_Score",{"System.Single"},{&value});}}catch(const std::exception&e){lastError=std::string("No-combo result score: ")+e.what();}
+ return result;
 }
 void onRecord(P self,P result,P mi){if(!guard.load())orig<void(*)(P,P,P)>(h::record)(self,result,mi);}
 void onSetRecord(P self,P id,P level,P record,P mi){if(!guard.load())orig<void(*)(P,P,P,P,P)>(h::setRecord)(self,id,level,record,mi);}
@@ -471,7 +486,7 @@ void onLevelInformation(P self,P mi){
  uint64_t count=++levelInfoCalls;diagf("LevelControl.SetInformation enter n=%llu",(unsigned long long)count);
  orig<VoidFn>(h::levelInfo)(self,mi);
  diagf("LevelControl.SetInformation original returned n=%llu",(unsigned long long)count);
- if(!broken)try{pmmodes::afterInformation(R(),self);pmcontent::afterChart(R(),self);}catch(const std::exception&e){fault(e);}
+ if(!broken)try{pmmodes::afterInformation(R(),self);pmcontent::afterChart(R(),self);pmfeatures::afterChart(R(),self);}catch(const std::exception&e){fault(e);}
  diagf("LevelControl.SetInformation finished n=%llu",(unsigned long long)count);
 }
 void onAssetCtor(P self,P key,P mi){try{if(pmcontent::assetConstructor(R(),self,key))return;}catch(const std::exception&e){diagf("Content ctor: %s",e.what());}orig<void(*)(P,P,P)>(h::assetCtor)(self,key,mi);}
@@ -480,12 +495,13 @@ void onAssetReleaseResource(P self,P mi){try{if(pmcontent::assetRelease(R(),self
 void onChapterStart(P self,P mi){
  try{pmscene::settingsLeave(R());pmcontent::chapterPrepare(R(),self);}catch(const std::exception&e){diagf("Content chapter prepare failed: %s",e.what());}
  orig<VoidFn>(h::chapterStart)(self,mi);
- try{pmcontent::chapterReady(R(),self);}catch(const std::exception&e){diagf("Content chapter layout failed: %s",e.what());}
+ try{pmcontent::chapterReady(R(),self);pmunlock::chapterReady(R(),self);}catch(const std::exception&e){diagf("Content chapter layout failed: %s",e.what());}
 }
-P onSongInfo(P self,int slot,P mi){P value=orig<P(*)(P,int,P)>(h::songInfo)(self,slot,mi);try{pmcontent::levelInfo(R(),self,slot,value);}catch(const std::exception&e){diagf("Content level info: %s",e.what());}return value;}
-P onItemInfo(P self,int slot,P mi){P value=orig<P(*)(P,int,P)>(h::itemInfo)(self,slot,mi);try{pmcontent::levelInfo(R(),R().get<P>(self,"songInfo"),slot,value);}catch(const std::exception&e){diagf("Content item info: %s",e.what());}return value;}
+P onSongInfo(P self,int slot,P mi){P value=orig<P(*)(P,int,P)>(h::songInfo)(self,slot,mi);try{pmcontent::levelInfo(R(),self,slot,value);pmunlock::songInfo(R(),self,slot,value);}catch(const std::exception&e){diagf("Content level info: %s",e.what());}return value;}
+P onItemInfo(P self,int slot,P mi){P value=orig<P(*)(P,int,P)>(h::itemInfo)(self,slot,mi);try{pmcontent::levelInfo(R(),R().get<P>(self,"songInfo"),slot,value);pmunlock::itemInfo(R(),self,slot,value);}catch(const std::exception&e){diagf("Content item info: %s",e.what());}return value;}
 void onCreateNote(P self,int index,bool above,P mi){if(pmpractice::allowNoteCreation())orig<void(*)(P,int,bool,P)>(h::lineCreateNote)(self,index,above,mi);}
 void onNoteManager(P self,P mi){
+ if(pmpractice::entryLoading(R(),self))return;
  if(pmpractice::paused()){try{auto&r=R();ensureFloorArray(r,r.get<P>(self,"levelInformation"));pmpractice::previewFrame(r,self);pmcontent::visuals(r,r.get<P>(self,"progressControl"));}catch(const std::exception&e){diagf("Practice preview failed: %s",e.what());}return;}
  if(applying())try{pmmodes::beginFrame(R(),self);}catch(const std::exception&e){fault(e);}
  orig<VoidFn>(h::noteManager)(self,mi);
@@ -501,11 +517,11 @@ void onHoldMove(P self,P mi){
  // Set them BEFORE the original, as in Android; sample the hole afterwards.
  if(applying())try{pmmodes::holdMove(R(),self);}catch(const std::exception&e){fault(e);}
  orig<VoidFn>(h::holdMove)(self,mi);
- try{pmcontent::noteMoved(R(),self,true);}catch(const std::exception&e){diagf("RPE Hold visual: %s",e.what());}
+ try{pmcontent::noteMoved(R(),self,true);pmfeatures::noteMoved(R(),self,true);}catch(const std::exception&e){diagf("Hold visual/skin failed: %s",e.what());}
  if(applying())try{pmmodes::moved(R(),self,true);}catch(const std::exception&e){fault(e);}
 }
-template<h::Index i>void onNoteMove(P self,P mi){orig<VoidFn>(i)(self,mi);try{pmcontent::noteMoved(R(),self,false);}catch(const std::exception&e){diagf("RPE note visual: %s",e.what());}if(applying())try{pmmodes::moved(R(),self);}catch(const std::exception&e){fault(e);}}
-void onSelector(P self,P mi){orig<VoidFn>(h::selector)(self,mi);try{pmscene::selectorFrame(R(),self);pmcontent::selectorFrame(R(),self);}catch(const std::exception&e){lastError=e.what();}}
+template<h::Index i>void onNoteMove(P self,P mi){orig<VoidFn>(i)(self,mi);try{pmcontent::noteMoved(R(),self,false);pmfeatures::noteMoved(R(),self,false);}catch(const std::exception&e){diagf("RPE note visual/skin failed: %s",e.what());}if(applying())try{pmmodes::moved(R(),self);}catch(const std::exception&e){fault(e);}}
+void onSelector(P self,P mi){orig<VoidFn>(h::selector)(self,mi);try{pmscene::selectorFrame(R(),self);pmcontent::selectorFrame(R(),self);pmunlock::tick(R(),self);}catch(const std::exception&e){lastError=e.what();}}
 void onSelectorOff(P self,P mi){try{pmscene::selectorOff(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::selectorOff)(self,mi);}
 void onSetting(P self,P mi){orig<VoidFn>(h::setting)(self,mi);try{pmscene::settingsFrame(R(),self);}catch(const std::exception&e){lastError=e.what();}}
 void onSettingTab(P self,int index,P mi){try{pmscene::settingsLeave(R());}catch(const std::exception&e){lastError=e.what();}orig<void(*)(P,int,P)>(h::settingTab)(self,index,mi);}
@@ -707,7 +723,7 @@ void onCheckFlick(P s,int f,P m){onCheck(s,f,m,h::checkFlick);}
   r.field(resultIterator,"<>4__this","LevelOverControl",false);
   r.resolve(r.klass("AddressableAudioSource"),"set_Volume",{"System.Single"});
   pmhp::validate(r);pmmodes::validate(r);pmcontent::validate(r);
-  rt=std::move(candidate);pmcontent::attach(*rt);
+  rt=std::move(candidate);pmcontent::attach(*rt);pmfeatures::attach(*rt);pmunlock::attach(*rt);
   P callbacks[h::Count]={reinterpret_cast<P>(onAwake),reinterpret_cast<P>(onDestroy),reinterpret_cast<P>(onProgressStart),reinterpret_cast<P>(onProgressUpdate),reinterpret_cast<P>(onMiss),reinterpret_cast<P>(onBad),reinterpret_cast<P>(onGood),reinterpret_cast<P>(onPerfect),reinterpret_cast<P>(onScoreUpdate),reinterpret_cast<P>(onResultInfo),reinterpret_cast<P>(onClick),reinterpret_cast<P>(onDrag),reinterpret_cast<P>(onHold),reinterpret_cast<P>(onFlick),reinterpret_cast<P>(onRecord),reinterpret_cast<P>(onSetRecord),reinterpret_cast<P>(onRanking),reinterpret_cast<P>(onResultStart),reinterpret_cast<P>(onResultMove),reinterpret_cast<P>(onSelector),reinterpret_cast<P>(onSelectorOff),reinterpret_cast<P>(onSetting),reinterpret_cast<P>(onSettingTab),reinterpret_cast<P>(onSettingBack),reinterpret_cast<P>(onPress),reinterpret_cast<P>(onCheckNote),reinterpret_cast<P>(onCheckFlick),reinterpret_cast<P>(onDelete),reinterpret_cast<P>(saveBool<h::SaveBool>),reinterpret_cast<P>(saveInt<h::SaveInt>),reinterpret_cast<P>(saveFloat<h::SaveFloat>),reinterpret_cast<P>(onSaveDate),reinterpret_cast<P>(saveString<h::SaveString>),reinterpret_cast<P>(saveBool<h::LegacySaveBool>),reinterpret_cast<P>(saveInt<h::LegacySaveInt>),reinterpret_cast<P>(saveFloat<h::LegacySaveFloat>),reinterpret_cast<P>(saveString<h::LegacySaveString>),reinterpret_cast<P>(onPointerClick),reinterpret_cast<P>(onSubmit),reinterpret_cast<P>(onLifeStart),reinterpret_cast<P>(onLifeNormalized),reinterpret_cast<P>(onLifeModStart),reinterpret_cast<P>(onHPBackgroundStart),reinterpret_cast<P>(onProgressLevelOver),reinterpret_cast<P>(onLifeUpdate),reinterpret_cast<P>(onLevelCodes),reinterpret_cast<P>(onLevelInformation),reinterpret_cast<P>(onNoteManager),reinterpret_cast<P>(onBlocking),reinterpret_cast<P>(onBlockLate),reinterpret_cast<P>(onHoldMove),reinterpret_cast<P>(onNoteMove<h::clickMove>),reinterpret_cast<P>(onNoteMove<h::dragMove>),reinterpret_cast<P>(onNoteMove<h::flickMove>),reinterpret_cast<P>(onJudgeUpdate),reinterpret_cast<P>(onAddressableAudioUpdate),reinterpret_cast<P>(onCreateNote),reinterpret_cast<P>(onAssetCtor),reinterpret_cast<P>(onAssetRelease),reinterpret_cast<P>(onSongInfo),reinterpret_cast<P>(onItemInfo),reinterpret_cast<P>(onAssetReleaseResource),reinterpret_cast<P>(onChapterStart)};
   auto slots=reinterpret_cast<h::Slot*>(const_cast<uint8_t*>(base)+state);
   for(uint32_t i=0;i<h::Count;++i)__atomic_store_n(&slots[i].callback,reinterpret_cast<uint64_t>(callbacks[i]),__ATOMIC_RELEASE);
