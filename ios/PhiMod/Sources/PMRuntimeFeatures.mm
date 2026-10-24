@@ -18,6 +18,8 @@
 
 namespace pmfeatures {
 using pmbridge::P;
+void attach(pmbridge::Runtime&) {}
+
 using pmbridge::Runtime;
 struct V2 { float x,y; };
 struct V3 { float x,y,z; };
@@ -91,5 +93,6 @@ void observe(int rating){if(legacyActive)legacyJudge=rating==0?2:rating==1?1:0;}
 void noteMoved(Runtime&r,void*control,bool hold){try{P c=control;applyNote(r,c,hold);if(hold)adjustHold(r,c);}catch(const std::exception&e){logf("Skin note update failed: %s",e.what());}}
 void tick(Runtime&r,void*progress){try{updateVideos(r,progress);updateLegacy(r,progress);}catch(const std::exception&e){logf("Feature update failed: %s",e.what());}}
 }
+
 
 
