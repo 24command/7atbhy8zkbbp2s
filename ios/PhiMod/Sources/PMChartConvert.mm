@@ -101,6 +101,7 @@ NSDictionary*pec(NSString*text){
  return @{@"formatVersion":@3,@"offset":@((offset-175)/1000),@"pmFormat":@"PEC",@"judgeLineList":lines,@"blockAreaList":@[]};
 }
 
+} // namespace
 NSDictionary*PMConvertChart(NSData*data,NSError**error){try{NSString*text=[[NSString alloc]initWithData:data encoding:NSUTF8StringEncoding];text=[[text stringByReplacingOccurrencesOfString:@"\ufeff" withString:@""]stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];if(!text.length)throw std::runtime_error("Chart text is empty or not UTF-8");NSDictionary*c;if([text hasPrefix:@"{"]){id json=[NSJSONSerialization JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding] options:NSJSONReadingMutableContainers error:error];if(![json isKindOfClass:NSDictionary.class])return nil;c=json[@"BPMList"]?rpe(json):json;}else c=pec(text);validate(c);return c;}catch(const std::exception&e){if(error)*error=[NSError errorWithDomain:@"PhiMod.Chart" code:1 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithUTF8String:e.what()]}];return nil;}}
 NSDictionary*PMNativeChart(NSDictionary*chart){
  NSMutableArray*lines=[NSMutableArray new];

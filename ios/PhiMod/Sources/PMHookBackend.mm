@@ -287,7 +287,7 @@ void onProgressUpdate(P self,P mi){
 }
 void onJudgeUpdate(P self,P mi){
  judgeUpdateSeen=true;
- if(pmpractice::entryLoading(R(),r.get<P>(self,"progressControl"))){if(++judgeUpdateCalls==1)diagf("Practice entry: native judging held until range reset");return;}
+ if(pmpractice::entryLoading(R(),R().get<P>(self,"progressControl"))){if(++judgeUpdateCalls==1)diagf("Practice entry: native judging held until range reset");return;}
  uint64_t count=++judgeUpdateCalls;bool heartbeat=heartbeatDue(lastJudgeHeartbeat,count);
  if(heartbeat)diagf("JudgeControl.Update enter n=%llu",(unsigned long long)count);
  if(pmpractice::paused()){if(heartbeat)diagf("JudgeControl.Update skipped practice-paused n=%llu",(unsigned long long)count);return;}
@@ -358,7 +358,7 @@ bool readAccuracy(P self,float &outScore,int &outTotal){
 }
 void onScoreUpdate(P self,P mi){
   orig<VoidFn>(h::scoreUpdate)(self,mi);
-  if(!applying()){if(liveAccuracyRoot)try{clearRealtimeAccuracy(R());}catch(...){}return;}
+  if(!applying()){if(realtimeAccuracyRoot)try{clearRealtimeAccuracy(R());}catch(...){}return;}
   try{auto &r=R();auto o=attempt->options();
    if(o.noComboScore){float accuracy=0;int total=0;if(readAccuracy(self,accuracy,total)){float value=accuracy*10000.f;r.put(self,"scoreOfNote",1000000.f/total);r.put(self,"_score",value);r.put(self,"_percent",value/1000000.f);char digits[32];snprintf(digits,sizeof(digits),"%07d",int(std::round(value)));r.text(r.get<P>(self,"score"),digits);r.text(r.get<P>(self,"comboText"),"NO COMBO");}}
    updateRealtimeAccuracy(r,self,o.accuracyDisplay);

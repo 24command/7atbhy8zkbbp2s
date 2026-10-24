@@ -228,7 +228,7 @@ NSDictionary*officialSnapshot(){pulse();return @{@"songBase":baseline ?: @{},@"c
 NSDictionary*command(NSString*action,NSString*identifier,int slot){
  if(!runtime)return @{ @"ok":@NO,@"message":@"璇峰厛绛夊緟娓告垙鍔犺浇瀹屾垚"};
  if(playing)return @{ @"ok":@NO,@"message":@"鎵撴瓕涓笉鑳藉垏鎹㈣氨搴撴垨绔犺妭"};
- if(![NSThread isMainThread])return @{ @"ok":@NO,@"message":@"璇峰湪涓荤嚎绋嬫彁浜ゆ搷浣?};
+  if(![NSThread isMainThread])return @{ @"ok":@NO,@"message":@"Submit this operation on the main thread."};
  if(![@[@"apply",@"chapter",@"play"] containsObject:action])return @{ @"ok":@NO,@"message":@"鏈煡璋卞簱鎿嶄綔"};
  @try{try{
   auto&r=*runtime;log([NSString stringWithFormat:@"Content command begin: %@ %@",action,identifier]);
@@ -350,7 +350,7 @@ void validate(Runtime&r){
  r.field(r.klass("ChartNote"),"judgeLineIndex","System.Int32",false);r.field(r.klass("LevelControl"),"chart","Chart",false);r.field(r.klass("LevelControl"),"songsName","UnityEngine.UI.Text",false);
  r.field(r.klass("LevelInformation"),"floorPositions","System.Single[]",false);r.field(r.klass("LevelInformation"),"Speed","System.Single",true);
  P renderer=r.type("UnityEngine","SpriteRenderer");r.resolve(renderer,"get_sprite");r.resolve(renderer,"set_sprite",{"UnityEngine.Sprite"});r.resolve(renderer,"get_color");r.resolve(renderer,"set_color",{"UnityEngine.Color"});r.resolve(renderer,"set_sortingOrder",{"System.Int32"});r.resolve(r.type("UnityEngine","Sprite"),"Create",{"UnityEngine.Texture2D","UnityEngine.Rect","UnityEngine.Vector2","System.Single"},true);
- P texture=r.type("UnityEngine","Texture2D");r.resolve(texture,".ctor",{"System.Int32","System.Int32","UnityEngine.TextureFormat","System.Boolean"});
+ r.resolve(texture,".ctor",{"System.Int32","System.Int32","UnityEngine.TextureFormat","System.Boolean"});
  P uiImage=r.type("UnityEngine.UI","Image");r.resolve(uiImage,"get_sprite");r.resolve(uiImage,"set_sprite",{"UnityEngine.Sprite"});r.field(r.klass("AddressableImageLoader"),"_image","UnityEngine.UI.Image",false);r.field(r.klass("AddressableImageLoader"),"_sprite","UnityEngine.SpriteRenderer",false);
  r.resolve(r.type("UnityEngine","TextAsset"),".ctor",{"System.String"});r.resolve(r.type("UnityEngine","AudioClip"),"Create",{"System.String","System.Int32","System.Int32","System.Int32","System.Boolean"},true);r.resolve(r.type("System.Runtime.InteropServices","Marshal"),"copy_from_unmanaged",{"System.IntPtr","System.Int32","System.Array","System.Int32"},true);
  r.resolve(r.type("UnityEngine","AudioClip"),"SetData",{"System.Single[]","System.Int32"});

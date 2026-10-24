@@ -72,7 +72,12 @@ static UIColor *PMColor(uint32_t argb) {
         for (UIWindow *candidate in windowScene.windows) if (candidate.isKeyWindow) return candidate;
         for (UIWindow *candidate in windowScene.windows) if (!candidate.hidden && candidate.alpha > 0) return candidate;
     }
-    return UIApplication.sharedApplication.windows.firstObject;
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        for (UIWindow *candidate in ((UIWindowScene *)scene).windows)
+            if (!candidate.hidden && candidate.alpha > 0) return candidate;
+    }
+    return nil;
 }
 
 - (UILabel *)label:(NSString *)text size:(CGFloat)size color:(UIColor *)color {
@@ -91,7 +96,13 @@ static UIColor *PMColor(uint32_t argb) {
     button.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
     button.backgroundColor = PMColor(0xff252f40);
     button.layer.cornerRadius = 8;
-    button.contentEdgeInsets = UIEdgeInsetsMake(7, 10, 7, 10);
+    if (@available(iOS 15.0, *)) {
+        UIButtonConfiguration *configuration = [UIButtonConfiguration plainButtonConfiguration];
+        configuration.contentInsets = NSDirectionalEdgeInsetsMake(7, 10, 7, 10);
+        button.configuration = configuration;
+    } else {
+        button.contentEdgeInsets = UIEdgeInsetsMake(7, 10, 7, 10);
+    }
     [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
     return button;
 }
