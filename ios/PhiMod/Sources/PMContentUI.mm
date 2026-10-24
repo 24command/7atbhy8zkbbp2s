@@ -56,14 +56,14 @@
     }
     NSString *selectTitle = self.selectedSongIDs.count == self.items.count ? @"????" : @"??";
     UIBarButtonItem *all = [[UIBarButtonItem alloc] initWithTitle:selectTitle style:UIBarButtonItemStylePlain target:self action:@selector(toggleSelectAll)];
-    UIBarButtonItem *export = [[UIBarButtonItem alloc] initWithTitle:[NSString stringWithFormat:@"?? (%lu)", (unsigned long)self.selectedSongIDs.count] style:UIBarButtonItemStylePlain target:self action:@selector(exportSelected)];
-    export.enabled = self.selectedSongIDs.count > 0 && !self.busy;
+    UIBarButtonItem *exportButton = [[UIBarButtonItem alloc] initWithTitle:[NSString stringWithFormat:@"?? (%lu)", (unsigned long)self.selectedSongIDs.count] style:UIBarButtonItemStylePlain target:self action:@selector(exportSelected)];
+    exportButton.enabled = self.selectedSongIDs.count > 0 && !self.busy;
     UIBarButtonItem *remove = [[UIBarButtonItem alloc] initWithTitle:[NSString stringWithFormat:@"?? (%lu)", (unsigned long)self.selectedSongIDs.count] style:UIBarButtonItemStyleDone target:self action:@selector(removeSelected)];
     remove.tintColor = UIColor.systemRedColor;
     remove.enabled = self.selectedSongIDs.count > 0 && !self.busy;
     self.toolbarItems = @[all,
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil],
-        export,
+        exportButton,
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil],
         remove];
 }
