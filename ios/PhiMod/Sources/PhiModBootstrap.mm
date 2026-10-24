@@ -101,7 +101,7 @@ static UIColor *PMColor(uint32_t argb) {
         configuration.contentInsets = NSDirectionalEdgeInsetsMake(7, 10, 7, 10);
         button.configuration = configuration;
     } else {
-        button.contentEdgeInsets = UIEdgeInsetsMake(7, 10, 7, 10);
+        // UIButtonConfiguration above provides the iOS 15+ content insets.
     }
     [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
     return button;

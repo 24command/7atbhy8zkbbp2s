@@ -33,7 +33,7 @@
 }
 - (UIView*)viewForZoomingInScrollView:(UIScrollView*)scrollView{return self.imageView;}
 - (void)scrollViewDidZoom:(UIScrollView*)scrollView{[self centerImage];}
-- (void)centerImage {CGRect bounds=self.scroll.bounds;CGSize content=self.scroll.contentSize;CGFloat x=MAX(0,(bounds.width-content.width)/2),y=MAX(0,(bounds.height-content.height)/2);self.imageView.center=CGPointMake(content.width/2+x,content.height/2+y);}
+- (void)centerImage { CGFloat boundsWidth = self.scroll.bounds.size.width; CGFloat boundsHeight = self.scroll.bounds.size.height; CGSize content = self.scroll.contentSize; CGFloat x = MAX(0, (boundsWidth - content.width) / 2); CGFloat y = MAX(0, (boundsHeight - content.height) / 2); self.imageView.center = CGPointMake(content.width / 2 + x, content.height / 2 + y); }
 - (void)rotate {
  UIImage*source=self.sourceImage;CGSize old=source.size,newSize=CGSizeMake(old.height,old.width);UIGraphicsImageRendererFormat*f=[UIGraphicsImageRendererFormat defaultFormat];f.scale=1;UIGraphicsImageRenderer*r=[[UIGraphicsImageRenderer alloc]initWithSize:newSize format:f];UIImage*rotated=[r imageWithActions:^(UIGraphicsImageRendererContext*c){CGContextRef ctx=c.CGContext;CGContextTranslateCTM(ctx,newSize.width/2,newSize.height/2);CGContextRotateCTM(ctx,(CGFloat)M_PI_2);[source drawInRect:CGRectMake(-old.width/2,-old.height/2,old.width,old.height)];}];self.sourceImage=rotated;self.imageView.image=rotated;self.didLayoutImage=NO;self.scroll.zoomScale=1;self.scroll.contentOffset=CGPointZero;[self.view setNeedsLayout];[self.view layoutIfNeeded];}
 - (UIImage*)croppedImage {
