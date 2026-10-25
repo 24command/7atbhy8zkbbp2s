@@ -178,19 +178,20 @@ BOOL manifestSafePath(NSString*value){
  return YES;
 }
 BOOL manifestSafeReference(NSString*value){if(![value isKindOfClass:NSString.class]||!value.length)return NO;return ![value containsString:@"/"]&&! [value containsString:@"\\"]&&! [value containsString:@".."]&&! [value containsString:@":"];}
+void inventoryFail(NSError **error,NSString *message){if(error)*error=err(message);}
 BOOL validateManifestInventory(id rawInventory,NSString*root,NSString*stage,NSArray*files,NSError**error){
  if(![rawInventory isKindOfClass:NSArray.class]&&![rawInventory isKindOfClass:NSDictionary.class]){if(error)*error=err(@"Chapter package has no file inventory");return NO;}
  NSMutableSet*expected=[NSMutableSet new];NSFileManager*f=NSFileManager.defaultManager;
- void (^fail)(NSString*)=^(NSString*message){if(error)*error=err(message);};
+ 
  for(id raw in rawInventory){NSString*name=nil;NSNumber*size=nil;NSString*sha=nil;
-  if([rawInventory isKindOfClass:NSArray.class]){if(![raw isKindOfClass:NSDictionary.class]){fail(@"Invalid inventory entry");return NO;}name=raw[@"path"];size=raw[@"size"];sha=raw[@"sha256"];}else{name=raw;NSDictionary*entry=rawInventory[name];if(![entry isKindOfClass:NSDictionary.class]){fail(@"Invalid inventory entry");return NO;}sha=entry[@"sha256"];}
-  if(!manifestSafePath(name)||[name isEqualToString:@"chapter.json"]||[expected containsObject:name]||![sha isKindOfClass:NSString.class]||sha.length!=64){fail(@"Invalid or duplicate inventory path");return NO;}
+  if([rawInventory isKindOfClass:NSArray.class]){if(![raw isKindOfClass:NSDictionary.class]){inventoryFail(error,@"Invalid inventory entry");return NO;}name=raw[@"path"];size=raw[@"size"];sha=raw[@"sha256"];}else{name=raw;NSDictionary*entry=rawInventory[name];if(![entry isKindOfClass:NSDictionary.class]){inventoryFail(error,@"Invalid inventory entry");return NO;}sha=entry[@"sha256"];}
+  if(!manifestSafePath(name)||[name isEqualToString:@"chapter.json"]||[expected containsObject:name]||![sha isKindOfClass:NSString.class]||sha.length!=64){inventoryFail(error,@"Invalid or duplicate inventory path");return NO;}
   NSString*path=[[root stringByAppendingPathComponent:name]stringByStandardizingPath];NSDictionary*attrs=[f attributesOfItemAtPath:path error:nil];NSString*actualDigest=digest(path);
-  if(![path hasPrefix:[stage stringByAppendingString:@"/"]]||!attrs||!actualDigest.length||([size isKindOfClass:NSNumber.class]&&[attrs[NSFileSize] unsignedLongLongValue]!=size.unsignedLongValue)||[actualDigest caseInsensitiveCompare:sha]!=NSOrderedSame){fail(@"Chapter package resource validation failed");return NO;}
+  if(![path hasPrefix:[stage stringByAppendingString:@"/"]]||!attrs||!actualDigest.length||([size isKindOfClass:NSNumber.class]&&[attrs[NSFileSize] unsignedLongLongValue]!=size.unsignedLongValue)||[actualDigest caseInsensitiveCompare:sha]!=NSOrderedSame){inventoryFail(error,@"Chapter package resource validation failed");return NO;}
   [expected addObject:name];
  }
- NSMutableSet*actual=[NSMutableSet new];NSString*prefix=[root stringByAppendingString:@"/"];for(NSString*path in files){if(![path hasPrefix:prefix])continue;NSString*name=[path substringFromIndex:prefix.length];if([name isEqualToString:@"chapter.json"])continue;if(!manifestSafePath(name)||[actual containsObject:name]){fail(@"Chapter package contains an unexpected or duplicate file");return NO;}[actual addObject:name];}
- if(![actual isEqualToSet:expected]){fail(@"Chapter package contains files outside its manifest");return NO;}return YES;
+ NSMutableSet*actual=[NSMutableSet new];NSString*prefix=[root stringByAppendingString:@"/"];for(NSString*path in files){if(![path hasPrefix:prefix])continue;NSString*name=[path substringFromIndex:prefix.length];if([name isEqualToString:@"chapter.json"])continue;if(!manifestSafePath(name)||[actual containsObject:name]){inventoryFail(error,@"Chapter package contains an unexpected or duplicate file");return NO;}[actual addObject:name];}
+ if(![actual isEqualToSet:expected]){inventoryFail(error,@"Chapter package contains files outside its manifest");return NO;}return YES;
 }
 BOOL validateChapterImages(NSString*folder,NSError**error){
  NSFileManager*f=NSFileManager.defaultManager;
