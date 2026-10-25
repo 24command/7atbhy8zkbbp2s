@@ -333,6 +333,14 @@ struct Runtime {
         try{invokeOn(resolve(type("System","Array"),"SetValue",{"System.Object","System.Int32"}),array,{boxed,&index});}
         catch(...){gchandle_free(root);throw;}gchandle_free(root);
     }
+    void arrayPutBool(P array,int index,bool value) {
+        if(!array||index<0||uintptr_t(index)>=array_length(array))throw std::runtime_error("Array write outside bounds");
+        P boxed=value_box(type("System","Boolean"),&value);
+        if(!boxed)throw std::runtime_error("Boolean boxing failed");
+        uint32_t root=gchandle_new(boxed,false);
+        try{invokeOn(resolve(type("System","Array"),"SetValue",{"System.Object","System.Int32"}),array,{boxed,&index});}
+        catch(...){gchandle_free(root);throw;}gchandle_free(root);
+    }
     P component(P obj,P c){return call(obj,"GetComponent",{"System.Type"},{type_get_object(class_get_type(c))});}
     P children(P obj,P c){bool all=true;return call(obj,"GetComponentsInChildren",{"System.Type","System.Boolean"},{type_get_object(class_get_type(c)),&all});}
     bool alive(P obj) {return obj && unbox<bool>(stat(type("UnityEngine","Object"),"op_Implicit",{"UnityEngine.Object"},{obj}));}

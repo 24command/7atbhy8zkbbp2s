@@ -69,6 +69,11 @@ enum Index : std::uint32_t {
  itemInfo=60,
  assetReleaseResource=61,
  chapterStart=62,
+ normalStart=63,
+ mainlineCheckUnlock=64,
+ mainlinePhase1Start=65,
+ mainlinePhase1ToPhase2=66,
+ mainlineApplyMapCover=67,
  Count
 };
 struct Entry {std::uint32_t site,original;std::uint64_t gateway;};

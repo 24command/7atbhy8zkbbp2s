@@ -35,8 +35,10 @@ int reset(Runtime&r,P progress,float current){
  // Restore chart source before every rewind: trimming a crossing Hold must
  // never accumulate across repeats or corrupt a later seek to an earlier time.
  for(const auto&n:originals){r.put(n.note,"realTime",n.time);r.put(n.note,"holdTime",n.duration);r.put(n.note,"floorPosition",n.floor);
-  bool skipped=n.time<current;
-  if(skipped&&n.type==3&&n.time+n.duration>current){
+  // Match Android's boundary tolerance: a note within 0.1 ms of the cursor
+  // belongs to the active segment; a Hold crossing the cursor is carried in.
+  bool skipped=n.time<current-.0001f;
+  if(skipped&&n.type==3&&n.time+n.duration>current+.0001f){
    int lineIndex=r.get<int>(n.note,"judgeLineIndex")/2;float floor=n.floor;
    for(const auto&line:tracks)if(line.index==lineIndex){P events=r.get<P>(line.owner,"speedEvents");for(int i=0,total=count(r,events,200000);i<total;++i){P e=r.at(events,i);float begin=r.get<float>(e,"startTime"),end=r.get<float>(e,"endTime");if(current>=begin&&current<=end){floor=r.get<float>(e,"floorPosition")+(current-begin)*r.get<float>(e,"value");break;}}break;}
    r.put(n.note,"realTime",current);r.put(n.note,"holdTime",n.time+n.duration-current);r.put(n.note,"floorPosition",floor);skipped=false;
@@ -69,6 +71,24 @@ void render(Runtime&r,P manager,float current,bool countdown,float targetTime){
   dirty=false;
  }
  for(const auto&entry:controls){P note=entry.first,control=entry.second;if(!r.alive(control))continue;bool hold=r.get<int>(note,"type")==3;
+  bool beforeTarget=countdown&&r.get<float>(note,"realTime")<targetTime-.0001f;
+  if(beforeTarget){
+   // Android marks pre-start ChartNotes as Miss before the count-in. The
+   // isJudgedForFlick flag belongs to ChartNote, not Click/Drag/Hold/Flick
+   // controllers; writing it to a controller throws and aborts this render
+   // pass, leaving old notes visible and their NoteMove effects running.
+   // Never call NoteMove for notes before the countdown target.
+   r.put(note,"isJudged",true);r.put(note,"isJudgedForFlick",true);
+   r.put(control,"isVisible",false);r.put(control,"isJudged",true);
+   if(hold){
+    for(const char*field:{"missed","judged","judgeOver"})r.put(control,field,true);
+    r.put(control,"timeOfJudge",0.f);
+    showRenderer(r,control,"_holdHeadSpriteRenderer",false);
+    showRenderer(r,control,"_holdSpriteRenderer",false);
+    showRenderer(r,control,"_holdEndSpriteRenderer1",false);
+   }else showRenderer(r,control,"_spriteRenderer",false);
+   continue;
+  }
   r.put(control,"isVisible",true);r.put(control,"isJudged",false);bool visible=!countdown||r.get<float>(note,"realTime")>=targetTime-.0001f;
   if(hold){for(const char*field:{"missed","judged","judgeOver","_holdHeadIsDestroyed"})r.put(control,field,false);bool crosses=r.get<float>(note,"realTime")+r.get<float>(note,"holdTime")>targetTime;
    showRenderer(r,control,"_holdHeadSpriteRenderer",visible);showRenderer(r,control,"_holdSpriteRenderer",visible||crosses);showRenderer(r,control,"_holdEndSpriteRenderer1",visible||crosses);

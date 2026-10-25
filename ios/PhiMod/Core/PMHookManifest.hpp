@@ -66,6 +66,11 @@ inline constexpr ExpectedEntry expected[]={
  {0x15c1280u,0xa9bd57f6u}, // itemInfo
  {0x209fe1cu,0xd101c3ffu}, // assetReleaseResource
  {0x155ad08u,0xd10283ffu}, // chapterStart
+ {0x15b990cu,0xa9be4ff4u}, // normalStart
+ {0x14a7c88u,0xd10303ffu}, // mainlineCheckUnlock
+ {0x14f0378u,0xa9bc5ff8u}, // mainlinePhase1Start
+ {0x14f5164u,0xa9bd57f6u}, // mainlinePhase1ToPhase2
+ {0x1514760u,0xa9bd57f6u}, // mainlineApplyMapCover
 };
 static_assert(sizeof(expected)/sizeof(expected[0])==Count,"Offline hook manifest must match callback protocol");
 }

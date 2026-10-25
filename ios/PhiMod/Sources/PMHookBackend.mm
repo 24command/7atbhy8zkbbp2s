@@ -21,12 +21,13 @@
 #include <cstdio>
 #include <cstdarg>
 #include <chrono>
+#include <cmath>
 namespace {
 using pmbridge::P;
 using pmbridge::Runtime;
 namespace h=phimod::hooks;
 __attribute__((used)) static const char PMGameplayProtocol[16]="PMGameplay-v2";
-__attribute__((used)) static const char PMGameplayBuild[]="PMGameplay-contract-v2-63";
+__attribute__((used)) static const char PMGameplayBuild[]="PMGameplay-contract-v2-68";
 struct V3{float x,y,z;};
 struct V2{float x,y;};
 struct Color{float r,g,b,a;};
@@ -521,9 +522,53 @@ void onHoldMove(P self,P mi){
  if(applying())try{pmmodes::moved(R(),self,true);}catch(const std::exception&e){fault(e);}
 }
 template<h::Index i>void onNoteMove(P self,P mi){orig<VoidFn>(i)(self,mi);try{pmcontent::noteMoved(R(),self,false);pmfeatures::noteMoved(R(),self,false);}catch(const std::exception&e){diagf("RPE note visual/skin failed: %s",e.what());}if(applying())try{pmmodes::moved(R(),self);}catch(const std::exception&e){fault(e);}}
+void onNormalStart(P self,P mi){
+ try{if(pmunlock::beforeStart(R(),self,^{orig<VoidFn>(h::normalStart)(self,mi);}))return;}
+ catch(const std::exception&e){diagf("Unlock start gate failed: %s",e.what());return;}
+ orig<VoidFn>(h::normalStart)(self,mi);
+}
+using MainlineCheckFn=void(*)(P,P,int*,P*,bool*,P*,P);
+void onMainlineCheckSongUnlock(P self,P songID,int*unlockType,P*chartUnlocked,bool*appeared,P*unlockInfo,P mi){
+ orig<MainlineCheckFn>(h::mainlineCheckUnlock)(self,songID,unlockType,chartUnlocked,appeared,unlockInfo,mi);
+ if(!PMSettingBool("mainlineUnlock"))return;
+ try{
+  auto&r=R();NSString*identifier=r.string(songID);
+  if(!pmcontent::isMainlineSong(identifier))return;
+  if(unlockType)*unlockType=-1;
+  if(appeared)*appeared=true;
+  if(chartUnlocked&&*chartUnlocked){
+   P song=r.call(self,"GetSongInformation",{"System.String"},{songID});
+   P difficulty=song?r.get<P>(song,"difficulty"):nullptr;
+   uintptr_t count=r.array_length(*chartUnlocked);
+   for(uintptr_t i=0;i<count;++i){
+    bool unlocked=false;
+    if(difficulty&&i<r.array_length(difficulty)){
+     float rating=r.unbox<float>(r.arrayAt(difficulty,(int)i));
+     unlocked=std::isfinite(rating)&&rating>0;
+    }
+    r.arrayPutBool(*chartUnlocked,(int)i,unlocked);
+   }
+  }
+  if(unlockInfo)*unlockInfo=r.managedString(@"");
+ }catch(const std::exception&e){diagf("Mainline CheckSongUnlock failed: %s",e.what());}
+}
+void onMainlinePhase1Start(P self,P mi){
+ orig<VoidFn>(h::mainlinePhase1Start)(self,mi);
+ if(!PMSettingBool("mainlineUnlock"))return;
+ try{pmunlock::mainlinePhase1Start(R(),self);}catch(const std::exception&e){diagf("Mainline Chapter9 phase1 entry failed: %s",e.what());}
+}
+void onMainlinePhase1ToPhase2(P self,P mi){
+ try{if(pmunlock::mainlinePhase1ToPhase2(R(),self))return;}catch(const std::exception&e){diagf("Mainline Chapter9 phase transition failed: %s",e.what());}
+ orig<VoidFn>(h::mainlinePhase1ToPhase2)(self,mi);
+}
+void onMainlineApplyMapCover(P self,P mi){
+ orig<VoidFn>(h::mainlineApplyMapCover)(self,mi);
+ try{pmunlock::mainlineApplyMapCover(R(),self);}catch(const std::exception&e){diagf("Mainline Chapter9 map cover failed: %s",e.what());}
+}
+
 void onSelector(P self,P mi){orig<VoidFn>(h::selector)(self,mi);try{pmscene::selectorFrame(R(),self);pmcontent::selectorFrame(R(),self);pmunlock::tick(R(),self);}catch(const std::exception&e){lastError=e.what();}}
-void onSelectorOff(P self,P mi){try{pmscene::selectorOff(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::selectorOff)(self,mi);}
-void onSetting(P self,P mi){orig<VoidFn>(h::setting)(self,mi);try{pmscene::settingsFrame(R(),self);}catch(const std::exception&e){lastError=e.what();}}
+void onSelectorOff(P self,P mi){try{pmscene::selectorOff(R());pmunlock::clear(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::selectorOff)(self,mi);}
+void onSetting(P self,P mi){orig<VoidFn>(h::setting)(self,mi);try{pmunlock::clear(R());pmscene::settingsFrame(R(),self);}catch(const std::exception&e){lastError=e.what();}}
 void onSettingTab(P self,int index,P mi){try{pmscene::settingsLeave(R());}catch(const std::exception&e){lastError=e.what();}orig<void(*)(P,int,P)>(h::settingTab)(self,index,mi);}
 void onSettingBack(P self,P mi){try{pmscene::settingsLeave(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::settingBack)(self,mi);}
 bool dispatchModButton(P self){
@@ -630,6 +675,9 @@ void onCheckFlick(P s,int f,P m){onCheck(s,f,m,h::checkFlick);}
   r.field(r.klass("AddressableAudioSource"),"playFlag","System.Boolean",false);
   r.field(r.klass("AddressableAudioSource"),"loadOver","System.Boolean",false);
   r.field(r.klass("JudgeControl"),"nowTime","System.Single",false);
+   r.resolve(r.klass("GameInformation"),"GetSongInformation",{"System.String"});
+   r.field(r.klass("SongsItem"),"difficulty","System.Single[]",false);
+   pmunlock::validate(r);
    r.field(r.klass("GameInformation"),"levelResultInfo","LevelResultInfo",false);
    r.field(r.klass("GameInformation"),"noteCodes","System.Collections.Generic.List<System.Single>",false);
    r.field(r.klass("GameInformation"),"nowChallengeIndex","System.Int32",false);
@@ -724,10 +772,10 @@ void onCheckFlick(P s,int f,P m){onCheck(s,f,m,h::checkFlick);}
   r.resolve(r.klass("AddressableAudioSource"),"set_Volume",{"System.Single"});
   pmhp::validate(r);pmmodes::validate(r);pmcontent::validate(r);
   rt=std::move(candidate);pmcontent::attach(*rt);pmfeatures::attach(*rt);pmunlock::attach(*rt);
-  P callbacks[h::Count]={reinterpret_cast<P>(onAwake),reinterpret_cast<P>(onDestroy),reinterpret_cast<P>(onProgressStart),reinterpret_cast<P>(onProgressUpdate),reinterpret_cast<P>(onMiss),reinterpret_cast<P>(onBad),reinterpret_cast<P>(onGood),reinterpret_cast<P>(onPerfect),reinterpret_cast<P>(onScoreUpdate),reinterpret_cast<P>(onResultInfo),reinterpret_cast<P>(onClick),reinterpret_cast<P>(onDrag),reinterpret_cast<P>(onHold),reinterpret_cast<P>(onFlick),reinterpret_cast<P>(onRecord),reinterpret_cast<P>(onSetRecord),reinterpret_cast<P>(onRanking),reinterpret_cast<P>(onResultStart),reinterpret_cast<P>(onResultMove),reinterpret_cast<P>(onSelector),reinterpret_cast<P>(onSelectorOff),reinterpret_cast<P>(onSetting),reinterpret_cast<P>(onSettingTab),reinterpret_cast<P>(onSettingBack),reinterpret_cast<P>(onPress),reinterpret_cast<P>(onCheckNote),reinterpret_cast<P>(onCheckFlick),reinterpret_cast<P>(onDelete),reinterpret_cast<P>(saveBool<h::SaveBool>),reinterpret_cast<P>(saveInt<h::SaveInt>),reinterpret_cast<P>(saveFloat<h::SaveFloat>),reinterpret_cast<P>(onSaveDate),reinterpret_cast<P>(saveString<h::SaveString>),reinterpret_cast<P>(saveBool<h::LegacySaveBool>),reinterpret_cast<P>(saveInt<h::LegacySaveInt>),reinterpret_cast<P>(saveFloat<h::LegacySaveFloat>),reinterpret_cast<P>(saveString<h::LegacySaveString>),reinterpret_cast<P>(onPointerClick),reinterpret_cast<P>(onSubmit),reinterpret_cast<P>(onLifeStart),reinterpret_cast<P>(onLifeNormalized),reinterpret_cast<P>(onLifeModStart),reinterpret_cast<P>(onHPBackgroundStart),reinterpret_cast<P>(onProgressLevelOver),reinterpret_cast<P>(onLifeUpdate),reinterpret_cast<P>(onLevelCodes),reinterpret_cast<P>(onLevelInformation),reinterpret_cast<P>(onNoteManager),reinterpret_cast<P>(onBlocking),reinterpret_cast<P>(onBlockLate),reinterpret_cast<P>(onHoldMove),reinterpret_cast<P>(onNoteMove<h::clickMove>),reinterpret_cast<P>(onNoteMove<h::dragMove>),reinterpret_cast<P>(onNoteMove<h::flickMove>),reinterpret_cast<P>(onJudgeUpdate),reinterpret_cast<P>(onAddressableAudioUpdate),reinterpret_cast<P>(onCreateNote),reinterpret_cast<P>(onAssetCtor),reinterpret_cast<P>(onAssetRelease),reinterpret_cast<P>(onSongInfo),reinterpret_cast<P>(onItemInfo),reinterpret_cast<P>(onAssetReleaseResource),reinterpret_cast<P>(onChapterStart)};
+  P callbacks[h::Count]={reinterpret_cast<P>(onAwake),reinterpret_cast<P>(onDestroy),reinterpret_cast<P>(onProgressStart),reinterpret_cast<P>(onProgressUpdate),reinterpret_cast<P>(onMiss),reinterpret_cast<P>(onBad),reinterpret_cast<P>(onGood),reinterpret_cast<P>(onPerfect),reinterpret_cast<P>(onScoreUpdate),reinterpret_cast<P>(onResultInfo),reinterpret_cast<P>(onClick),reinterpret_cast<P>(onDrag),reinterpret_cast<P>(onHold),reinterpret_cast<P>(onFlick),reinterpret_cast<P>(onRecord),reinterpret_cast<P>(onSetRecord),reinterpret_cast<P>(onRanking),reinterpret_cast<P>(onResultStart),reinterpret_cast<P>(onResultMove),reinterpret_cast<P>(onSelector),reinterpret_cast<P>(onSelectorOff),reinterpret_cast<P>(onSetting),reinterpret_cast<P>(onSettingTab),reinterpret_cast<P>(onSettingBack),reinterpret_cast<P>(onPress),reinterpret_cast<P>(onCheckNote),reinterpret_cast<P>(onCheckFlick),reinterpret_cast<P>(onDelete),reinterpret_cast<P>(saveBool<h::SaveBool>),reinterpret_cast<P>(saveInt<h::SaveInt>),reinterpret_cast<P>(saveFloat<h::SaveFloat>),reinterpret_cast<P>(onSaveDate),reinterpret_cast<P>(saveString<h::SaveString>),reinterpret_cast<P>(saveBool<h::LegacySaveBool>),reinterpret_cast<P>(saveInt<h::LegacySaveInt>),reinterpret_cast<P>(saveFloat<h::LegacySaveFloat>),reinterpret_cast<P>(saveString<h::LegacySaveString>),reinterpret_cast<P>(onPointerClick),reinterpret_cast<P>(onSubmit),reinterpret_cast<P>(onLifeStart),reinterpret_cast<P>(onLifeNormalized),reinterpret_cast<P>(onLifeModStart),reinterpret_cast<P>(onHPBackgroundStart),reinterpret_cast<P>(onProgressLevelOver),reinterpret_cast<P>(onLifeUpdate),reinterpret_cast<P>(onLevelCodes),reinterpret_cast<P>(onLevelInformation),reinterpret_cast<P>(onNoteManager),reinterpret_cast<P>(onBlocking),reinterpret_cast<P>(onBlockLate),reinterpret_cast<P>(onHoldMove),reinterpret_cast<P>(onNoteMove<h::clickMove>),reinterpret_cast<P>(onNoteMove<h::dragMove>),reinterpret_cast<P>(onNoteMove<h::flickMove>),reinterpret_cast<P>(onJudgeUpdate),reinterpret_cast<P>(onAddressableAudioUpdate),reinterpret_cast<P>(onCreateNote),reinterpret_cast<P>(onAssetCtor),reinterpret_cast<P>(onAssetRelease),reinterpret_cast<P>(onSongInfo),reinterpret_cast<P>(onItemInfo),reinterpret_cast<P>(onAssetReleaseResource),reinterpret_cast<P>(onChapterStart),reinterpret_cast<P>(onNormalStart),reinterpret_cast<P>(onMainlineCheckSongUnlock),reinterpret_cast<P>(onMainlinePhase1Start),reinterpret_cast<P>(onMainlinePhase1ToPhase2),reinterpret_cast<P>(onMainlineApplyMapCover)};
   auto slots=reinterpret_cast<h::Slot*>(const_cast<uint8_t*>(base)+state);
   for(uint32_t i=0;i<h::Count;++i)__atomic_store_n(&slots[i].callback,reinterpret_cast<uint64_t>(callbacks[i]),__ATOMIC_RELEASE);
-  ready=true;lastError="63 offline entry hooks v2 installed; verify on device";diagf("PMHookBackend.install success hooks=%u judgeUpdate=1 audioUpdate=1",h::Count);return [self status];
+  ready=true;lastError="68 offline entry hooks v2 installed; verify on device";diagf("PMHookBackend.install success hooks=%u judgeUpdate=1 audioUpdate=1",h::Count);return [self status];
  }catch(const std::exception&e){lastError=e.what();if(installAttempts<=3||installAttempts%10==0)diagf("PMHookBackend.install failed: %s",e.what());return [self status];}
 }
 + (BOOL)protectJudgeChange {

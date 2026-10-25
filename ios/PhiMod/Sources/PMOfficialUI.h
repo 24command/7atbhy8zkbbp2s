@@ -5,6 +5,7 @@
 @property(nonatomic,strong) UIColor *fillColor;
 @end
 @interface PMOfficialButton : UIButton
+@property(nonatomic,assign) BOOL flatStyle;
 @end
 @interface PMOfficialToggle : UIControl
 @property(nonatomic,assign,getter=isOn) BOOL on;

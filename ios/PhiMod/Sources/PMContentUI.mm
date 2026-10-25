@@ -48,17 +48,17 @@
 - (void)updateToolbar {
     if (!self.bulkSelection) {
         self.toolbarItems = @[
-            [[UIBarButtonItem alloc] initWithTitle:@"?? ZIP / PEZ" style:UIBarButtonItemStylePlain target:self action:@selector(importFiles)],
+            [[UIBarButtonItem alloc] initWithTitle:@"Import ZIP / PEZ" style:UIBarButtonItemStylePlain target:self action:@selector(importFiles)],
             [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil],
-            [[UIBarButtonItem alloc] initWithTitle:@"?????" style:UIBarButtonItemStylePlain target:self action:@selector(apply)]
+            [[UIBarButtonItem alloc] initWithTitle:@"\u5e94\u7528\u5230\u6e38\u620f" style:UIBarButtonItemStylePlain target:self action:@selector(apply)]
         ];
         return;
     }
-    NSString *selectTitle = self.selectedSongIDs.count == self.items.count ? @"????" : @"??";
+    NSString *selectTitle = self.selectedSongIDs.count == self.items.count ? @"\u53d6\u6d88\u5168\u9009" : @"\u5168\u9009";
     UIBarButtonItem *all = [[UIBarButtonItem alloc] initWithTitle:selectTitle style:UIBarButtonItemStylePlain target:self action:@selector(toggleSelectAll)];
-    UIBarButtonItem *exportButton = [[UIBarButtonItem alloc] initWithTitle:[NSString stringWithFormat:@"?? (%lu)", (unsigned long)self.selectedSongIDs.count] style:UIBarButtonItemStylePlain target:self action:@selector(exportSelected)];
+    UIBarButtonItem *exportButton = [[UIBarButtonItem alloc] initWithTitle:[NSString stringWithFormat:@"\u5bfc\u51fa (%lu)", (unsigned long)self.selectedSongIDs.count] style:UIBarButtonItemStylePlain target:self action:@selector(exportSelected)];
     exportButton.enabled = self.selectedSongIDs.count > 0 && !self.busy;
-    UIBarButtonItem *remove = [[UIBarButtonItem alloc] initWithTitle:[NSString stringWithFormat:@"?? (%lu)", (unsigned long)self.selectedSongIDs.count] style:UIBarButtonItemStyleDone target:self action:@selector(removeSelected)];
+    UIBarButtonItem *remove = [[UIBarButtonItem alloc] initWithTitle:[NSString stringWithFormat:@"\u5220\u9664 (%lu)", (unsigned long)self.selectedSongIDs.count] style:UIBarButtonItemStyleDone target:self action:@selector(removeSelected)];
     remove.tintColor = UIColor.systemRedColor;
     remove.enabled = self.selectedSongIDs.count > 0 && !self.busy;
     self.toolbarItems = @[all,

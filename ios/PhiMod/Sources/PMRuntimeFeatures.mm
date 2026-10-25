@@ -1,7 +1,8 @@
-﻿#include "PMRuntimeFeatures.hpp"
+#include "PMRuntimeFeatures.hpp"
 #include "../Core/PMLegacyCore.hpp"
 #import "PMSettings.h"
 #import "PMContentStore.h"
+#import "PMExtensionTracks.h"
 #import "PMDiagnostics.h"
 #import <UIKit/UIKit.h>
 #include <algorithm>
@@ -34,7 +35,7 @@ std::map<P,std::pair<float,float>> holdBases;
 int skinHead=50,skinTail=50,skinHeadMH=50,skinTailMH=50,skinCols=5,skinRows=6;
 bool skinReady=false;
 struct TrackEvent { double s=0,e=0,a=0,b=0; };
-struct Video { int index=0; double start=0; std::string scale,path; std::map<std::string,std::vector<TrackEvent>> tracks; uint32_t go=0,texture=0; P player=nullptr,raw=nullptr; bool failed=false; };
+struct Video { int index=0; double start=0; std::string scale,path; std::map<std::string,std::vector<TrackEvent>> tracks; uint32_t go=0,texture=0; P player=nullptr,raw=nullptr; bool begun=false,failed=false; };
 std::vector<Video> videos;
 uint32_t videoLevel=0;
 bool legacyActive=false; int legacyStep=-1,legacyJudge=-1; std::string legacyFace;
@@ -58,19 +59,204 @@ bool isHighlight(Runtime&r,P sprite){if(!r.alive(sprite))return false;NSString*n
 void applyNote(Runtime&r,P c,bool isHold){if(!skinReady||!c)return;P note=r.get<P>(c,"noteInfor");if(!note)return;int type=r.get<int>(note,"type");if(!isHold){P old=r.get<P>(c,"noteImage");const char*base=type==1?"click":type==2?"drag":"flick";NSString*file=[NSString stringWithUTF8String:(skinFolder+"/"+base+".png").c_str()];if(isHighlight(r,old)){NSString*mh=[NSString stringWithUTF8String:(skinFolder+"/"+base+"_mh.png").c_str()];if([NSFileManager.defaultManager fileExistsAtPath:mh])file=mh;}P s=skinSprite(r,file,-1,old),renderer=r.get<P>(c,"_spriteRenderer");if(s&&r.alive(renderer)){r.call(renderer,"set_sprite",{"UnityEngine.Sprite"},{s});r.put(c,"noteImage",s);}return;}
  P body=r.get<P>(c,"_holdSpriteRenderer"),head=r.get<P>(c,"_holdHeadSpriteRenderer"),tail=r.get<P>(c,"_holdEndSpriteRenderer1");if(!r.alive(body))return;P old=r.call(body,"get_sprite");Bounds ob=r.unbox<Bounds>(r.call(old,"get_bounds"));V3 originalScale=r.unbox<V3>(r.call(r.call(c,"get_transform"),"get_localScale"));holdBases.emplace(c,std::make_pair(ob.extents.y*2.f,ob.center.y-ob.extents.y));NSString*path=[NSString stringWithUTF8String:(skinFolder+"/hold.png").c_str()];if(isHighlight(r,old)){NSString*mh=[NSString stringWithUTF8String:(skinFolder+"/hold_mh.png").c_str()];if([NSFileManager.defaultManager fileExistsAtPath:mh])path=mh;}P hs=skinSprite(r,path,0,old),bs=skinSprite(r,path,1,old),ts=skinSprite(r,path,2,old);if(r.alive(head)&&hs)r.call(head,"set_sprite",{"UnityEngine.Sprite"},{hs});if(bs)r.call(body,"set_sprite",{"UnityEngine.Sprite"},{bs});if(r.alive(tail)&&ts)r.call(tail,"set_sprite",{"UnityEngine.Sprite"},{ts});(void)originalScale;}
 void adjustHold(Runtime&r,P c){auto it=holdBases.find(c);if(it==holdBases.end())return;P body=r.get<P>(c,"_holdSpriteRenderer"),tr=r.call(c,"get_transform");if(!r.alive(body))return;P current=r.call(body,"get_sprite");if(!r.alive(current))return;Bounds b=r.unbox<Bounds>(r.call(current,"get_bounds"));float height=b.extents.y*2;if(height<=.0001f)return;V3 scale=r.unbox<V3>(r.call(tr,"get_localScale")),pos=r.unbox<V3>(r.call(tr,"get_localPosition"));float prev=scale.y;scale.y*=it->second.first/height;pos.y+=it->second.second*prev-(b.center.y-b.extents.y)*scale.y;r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&pos});for(const char*name:{"holdHead","holdEnd"}){P go=r.get<P>(c,name);if(!r.alive(go))continue;P child=r.call(go,"get_transform");V3 cs=r.unbox<V3>(r.call(child,"get_localScale"));cs.y=std::fabs(scale.x/std::max(.00001f,std::fabs(scale.y)));r.call(child,"set_localScale",{"UnityEngine.Vector3"},{&cs});}}
-struct TempoRow {double beat=0,bpm=120,seconds=0;};
-double beatValue(id v){if([v isKindOfClass:NSArray.class]){NSArray*a=v;if(a.count!=3)throw std::runtime_error("Invalid RPE beat tuple");double den=[a[2] doubleValue];if(den<=0)throw std::runtime_error("Invalid RPE beat denominator");return [a[0] doubleValue]+[a[1] doubleValue]/den;}return [v doubleValue];}
-std::vector<TempoRow> tempoRows(NSDictionary*extra){NSMutableArray*raw=[NSMutableArray new];id bpm=extra[@"bpm"];if([bpm isKindOfClass:NSNumber.class])[raw addObject:@{@"bpm":bpm,@"time":@[@0,@0,@1]}];else if([bpm isKindOfClass:NSArray.class])for(NSDictionary*r in bpm)if([r isKindOfClass:NSDictionary.class])[raw addObject:r];if(!raw.count)throw std::runtime_error("RPE extra.json has no BPM");[raw sortUsingComparator:^NSComparisonResult(NSDictionary*a,NSDictionary*b){double x=beatValue(a[@"time"]),y=beatValue(b[@"time"]);return x<y?NSOrderedAscending:x>y?NSOrderedDescending:NSOrderedSame;}];std::vector<TempoRow>out;for(NSDictionary*r in raw){double b=beatValue(r[@"time"]),v=[r[@"bpm"] doubleValue];if(!std::isfinite(v)||v<=0)throw std::runtime_error("Invalid RPE BPM");double t=out.empty()?b*60/v:out.back().seconds+(b-out.back().beat)*60/out.back().bpm;out.push_back({b,v,t});}return out;}
-double secondsAt(const std::vector<TempoRow>&rows,id v){double b=beatValue(v);size_t i=0;while(i+1<rows.size()&&rows[i+1].beat<=b)++i;return rows[i].seconds+(b-rows[i].beat)*60/rows[i].bpm;}
-double val(id v,double fallback){if([v isKindOfClass:NSNumber.class])return [v doubleValue];return fallback;}
-double scalarValue(id value){if([value isKindOfClass:NSNumber.class])return [value doubleValue];if([value isKindOfClass:NSArray.class]&&[value count])return scalarValue(value[0]);return 0;}
-void parseTrack(Video&v,NSString*name,id raw,const std::vector<TempoRow>&tempo){std::string key=name.UTF8String;auto&out=v.tracks[key];if([raw isKindOfClass:NSNumber.class]){double x=[raw doubleValue];out.push_back({0,1e9,x,x});return;}if(![raw isKindOfClass:NSArray.class])return;for(NSDictionary*e in raw){if(![e isKindOfClass:NSDictionary.class])continue;id start=e[@"startTime"],end=e[@"endTime"];if(!start||!end)continue;double a=[start isKindOfClass:NSArray.class]?secondsAt(tempo,start):[start doubleValue],b=[end isKindOfClass:NSArray.class]?secondsAt(tempo,end):[end doubleValue];id av=e[@"start"],bv=e[@"end"];if(!av||!bv)continue;out.push_back({a,b,scalarValue(av),scalarValue(bv)});}std::stable_sort(out.begin(),out.end(),[](auto&a,auto&b){return a.s<b.s;});}
 std::string resourceFolder(NSString*identifier){NSString*folder=[PMContentStore.shared asset:identifier];for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"] isEqualToString:identifier]){NSString*sub=s[@"resourceRoot"] ?: @"";if(sub.length)folder=[folder stringByAppendingPathComponent:sub];break;}return folder.UTF8String;}
-void prepareVideos(Runtime&r,P level){if(videoLevel){r.gchandle_free(videoLevel);videoLevel=0;}videos.clear();if(!PMSettingBool("rpeVideo"))return;P info=r.get<P>(r.mainGame(),"levelStartInfo");NSString*identifier=info?r.string(r.get<P>(info,"songsId")):nil;if(!identifier.length)return;NSString*folder=[NSString stringWithUTF8String:resourceFolder(identifier).c_str()];NSString*extraPath=[folder stringByAppendingPathComponent:@"extensions/extra.json"];NSData*d=[NSData dataWithContentsOfFile:extraPath];if(!d.length)return;NSDictionary*extra=[NSJSONSerialization JSONObjectWithData:d options:NSJSONReadingMutableContainers error:nil];NSArray*source=extra[@"videos"];if(![source isKindOfClass:NSArray.class]||!source.count)return;auto tempo=tempoRows(extra);NSString*extensions=[folder stringByAppendingPathComponent:@"extensions"];for(NSUInteger i=0;i<source.count&&i<32;++i){NSDictionary*item=source[i];if(![item isKindOfClass:NSDictionary.class])continue;NSString*rel=item[@"path"];if(![rel isKindOfClass:NSString.class]||!rel.length)continue;NSString*videoPath=[[extensions stringByAppendingPathComponent:rel]stringByStandardizingPath];if(![videoPath hasPrefix:[extensions stringByAppendingString:@"/"]])continue;if(![NSFileManager.defaultManager fileExistsAtPath:videoPath]){NSString*fallback=findFile(extensions,rel.lastPathComponent);if(fallback)videoPath=fallback;else continue;}Video v;v.index=(int)i;v.start=item[@"time"]?secondsAt(tempo,item[@"time"]):0;v.scale=[(item[@"scale"] ?: @"cropCenter") UTF8String];v.path=videoPath.UTF8String;parseTrack(v,@"alpha",item[@"alpha"] ?: @1,tempo);parseTrack(v,@"dim",item[@"dim"] ?: @0,tempo);videos.push_back(std::move(v));}if(!videos.empty())videoLevel=r.gchandle_new(level,false);logf("RPE video definitions loaded=%lu",(unsigned long)videos.size());}
-double trackAt(const std::vector<TrackEvent>&a,double now,double fallback){if(a.empty())return fallback;const TrackEvent*last=nullptr;for(auto&e:a){if(e.s<=now)last=&e;else break;}if(!last)return fallback;if(last->e<=last->s||now>=last->e)return last->b;double q=std::clamp((now-last->s)/(last->e-last->s),0.,1.);return last->a+(last->b-last->a)*q;}
+std::string hexDecodePath(NSString*value){NSData*d=[[value stringByReplacingOccurrencesOfString:@" " withString:@""] dataUsingEncoding:NSASCIIStringEncoding];if(!d.length||d.length%2)return {};const unsigned char*p=d.bytes;std::string out;out.reserve(d.length/2);for(NSUInteger i=0;i<d.length;i+=2){unsigned hi=p[i]>='0'&&p[i]<='9'?p[i]-'0':p[i]>='a'&&p[i]<='f'?p[i]-'a'+10:p[i]>='A'&&p[i]<='F'?p[i]-'A'+10:99;unsigned lo=p[i+1]>='0'&&p[i+1]<='9'?p[i+1]-'0':p[i+1]>='a'&&p[i+1]<='f'?p[i+1]-'a'+10:p[i+1]>='A'&&p[i+1]<='F'?p[i+1]-'A'+10:99;if(hi>15||lo>15)return {};out.push_back((char)((hi<<4)|lo));}return out;}
+void destroyVideoObject(Runtime&r,uint32_t &handle,bool releaseTexture){
+ if(!handle)return;
+ P object=target(r,handle);
+ try{
+  if(r.alive(object)){
+   try{if(releaseTexture)r.call(object,"Release");}catch(...){}
+   try{r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{object});}catch(...){}
+  }
+ }catch(...){}
+ r.gchandle_free(handle);handle=0;
+}
+void clearVideos(Runtime&r){
+ for(Video &v:videos){
+  try{if(r.alive(v.player))r.call(v.player,"Stop");}catch(...){}
+  destroyVideoObject(r,v.go,false);
+  destroyVideoObject(r,v.texture,true);
+  v.player=v.raw=nullptr;
+ }
+ videos.clear();
+}
+void prepareVideosFromEffects(Runtime&r,P level,NSString*folder){
+ NSString*extensions=[folder stringByAppendingPathComponent:@"extensions"];
+ NSString*effects=[folder stringByAppendingPathComponent:@"effects.tsv"];
+ NSString*extra=[extensions stringByAppendingPathComponent:@"extra.json"];
+ if(![NSFileManager.defaultManager fileExistsAtPath:effects]&&[NSFileManager.defaultManager fileExistsAtPath:extra]){
+  NSError*error=nil;
+  if(!PMConvertExtraJSON(extra,effects,&error)){logf("RPE effects conversion failed: %s",error.localizedDescription.UTF8String);return;}
+ }
+ NSString*text=[NSString stringWithContentsOfFile:effects encoding:NSUTF8StringEncoding error:nil];
+ if(!text.length)return;
+ std::vector<Video> parsed(33);
+ std::vector<bool> used(33,false);
+ for(NSString*line in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]){
+  std::istringstream in(line.UTF8String?line.UTF8String:"");
+  char tag;
+  if(!(in>>tag))continue;
+  if(tag=='V'){
+   int index;double start;std::string scale,path;
+   if(!(in>>index>>start>>scale>>path)||index<0||index>=33||!std::isfinite(start))continue;
+   NSString *encoded=[NSString stringWithUTF8String:path.c_str()];
+   std::string decoded=encoded?hexDecodePath(encoded):std::string();
+   if(decoded.empty())continue;
+   NSString *relative=[NSString stringWithUTF8String:decoded.c_str()];
+   if(!relative.length||relative.isAbsolutePath||[relative containsString:@"\\"])continue;
+   BOOL safe=YES;for(NSString*part in [relative componentsSeparatedByString:@"/"])if(!part.length||[part isEqualToString:@"."]||[part isEqualToString:@".."])safe=NO;
+   if(!safe)continue;
+   NSString *video=[[extensions stringByAppendingPathComponent:relative]stringByStandardizingPath];
+   if(![video hasPrefix:[extensions stringByAppendingString:@"/"]]||![NSFileManager.defaultManager fileExistsAtPath:video])continue;
+   parsed[index].index=index;parsed[index].start=start;parsed[index].scale=scale;parsed[index].path=video.UTF8String;used[index]=true;
+  }else if(tag=='K'){
+   char kind;int index,channel;std::string name;TrackEvent event;
+   if((in>>kind>>index>>name>>channel>>event.s>>event.e>>event.a>>event.b)&&kind=='V'&&index>=0&&index<33&&channel>=0&&channel<4&&std::isfinite(event.s)&&std::isfinite(event.e)&&std::isfinite(event.a)&&std::isfinite(event.b)){
+    NSString *encoded=[NSString stringWithUTF8String:name.c_str()];std::string decoded=encoded?hexDecodePath(encoded):std::string();
+    if(!decoded.empty())parsed[index].tracks[decoded].push_back(event);
+   }
+  }
+ }
+ for(int i=0;i<33;i++)if(used[i]&&!parsed[i].path.empty()){
+  for(auto&entry:parsed[i].tracks)std::stable_sort(entry.second.begin(),entry.second.end(),[](const auto&a,const auto&b){return a.s<b.s;});
+  videos.push_back(std::move(parsed[i]));
+ }
+ if(!videos.empty()&&level&&!videoLevel)videoLevel=r.gchandle_new(level,false);
+ logf("RPE videos loaded from effects.tsv: %lu",(unsigned long)videos.size());
+}
+void prepareVideos(Runtime&r,P level){
+ clearVideos(r);
+ P current=videoLevel?target(r,videoLevel):nullptr;
+ if(videoLevel&&current!=level){r.gchandle_free(videoLevel);videoLevel=0;}
+ if(!videoLevel&&level)videoLevel=r.gchandle_new(level,false);
+ P info=r.get<P>(r.mainGame(),"levelStartInfo");
+ NSString*identifier=info?r.string(r.get<P>(info,"songsId")):nil;
+ if(!identifier.length)return;
+ NSString*folder=[NSString stringWithUTF8String:resourceFolder(identifier).c_str()];
+ prepareVideosFromEffects(r,level,folder);
+}
+double trackAt(const std::vector<TrackEvent>&a,double now,double fallback){
+ if(a.empty())return fallback;
+ const TrackEvent*last=nullptr;
+ for(auto&e:a){if(e.s<=now)last=&e;else break;}
+ if(!last)return fallback;
+ if(last->e<=last->s||now>=last->e)return last->b;
+ double q=std::clamp((now-last->s)/(last->e-last->s),0.,1.);
+ return last->a+(last->b-last->a)*q;
+}
 P addComponent(Runtime&r,P go,P type){return r.call(go,"AddComponent",{"System.Type"},{r.type_get_object(r.class_get_type(type))});}
-void makeVideo(Runtime&r,Video&v){if(v.go||v.failed)return;try{P go=r.object_new(r.type("UnityEngine","GameObject"));r.call(go,".ctor",{"System.String"},{r.string_new("PhiMod_RPE_Video")});keep(r,go);v.go=roots.back();P canvas=addComponent(r,go,r.type("UnityEngine","Canvas"));P camera=r.stat(r.type("UnityEngine","Camera"),"get_main");if(!camera)throw std::runtime_error("RPE video main camera missing");int mode=2,order=1;bool yes=true,no=false;r.call(canvas,"set_renderMode",{"UnityEngine.RenderMode"},{&mode});r.call(canvas,"set_worldCamera",{"UnityEngine.Camera"},{camera});r.call(canvas,"set_overrideSorting",{"System.Boolean"},{&yes});r.call(canvas,"set_sortingOrder",{"System.Int32"},{&order});P cameraTr=r.call(camera,"get_transform"),tr=r.call(go,"get_transform");r.call(tr,"SetParent",{"UnityEngine.Transform","System.Boolean"},{cameraTr,&no});float ortho=r.unbox<float>(r.call(camera,"get_orthographicSize")),aspect=r.unbox<float>(r.call(camera,"get_aspect"));V2 size{2*ortho*aspect,2*ortho};r.call(tr,"set_sizeDelta",{"UnityEngine.Vector2"},{&size});V3 local{0,0,5};r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&local});P raw=addComponent(r,go,r.type("UnityEngine.UI","RawImage"));v.raw=raw;r.call(raw,"set_raycastTarget",{"System.Boolean"},{&no});P texture=r.object_new(r.type("UnityEngine","RenderTexture"));int width=960,height=std::max(1,(int)(960/aspect)),depth=0;r.call(texture,".ctor",{"System.Int32","System.Int32","System.Int32"},{&width,&height,&depth});r.call(texture,"Create");keep(r,texture);v.texture=roots.back();r.call(raw,"set_texture",{"UnityEngine.Texture"},{texture});P player=addComponent(r,go,r.type("UnityEngine.Video","VideoPlayer"));v.player=player;bool loop=false,wait=true,skip=true;r.call(player,"set_playOnAwake",{"System.Boolean"},{&loop});r.call(player,"set_isLooping",{"System.Boolean"},{&loop});r.call(player,"set_waitForFirstFrame",{"System.Boolean"},{&wait});r.call(player,"set_skipOnDrop",{"System.Boolean"},{&skip});int render=2,aspectMode=v.scale=="fit"?3:v.scale=="stretch"?5:4,audio=0;r.call(player,"set_renderMode",{"UnityEngine.Video.VideoRenderMode"},{&render});r.call(player,"set_targetTexture",{"UnityEngine.RenderTexture"},{texture});r.call(player,"set_aspectRatio",{"UnityEngine.Video.VideoAspectRatio"},{&aspectMode});r.call(player,"set_audioOutputMode",{"UnityEngine.Video.VideoAudioOutputMode"},{&audio});NSURL*u=[NSURL fileURLWithPath:[NSString stringWithUTF8String:v.path.c_str()]];r.call(player,"set_url",{"System.String"},{r.managedString(u.absoluteString)});r.call(player,"Prepare");}catch(const std::exception&e){v.failed=true;logf("RPE video setup failed: %s",e.what());}}
-void updateVideos(Runtime&r,P progress){if(videos.empty()||!videoLevel)return;P level=target(r,videoLevel),info=level?r.get<P>(level,"levelInformation"):nullptr;if(!info||!r.get<bool>(info,"chartLoaded"))return;double now=r.get<float>(progress,"nowTime");bool playing=r.get<bool>(progress,"isPlaying");for(auto&v:videos){if(v.failed||v.path.empty())continue;try{makeVideo(r,v);if(!v.player||!r.unbox<bool>(r.call(v.player,"get_isPrepared")))continue;double length=r.unbox<double>(r.call(v.player,"get_length")),time=now-v.start;bool active=time>=0&&time<length;double alpha=active?trackAt(v.tracks["alpha"],now,1):0,dim=trackAt(v.tracks["dim"],now,0);Color color{(float)(1-dim),(float)(1-dim),(float)(1-dim),(float)alpha};r.call(v.raw,"set_color",{"UnityEngine.Color"},{&color});bool running=r.unbox<bool>(r.call(v.player,"get_isPlaying"));if(active&&playing){double actual=r.unbox<double>(r.call(v.player,"get_time"));if(!running||std::fabs(actual-time)>.25)r.call(v.player,"set_time",{"System.Double"},{&time});if(!running)r.call(v.player,"Play");}else if(running)r.call(v.player,"Pause");}catch(const std::exception&e){v.failed=true;logf("RPE video update failed: %s",e.what());}}}
+void makeVideo(Runtime&r,Video&v){
+ if(v.go||v.failed)return;
+ try{
+  P go=r.object_new(r.type("UnityEngine","GameObject"));
+  if(!go)throw std::runtime_error("RPE video GameObject allocation failed");
+  r.call(go,".ctor",{"System.String"},{r.string_new("PhiMod_RPE_Video")});
+  v.go=r.gchandle_new(go,false);
+  P camera=r.stat(r.type("UnityEngine","Camera"),"get_main");
+  if(!camera)throw std::runtime_error("RPE video main camera missing");
+  P level=target(r,videoLevel),info=level?r.get<P>(level,"levelInformation"):nullptr;
+  P lineList=info?r.get<P>(info,"judgeLines"):nullptr;
+  P first=r.count(lineList)?r.at(lineList,0):nullptr;
+  bool no=false,yes=true;
+  if(first){int layer=r.unbox<int>(r.call(first,"get_layer"));r.call(go,"set_layer",{"System.Int32"},{&layer});}
+  P canvas=addComponent(r,go,r.type("UnityEngine","Canvas"));
+  int mode=2,order=1;
+  r.call(canvas,"set_renderMode",{"UnityEngine.RenderMode"},{&mode});
+  r.call(canvas,"set_worldCamera",{"UnityEngine.Camera"},{camera});
+  r.call(canvas,"set_overrideSorting",{"System.Boolean"},{&yes});
+  r.call(canvas,"set_sortingOrder",{"System.Int32"},{&order});
+  if(first){
+   P renderer=r.call(first,"GetComponentInChildren",{"System.Type"},{r.type_get_object(r.class_get_type(r.type("UnityEngine","SpriteRenderer")))});
+   if(renderer){int sorting=r.unbox<int>(r.call(renderer,"get_sortingLayerID"));r.call(canvas,"set_sortingLayerID",{"System.Int32"},{&sorting});}
+  }
+  P tr=r.call(go,"get_transform");
+  float ortho=r.unbox<float>(r.call(camera,"get_orthographicSize"));
+  float cameraAspect=r.unbox<float>(r.call(camera,"get_aspect"));
+  float aspect=std::min(cameraAspect,16.f/9.f);
+  if(!std::isfinite(aspect)||aspect<=0)throw std::runtime_error("Invalid RPE video camera aspect");
+  float width=2*ortho*aspect;
+  V2 size{width,width/aspect};
+  V3 position{0,0,-5};
+  r.call(tr,"set_sizeDelta",{"UnityEngine.Vector2"},{&size});
+  r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&position});
+  P raw=addComponent(r,go,r.type("UnityEngine.UI","RawImage"));v.raw=raw;
+  r.call(raw,"set_raycastTarget",{"System.Boolean"},{&no});
+  P texture=r.object_new(r.type("UnityEngine","RenderTexture"));
+  if(!texture)throw std::runtime_error("RPE video RenderTexture allocation failed");
+  v.texture=r.gchandle_new(texture,false);
+  int texWidth=960,texHeight=std::max(1,(int)(960/aspect)),depth=0;
+  r.call(texture,".ctor",{"System.Int32","System.Int32","System.Int32"},{&texWidth,&texHeight,&depth});
+  r.call(texture,"Create");
+  r.call(raw,"set_texture",{"UnityEngine.Texture"},{texture});
+  P player=addComponent(r,go,r.type("UnityEngine.Video","VideoPlayer"));v.player=player;
+  bool loop=false,wait=true,skip=true;
+  r.call(player,"set_playOnAwake",{"System.Boolean"},{&loop});
+  r.call(player,"set_isLooping",{"System.Boolean"},{&loop});
+  r.call(player,"set_waitForFirstFrame",{"System.Boolean"},{&wait});
+  r.call(player,"set_skipOnDrop",{"System.Boolean"},{&skip});
+  int render=2,aspectMode=v.scale=="fit"?3:v.scale=="stretch"?5:4,audio=0,timeReference=2;
+  r.call(player,"set_renderMode",{"UnityEngine.Video.VideoRenderMode"},{&render});
+  r.call(player,"set_targetTexture",{"UnityEngine.RenderTexture"},{texture});
+  r.call(player,"set_aspectRatio",{"UnityEngine.Video.VideoAspectRatio"},{&aspectMode});
+  r.call(player,"set_audioOutputMode",{"UnityEngine.Video.VideoAudioOutputMode"},{&audio});
+  r.call(player,"set_timeReference",{"UnityEngine.Video.VideoTimeReference"},{&timeReference});
+  NSURL*u=[NSURL fileURLWithPath:[NSString stringWithUTF8String:v.path.c_str()]];
+  r.call(player,"set_url",{"System.String"},{r.managedString(u.absoluteString)});
+  r.call(player,"Prepare");
+ }catch(const std::exception&e){v.failed=true;logf("RPE video setup failed: %s",e.what());}
+}
+void updateVideos(Runtime&r,P progress){
+ if(videos.empty()||!videoLevel)return;
+ P level=target(r,videoLevel),info=level?r.get<P>(level,"levelInformation"):nullptr;
+ if(!info||!r.get<bool>(info,"chartLoaded"))return;
+ double now=r.get<float>(progress,"nowTime");bool playing=r.get<bool>(progress,"isPlaying");
+ for(auto&v:videos){
+  if(v.failed||v.path.empty())continue;
+  try{
+   makeVideo(r,v);
+   if(!v.player||!r.unbox<bool>(r.call(v.player,"get_isPrepared")))continue;
+   double length=r.unbox<double>(r.call(v.player,"get_length")),time=now-v.start;
+   bool active=time>=0&&time<length;
+   double alpha=active?trackAt(v.tracks["alpha"],now,1):0,dim=trackAt(v.tracks["dim"],now,0);
+   Color color{(float)(1-dim),(float)(1-dim),(float)(1-dim),(float)alpha};
+   r.call(v.raw,"set_color",{"UnityEngine.Color"},{&color});
+   bool running=r.unbox<bool>(r.call(v.player,"get_isPlaying"));
+   if(active){
+    r.call(v.player,"set_externalReferenceTime",{"System.Double"},{&time});
+    if(playing&&!running){if(!v.begun){r.call(v.player,"set_time",{"System.Double"},{&time});v.begun=true;}r.call(v.player,"Play");}
+    else if(!playing&&running)r.call(v.player,"Pause");
+   }else if(running)r.call(v.player,"Pause");
+  }catch(const std::exception&e){v.failed=true;logf("RPE video update failed: %s",e.what());}
+ }
+}
+
+void inspectShaderExtensions(NSString*folder){
+ NSString*effects=[folder stringByAppendingPathComponent:@"effects.tsv"];
+ NSString*extensions=[folder stringByAppendingPathComponent:@"extensions"];
+ NSString*text=[NSString stringWithContentsOfFile:effects encoding:NSUTF8StringEncoding error:nil];
+ if(!text.length)return;
+ int declared=0,ranged=0,uniforms=0,keyframes=0,missing=0;
+ for(NSString*line in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]){
+  std::istringstream in(line.UTF8String?line.UTF8String:"");char tag;
+  if(!(in>>tag))continue;
+  if(tag=='F'){
+   int index,global;double start,end;std::string encoded;
+   if(!(in>>index>>global>>start>>end>>encoded)||index<0||index>=512)continue;
+   ++declared;
+   NSString*hex=[NSString stringWithUTF8String:encoded.c_str()];std::string bytes=hex?hexDecodePath(hex):std::string();
+   NSString*shader=bytes.empty()?nil:[NSString stringWithUTF8String:bytes.c_str()];
+   if([shader hasPrefix:@"/"]){
+    NSString*relative=[shader substringFromIndex:1];NSString*path=[[extensions stringByAppendingPathComponent:relative]stringByStandardizingPath];
+    if(![path hasPrefix:[extensions stringByAppendingString:@"/"]]||![NSFileManager.defaultManager fileExistsAtPath:path])++missing;
+   }
+  }else if(tag=='R'){++ranged;}
+  else if(tag=='A'){char kind;int index,size;std::string name;if((in>>kind>>index>>name>>size)&&kind=='F')++uniforms;}
+  else if(tag=='K'){char kind;int index,channel;std::string name;double a,b,c,d;if((in>>kind>>index>>name>>channel>>a>>b>>c>>d)&&kind=='F')++keyframes;}
+ }
+ if(declared){
+  logf("RPE shader extensions detected effects=%d uniforms=%d keyframes=%d targetRanges=%d missingSources=%d; source retained, iOS shader compositor unavailable",declared,uniforms,keyframes,ranged,missing);
+ }
 }
 void prepareLegacy(Runtime&r){clearLegacy();if(!PMSettingBool("legacyEffects"))return;try{P info=r.get<P>(r.mainGame(),"levelStartInfo");NSString*id=info?r.string(r.get<P>(info,"songsId")):nil;NSString*folder=id?[PMContentStore.shared asset:id]:nil;NSString*marker=folder?[folder stringByAppendingPathComponent:@"legacy-effect.txt"]:nil;NSString*value=marker?[NSString stringWithContentsOfFile:marker encoding:NSUTF8StringEncoding error:nil]:nil;if([value isEqualToString:@"yukifuri-2023-v1\n"]){legacyActive=true;PMDiagnosticsWrite("Legacy Yukifuri runtime enabled");}}catch(const std::exception&e){logf("Legacy effect prepare failed: %s",e.what());}}
 void updateLegacy(Runtime&r,P progress){
@@ -86,9 +272,9 @@ void updateLegacy(Runtime&r,P progress){
  if(now<phimod::legacy::nightmare+.8f&&!PMSettingBool("noCombo")){
   try{P info=r.get<P>(progress,"levelInformation");int total=r.get<int>(info,"numOfNotes");int perfect=r.get<int>(score,"perfect"),good=r.get<int>(score,"good"),combo=r.get<int>(score,"maxcombo");int display=(int)std::lround((900000.f*(perfect+.65f*good)+100000.f*combo)/std::max(1,total));char digits[16];snprintf(digits,sizeof(digits),"%07d",std::min(1000000,display));r.text(r.get<P>(score,"score"),digits);r.text(r.get<P>(score,"blockedScore"),digits);}catch(...) {}}
 }
-void levelBegin(Runtime&r,void*level){try{releaseRoots(r);loadSkin(r);}catch(const std::exception&e){logf("Skin runtime setup failed: %s",e.what());releaseRoots(r);}videos.clear();if(videoLevel){r.gchandle_free(videoLevel);videoLevel=0;}if(level)videoLevel=r.gchandle_new(level,false);prepareLegacy(r);}
-void levelEnd(Runtime&r){videos.clear();if(videoLevel){r.gchandle_free(videoLevel);videoLevel=0;}clearLegacy();releaseRoots(r);}
-void afterChart(Runtime&r,void*level){try{prepareVideos(r,level);}catch(const std::exception&e){logf("RPE video load failed: %s",e.what());}}
+void levelBegin(Runtime&r,void*level){clearVideos(r);if(videoLevel){r.gchandle_free(videoLevel);videoLevel=0;}try{releaseRoots(r);loadSkin(r);}catch(const std::exception&e){logf("Skin runtime setup failed: %s",e.what());releaseRoots(r);}if(level)videoLevel=r.gchandle_new(level,false);prepareLegacy(r);}
+void levelEnd(Runtime&r){clearVideos(r);if(videoLevel){r.gchandle_free(videoLevel);videoLevel=0;}clearLegacy();releaseRoots(r);}
+void afterChart(Runtime&r,void*level){try{prepareVideos(r,level);}catch(const std::exception&e){logf("RPE video load failed: %s",e.what());}try{P info=r.get<P>(r.mainGame(),"levelStartInfo");NSString*identifier=info?r.string(r.get<P>(info,"songsId")):nil;if(identifier.length)inspectShaderExtensions([NSString stringWithUTF8String:resourceFolder(identifier).c_str()]);}catch(const std::exception&e){logf("RPE shader metadata scan failed: %s",e.what());}}
 void observe(int rating){if(legacyActive)legacyJudge=rating==0?2:rating==1?1:0;}
 void noteMoved(Runtime&r,void*control,bool hold){try{P c=control;applyNote(r,c,hold);if(hold)adjustHold(r,c);}catch(const std::exception&e){logf("Skin note update failed: %s",e.what());}}
 void tick(Runtime&r,void*progress){try{updateVideos(r,progress);updateLegacy(r,progress);}catch(const std::exception&e){logf("Feature update failed: %s",e.what());}}

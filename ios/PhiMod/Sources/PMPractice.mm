@@ -195,7 +195,21 @@ bool updateRange(Runtime&r,const phimod::Options&changed){
  options.practiceStart=start;options.practiceEnd=end;options.practiceLoop=changed.practiceLoop;options.practiceCountdown=changed.practiceCountdown;
  segmentStart=start;segmentEnd=end;return true;
 }
-State state(Runtime&r){State s{};s.active=active;s.segment=segment;s.paused=segmentPaused;s.countdown=countdownActive;s.ended=segmentEnded;s.loop=options.practiceLoop;s.countIn=options.practiceCountdown;s.ready=active&&!entryPending&&segmentDuration>0;s.start=segmentStart;s.end=segmentEnd;s.duration=segmentDuration;s.cursor=segmentCursor;s.rate=options.playbackRate;s.effectiveRate=effectiveRate;P p=progressObject(r);if(p){s.cursor=r.get<float>(p,"nowTime");s.playing=r.get<bool>(p,"isPlaying");}return s;}
+State state(Runtime&r){
+ State s{};
+ s.active=active;s.segment=segment;s.countdown=countdownActive;s.ended=segmentEnded;
+ s.loop=options.practiceLoop;s.countIn=options.practiceCountdown;
+ s.ready=active&&!entryPending&&segmentDuration>0;
+ s.start=segmentStart;s.end=segmentEnd;s.duration=segmentDuration;s.cursor=segmentCursor;
+ s.rate=options.playbackRate;s.effectiveRate=effectiveRate;
+ P p=progressObject(r);
+ if(p){s.cursor=r.get<float>(p,"nowTime");s.playing=r.get<bool>(p,"isPlaying");}
+ // The transport UI follows this state. Prefer the live game state over a stale
+ // pause latch so it cannot remain visible after playback has actually resumed.
+ s.paused=segmentPaused&&!s.countdown&&!s.playing;
+ if(s.playing)s.ended=false;
+ return s;
+}
 bool command(Runtime&r,int action,float requestedRate,float requestedPosition){
  P progress=progressObject(r);if(!progress||!active||entryPending||r.get<bool>(progress,"leave")||r.get<bool>(progress,"levelBreak"))return false;
  if(action==8){P klass=r.klass("LevelInformation");r.runtime_class_init(klass);if(!flowCaptured){originalFlowSpeed=r.staticValue<float>(klass,"Speed","System.Single");flowCaptured=true;}float flow=PMSettingBool("noteFlowEnabled")?PMSettingFloat("noteFlow"):1;if(!std::isfinite(flow)||flow<0||flow>5)return false;r.setStaticValue<float>(klass,"Speed","System.Single",originalFlowSpeed*flow);return true;}
