@@ -13,6 +13,7 @@ static UIColor*PCColor(unsigned value){return [UIColor colorWithRed:((value>>16)
 @property(nonatomic,assign) NSInteger dragging;
 @property(nonatomic,assign) NSInteger pressedTransport;
 @property(nonatomic,assign) BOOL pressedFoldedControl;
+@property(nonatomic,assign) NSTimeInterval lastRateTap;
 @property(nonatomic,assign) double start;
 @property(nonatomic,assign) double end;
 @property(nonatomic,assign) double current;
@@ -22,7 +23,7 @@ static UIColor*PCColor(unsigned value){return [UIColor colorWithRed:((value>>16)
 @property(nonatomic,strong) NSString*errorText;
 @end
 @implementation PMPracticeControls
-- (instancetype)initWithFrame:(CGRect)frame {if((self=[super initWithFrame:frame])){self.backgroundColor=UIColor.clearColor;self.opaque=NO;self.hidden=YES;self.dragging=-1;self.pressedTransport=-1;self.pressedFoldedControl=NO;self.whiteUi=[[[PMSettings shared]value:@"practiceWhiteUi"]boolValue];self.accessibilityLabel=@"区间练习控制";__weak PMPracticeControls*weak=self;self.timer=[NSTimer timerWithTimeInterval:.1 repeats:YES block:^(NSTimer*t){[weak tick];}];[NSRunLoop.mainRunLoop addTimer:self.timer forMode:NSRunLoopCommonModes];}return self;}
+- (instancetype)initWithFrame:(CGRect)frame {if((self=[super initWithFrame:frame])){self.backgroundColor=UIColor.clearColor;self.opaque=NO;self.hidden=YES;self.dragging=-1;self.pressedTransport=-1;self.pressedFoldedControl=NO;self.lastRateTap=0;self.whiteUi=[[[PMSettings shared]value:@"practiceWhiteUi"]boolValue];self.accessibilityLabel=@"区间练习控制";__weak PMPracticeControls*weak=self;self.timer=[NSTimer timerWithTimeInterval:.1 repeat s:YES block:^(NSTimer*t){[weak tick];}];[NSRunLoop.mainRunLoop addTimer:self.timer forMode:NSRunLoopCommonModes];}return self;}
 - (void)dealloc{[self.timer invalidate];}
 - (NSString*)clockText:(double)value{value=MAX(0,value);NSInteger minutes=(NSInteger)(value/60);return [NSString stringWithFormat:@"%02ld:%05.2f",(long)minutes,value-minutes*60];}
 - (void)tick{[PMHookBackend contentPulse];NSDictionary*r=[PMHookBackend practiceStatus];NSDictionary*s=r[@"state"];BOOL paused=[s[@"paused"]boolValue],countdown=[s[@"countdown"]boolValue],ended=[s[@"ended"]boolValue];BOOL visible=[r[@"ok"]boolValue]&&[s[@"active"]boolValue]&&[s[@"segment"]boolValue]&&[s[@"ready"]boolValue]&&(countdown||paused||ended);BOOL hidden=self.hidden;self.hidden=!visible;if(!visible)return;self.state=s;if(hidden){self.folded=NO;self.pressedTransport=-1;}self.wasPaused=paused;if(self.dragging<0&&!self.pendingPreview){self.start=[s[@"start"]doubleValue];self.end=[s[@"end"]doubleValue];self.current=[s[@"cursor"]doubleValue];self.rate=[s[@"rate"]doubleValue];}self.duration=MAX(.01,[s[@"duration"]doubleValue]);self.flow=[[[PMSettings shared]value:@"noteFlow"]doubleValue];self.frame=self.superview.bounds;[self setNeedsDisplay];}
@@ -47,11 +48,61 @@ static UIColor*PCColor(unsigned value){return [UIColor colorWithRed:((value>>16)
 - (void)edit:(NSInteger)kind{UIViewController*p=self.window.rootViewController;while(p.presentedViewController)p=p.presentedViewController;NSArray*names=@[@"开始时间",@"结束时间",@"当前位置",@"播放倍速（0–5×）",@"音符流速（0–5×）"];UIAlertController*a=[UIAlertController alertControllerWithTitle:names[kind] message:kind<3?@"支持 秒 或 分:秒":@"1× 为默认" preferredStyle:UIAlertControllerStyleAlert];double value=kind==0?self.start:kind==1?self.end:kind==2?self.current:kind==3?self.rate:self.flow;[a addTextFieldWithConfigurationHandler:^(UITextField*f){f.text=kind<3?[self clockText:value]:[NSString stringWithFormat:@"%.2f",value];f.keyboardType=UIKeyboardTypeNumbersAndPunctuation;}];[a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];[a addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction*x){NSString*s=a.textFields.firstObject.text;NSArray*parts=[s componentsSeparatedByString:@":"];double n=parts.count==2?[parts[0]doubleValue]*60+[parts[1]doubleValue]:s.doubleValue;if(!std::isfinite(n)||n<0||n>(kind>=3?5:self.duration)){self.errorText=@"输入超出范围";return;}if(kind==0)self.start=MIN(n,self.end-.01);else if(kind==1)self.end=MAX(n,self.start+.01);else if(kind==2)self.current=n;else if(kind==3){self.rate=n;[self rateChanged];return;}else{[self put:@"noteFlowEnabled" value:@YES];[self put:@"noteFlow" value:@(n)];[self run:8];return;}self.dragging=kind;[self queuePreview];self.dragging=-1;}]];[p presentViewController:a animated:YES completion:nil];}
 - (NSInteger)transportAt:(CGPoint)p{CGFloat w=self.bounds.size.width,h=self.bounds.size.height;if(p.y<h*.49||p.y>h*.555||p.x<w*.1||p.x>w*.92||(!self.whiteUi&&p.x>w*.92))return -1;NSInteger i=(NSInteger)((p.x/w-.1)/.205);return i>=0&&i<4?i:-1;}
 - (void)activateTransport:(NSInteger)i{if(i==3){[self put:@"practiceLoop" value:@(![self.state[@"loop"]boolValue])];[self run:6];}else[self run:i==0?1:i==1?2:3];}
-- (void)touchesBegan:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event{CGPoint p=[touches.anyObject locationInView:self];CGFloat w=self.bounds.size.width,h=self.bounds.size.height,k=h/600;if(self.folded){self.folded=NO;self.pressedTransport=0;self.pressedFoldedControl=YES;[self setNeedsDisplay];return;}NSInteger transport=[self transportAt:p];if(transport>=0){self.pressedTransport=transport;self.pressedFoldedControl=NO;[self setNeedsDisplay];return;}
- if((!self.whiteUi&&p.x>w*.66&&p.x<w*.8&&p.y>h*.58&&p.y<h*.62)||(self.whiteUi&&p.x>w*.69&&p.y>h*.59&&p.y<h*.64)){self.whiteUi=!self.whiteUi;[self put:@"practiceWhiteUi" value:@(self.whiteUi)];[self setNeedsDisplay];return;}if(p.x>w*(self.whiteUi?.675:.46)&&p.x<w*(self.whiteUi?.89:.62)&&fabs(p.y-h*(self.whiteUi?.669:.603))<14*k){[self put:@"practiceCountdown" value:@(![self.state[@"countIn"]boolValue])];[self run:6];return;}
- if((self.whiteUi&&p.x>w*.675&&p.y<h*.58)||(!self.whiteUi&&p.x>w*.12&&p.x<w*.29&&p.y>h*.83)){[self edit:self.whiteUi?(p.y<h*.515?3:4):(p.y<h*.885?3:4)];return;}
- if(p.y>h*.85){if(p.x<w*.59)[self edit:0];else[self edit:1];return;}double values[]={self.start,self.end,self.current};CGFloat ys[]={self.whiteUi?h*.71-36*k:h*.725-27*k,self.whiteUi?h*.81+36*k:h*.725+27*k,self.whiteUi?h*.76:h*.725};double best=1e99;NSInteger index=2;for(int i=0;i<3;++i){double dx=p.x-[self x:values[i]],dy=p.y-ys[i],d=dx*dx+dy*dy;if(d<best){best=d;index=i;}}self.dragging=index;[self touchesMoved:touches withEvent:event];}
-- (void)touchesMoved:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event{if(self.dragging<0)return;CGPoint p=[touches.anyObject locationInView:self];double n=MAX(0,MIN(self.duration,(p.x/self.bounds.size.width-(self.whiteUi?.15:.34))/(self.whiteUi?.70:.55)*self.duration));if(self.dragging==0)self.start=MIN(n,self.end-.01);else if(self.dragging==1)self.end=MAX(n,self.start+.01);else self.current=n;[self queuePreview];[self setNeedsDisplay];}
-- (void)touchesEnded:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event{NSInteger pending=self.pressedTransport;BOOL foldedTap=self.pressedFoldedControl;self.pressedTransport=-1;self.pressedFoldedControl=NO;if(pending>=0){CGPoint p=[touches.anyObject locationInView:self];if(foldedTap||[self transportAt:p]==pending)[self activateTransport:pending];}[self scrubEnd];[self setNeedsDisplay];}
+- (void)touchesBegan:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event{
+    CGPoint p=[touches.anyObject locationInView:self];
+    CGFloat w=self.bounds.size.width,h=self.bounds.size.height,k=h/600;
+    if(self.folded){self.folded=NO;self.pressedTransport=0;self.pressedFoldedControl=YES;[self setNeedsDisplay];return;}
+    NSInteger transport=[self transportAt:p];
+    if(transport>=0){self.pressedTransport=transport;self.pressedFoldedControl=NO;[self setNeedsDisplay];return;}
+    // 倍速/流速：单击拖动、300ms 内双击弹输入框（修复"点击即弹输入框"问题）
+    CGFloat rateLeft=w*(self.whiteUi?.675:.13),rateRight=w*(self.whiteUi?.925:.278);
+    CGFloat rateY=h*(self.whiteUi?.475:.86),flowY=h*(self.whiteUi?.555:.915);
+    if(p.x>=rateLeft&&p.x<=rateRight&&fabs(p.y-rateY)<=14*k){
+        NSTimeInterval now=[NSDate timeIntervalSinceReferenceDate];
+        if(now-self.lastRateTap<0.3){self.lastRateTap=0;[self edit:3];return;}
+        self.lastRateTap=now;self.dragging=3;[self touchesMoved:touches withEvent:event];return;
+    }
+    if(p.x>=rateLeft&&p.x<=rateRight&&fabs(p.y-flowY)<=14*k){
+        NSTimeInterval now=[NSDate timeIntervalSinceReferenceDate];
+        if(now-self.lastRateTap<0.3){self.lastRateTap=0;[self edit:4];return;}
+        self.lastRateTap=now;self.dragging=4;[self touchesMoved:touches withEvent:event];return;
+    }
+    if((!self.whiteUi&&p.x>w*.66&&p.x<w*.8&&p.y>h*.58&&p.y<h*.62)||(self.whiteUi&&p.x>w*.69&&p.y>h*.59&&p.y<h*.64)){self.whiteUi=!self.whiteUi;[self put:@"practiceWhiteUi" value:@(self.whiteUi)];[self setNeedsDisplay];return;}
+    if(p.x>w*(self.whiteUi?.675:.46)&&p.x<w*(self.whiteUi?.89:.62)&&fabs(p.y-h*(self.whiteUi?.669:.603))<14*k){[self put:@"practiceCountdown" value:@(![self.state[@"countIn"]boolValue])];[self run:6];return;}
+    if(p.y>h*.85){if(p.x<w*.59)[self edit:0];else[self edit:1];return;}
+    double values[]={self.start,self.end,self.current};
+    CGFloat ys[]={self.whiteUi?h*.71-36*k:h*.725-27*k,self.whiteUi?h*.81+36*k:h*.725+27*k,self.whiteUi?h*.76:h*.725};
+    double best=1e99;NSInteger index=2;
+    for(int i=0;i<3;++i){double dx=p.x-[self x:values[i]],dy=p.y-ys[i],d=dx*dx+dy*dy;if(d<best){best=d;index=i;}}
+    self.dragging=index;[self touchesMoved:touches withEvent:event];
+}
+- (void)touchesMoved:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event{
+    if(self.dragging<0)return;
+    CGPoint p=[touches.anyObject locationInView:self];
+    if(self.dragging==3||self.dragging==4){
+        CGFloat left=self.bounds.size.width*(self.whiteUi?.675:.13);
+        CGFloat right=self.bounds.size.width*(self.whiteUi?.925:.278);
+        double n=MAX(0,MIN(5,(p.x-left)/(right-left)*5));
+        if(self.dragging==3)self.rate=n;else self.flow=n;
+        [self setNeedsDisplay];
+        return;
+    }
+    double n=MAX(0,MIN(self.duration,(p.x/self.bounds.size.width-(self.whiteUi?.15:.34))/(self.whiteUi?.70:.55)*self.duration));
+    if(self.dragging==0)self.start=MIN(n,self.end-.01);
+    else if(self.dragging==1)self.end=MAX(n,self.start+.01);
+    else self.current=n;
+    [self queuePreview];
+    [self setNeedsDisplay];
+}
+- (void)touchesEnded:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event{
+    NSInteger pending=self.pressedTransport;BOOL foldedTap=self.pressedFoldedControl;
+    NSInteger dragKind=self.dragging;
+    self.pressedTransport=-1;self.pressedFoldedControl=NO;
+    if(pending>=0){CGPoint p=[touches.anyObject locationInView:self];if(foldedTap||[self transportAt:p]==pending)[self activateTransport:pending];}
+    if(dragKind==3)[self rateChanged];
+    else if(dragKind==4){[self put:@"noteFlowEnabled" value:@YES];[self put:@"noteFlow" value:@(self.flow)];[self run:8];}
+    [self scrubEnd];
+    [self setNeedsDisplay];
+}
 - (void)touchesCancelled:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event{self.dragging=-1;self.pressedTransport=-1;self.pressedFoldedControl=NO;[self setNeedsDisplay];}
 @end

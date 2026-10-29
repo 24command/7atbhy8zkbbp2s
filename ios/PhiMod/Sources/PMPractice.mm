@@ -60,9 +60,6 @@ void prepareRange(Runtime&r,P progress,float current){
  int skippedNotes=pmpracticepreview::reset(r,progress,current);
  clearControllers(r,manager);
  int noteCount=r.count(notes);if(noteCount<0||noteCount>200000)throw std::runtime_error("Practice chart note count invalid");
- // Old note objects are marked judged and counted as misses by reset(); leave
- // NoteUpdateManager.i alone because the game uses it as a per-list iteration
- // scratch variable, not a chart-note cursor.
  r.put(judge,"startIndex",0);r.put(judge,"endIndex",0);
  PMDiagnosticsWrite((std::string("Practice range positioned cursor=")+std::to_string(current)+" skipped="+std::to_string(skippedNotes)+" total="+std::to_string(noteCount)).c_str());
  P lines=r.get<P>(judge,"judgeLineControls");int lineCount=r.count(lines);if(lineCount<0||lineCount>10000)throw std::runtime_error("Practice judge-line count invalid");
@@ -71,7 +68,6 @@ void prepareRange(Runtime&r,P progress,float current){
  for(const char*field:{"perfect","good","bad","miss","early","late","_combo","maxcombo"})r.put(score,field,0);
  r.put(score,"_score",0.f);r.put(score,"_percent",0.f);r.put(score,"miss",skippedNotes);r.put(score,"isAllPerfect",skippedNotes==0);r.put(score,"isFullCombo",skippedNotes==0);r.put(score,"scoreFrozen",false);
  r.call(score,"SetNoteCodeList");
- // SetNoteCodeList resets counters on this UUID; restore the range's initial misses afterward.
  if(skippedNotes>0){r.put(score,"miss",skippedNotes);r.put(score,"isAllPerfect",false);r.put(score,"isFullCombo",false);}
  if(segmentEnd<=segmentStart)throw std::runtime_error("Practice range end must exceed start");
  segmentCursor=std::clamp(current,segmentStart,segmentEnd);segmentEnded=false;
@@ -79,21 +75,28 @@ void prepareRange(Runtime&r,P progress,float current){
  r.put(progress,"_playPrepared",false);r.put(progress,"_volumeSet",false);
 }
 void resumeAt(Runtime&r,P progress,float current,bool handoff=false){
- if(!handoff)prepareRange(r,progress,current);
- P info=r.get<P>(progress,"levelInformation"),judge=r.get<P>(progress,"judgeControl"),source=sourceObject(r);
- bool yes=true,no=false;bool restartAudio=!handoff||!countdownAudio;
- if(handoff){clearControllers(r,r.get<P>(judge,"noteUpdateManager"));P lines=r.get<P>(judge,"judgeLineControls");for(int i=0,n=r.count(lines);i<n;++i){P line=r.at(lines,i);for(const char*name:{"nowProductIndexAbove","nowProductIndexBelow"})r.put(line,name,0);r.put(line,"lastProductIndexAbove",-1);r.put(line,"lastProductIndexBelow",-1);}}
- r.call(progress,"Play",{"System.Boolean"},{&yes});
- float clipAt=std::max(0.f,current+clipOffset(r,progress));
- if(restartAudio&&source){r.call(source,"Seek",{"System.Single"},{&clipAt});r.call(source,"Play");float volume=r.get<float>(info,"musicVol");r.call(source,"set_Volume",{"System.Single"},{&volume});}
- r.put(progress,"nowTime",current);r.put(progress,"audioTime",clipAt);
- float timeSinceLoad=r.unbox<float>(r.stat(r.type("UnityEngine","Time"),"get_timeSinceLevelLoad"));
- r.put(progress,"_startTime",timeSinceLoad);r.put(progress,"_playPrepared",yes);r.put(progress,"_volumeSet",yes);r.put(progress,"isPlaying",yes);
- r.put(info,"levelOver",no);r.put(info,"canLevelOver",no);r.put(info,"canPause",yes);r.put(judge,"stopJudge",no);
- P pauseBar=r.get<P>(progress,"pauseBar");if(r.alive(pauseBar))r.call(pauseBar,"SetActive",{"System.Boolean"},{&no});
- segmentPaused=false;segmentEnded=false;segmentCursor=current;countdownActive=countdownAudio=false;
- if(restartAudio){anchorNative=clipAt;anchorClip=clipAt;lastNative=clipAt;anchorReady=true;}
- PMDiagnosticsWrite(handoff?"Practice countdown handed off to gameplay":"Practice segment playback resumed");
+ // 保存原状态，任何一步抛异常都恢复，避免 segmentPaused 卡在 true 导致 UI 不消失
+ bool previousPaused=segmentPaused,previousEnded=segmentEnded;
+ try{
+  if(!handoff)prepareRange(r,progress,current);
+  P info=r.get<P>(progress,"levelInformation"),judge=r.get<P>(progress,"judgeControl"),source=sourceObject(r);
+  bool yes=true,no=false;bool restartAudio=!handoff||!countdownAudio;
+  if(handoff){clearControllers(r,r.get<P>(judge,"noteUpdateManager"));P lines=r.get<P>(judge,"judgeLineControls");for(int i=0,n=r.count(lines);i<n;++i){P line=r.at(lines,i);for(const char*name:{"nowProductIndexAbove","nowProductIndexBelow"})r.put(line,name,0);r.put(line,"lastProductIndexAbove",-1);r.put(line,"lastProductIndexBelow",-1);}}
+  r.call(progress,"Play",{"System.Boolean"},{&yes});
+  float clipAt=std::max(0.f,current+clipOffset(r,progress));
+  if(restartAudio&&source){r.call(source,"Seek",{"System.Single"},{&clipAt});r.call(source,"Play");float volume=r.get<float>(info,"musicVol");r.call(source,"set_Volume",{"System.Single"},{&volume});}
+  r.put(progress,"nowTime",current);r.put(progress,"audioTime",clipAt);
+  float timeSinceLoad=r.unbox<float>(r.stat(r.type("UnityEngine","Time"),"get_timeSinceLevelLoad"));
+  r.put(progress,"_startTime",timeSinceLoad);r.put(progress,"_playPrepared",yes);r.put(progress,"_volumeSet",yes);r.put(progress,"isPlaying",yes);
+  r.put(info,"levelOver",no);r.put(info,"canLevelOver",no);r.put(info,"canPause",yes);r.put(judge,"stopJudge",no);
+  P pauseBar=r.get<P>(progress,"pauseBar");if(r.alive(pauseBar))r.call(pauseBar,"SetActive",{"System.Boolean"},{&no});
+  segmentPaused=false;segmentEnded=false;segmentCursor=current;countdownActive=countdownAudio=false;
+  if(restartAudio){anchorNative=clipAt;anchorClip=clipAt;lastNative=clipAt;anchorReady=true;}
+  PMDiagnosticsWrite(handoff?"Practice countdown handed off to gameplay":"Practice segment playback resumed");
+ }catch(...){
+  segmentPaused=previousPaused;segmentEnded=previousEnded;
+  throw;
+ }
 }
 void startAt(Runtime&r,P progress,float current){
  current=std::clamp(current,segmentStart,std::max(segmentStart,segmentEnd-.01f));
@@ -154,7 +157,17 @@ bool beforeProgress(Runtime&r,P progress){
  if(segmentPaused&&r.get<bool>(progress,"isPlaying")){startAt(r,progress,segmentEnded?segmentStart:segmentCursor);return countdownActive;}
  if(!segmentPaused&&!r.get<bool>(progress,"isPlaying")&&r.get<bool>(info,"chartLoaded")){
   P pauseBar=r.get<P>(progress,"pauseBar");bool nativePause=r.alive(pauseBar)&&r.unbox<bool>(r.call(pauseBar,"get_activeSelf"));
-  if(nativePause){pauseAt(r,progress,r.get<float>(progress,"nowTime"),false);return true;}
+  if(nativePause){
+   // resumeAt 刚把 isPlaying 置为 true，但游戏的 pauseBar 可能还没消化完。
+   // 先尝试让 pauseBar 同步退出；若同帧内 isPlaying 仍为 false，下一帧才真正暂停，
+   // 否则练习 UI 会因为 segmentPaused=true 而永远显示。
+   bool no=false;
+   try{r.call(pauseBar,"SetActive",{"System.Boolean"},{&no});}catch(const std::exception&){}
+   if(!r.get<bool>(progress,"isPlaying")){
+    pauseAt(r,progress,r.get<float>(progress,"nowTime"),false);
+    return true;
+   }
+  }
  }
  if(!segmentPaused)return false;
  r.put(progress,"nowTime",segmentCursor);r.put(progress,"audioTime",std::max(0.f,segmentCursor+clipOffset(r,progress)));return true;
@@ -204,8 +217,6 @@ State state(Runtime&r){
  s.rate=options.playbackRate;s.effectiveRate=effectiveRate;
  P p=progressObject(r);
  if(p){s.cursor=r.get<float>(p,"nowTime");s.playing=r.get<bool>(p,"isPlaying");}
- // The transport UI follows this state. Prefer the live game state over a stale
- // pause latch so it cannot remain visible after playback has actually resumed.
  s.paused=segmentPaused&&!s.countdown&&!s.playing;
  if(s.playing)s.ended=false;
  return s;
@@ -227,7 +238,21 @@ bool command(Runtime&r,int action,float requestedRate,float requestedPosition){
  P source=sourceObject(r);if(segmentDuration<=0)segmentDuration=std::max(0.f,r.unbox<float>(r.call(source,"get_ClipLength"))-clipOffset(r,progress));
  if(segmentEnd<0||segmentEnd>segmentDuration)segmentEnd=segmentDuration;
  if(action==0){startAt(r,progress,segmentStart);return true;}
- if(action==1){if(countdownActive){pauseAt(r,progress,r.get<float>(progress,"nowTime"),false);}else if(segmentPaused){startAt(r,progress,segmentEnded?segmentStart:segmentCursor);}else{float now=r.get<float>(progress,"nowTime");pauseAt(r,progress,now,false);}return true;}
+ if(action==1){
+  if(countdownActive){
+   pauseAt(r,progress,r.get<float>(progress,"nowTime"),false);
+  }else if(segmentPaused){
+   // 先清除暂停标志，再启动播放；若 startAt 中途抛异常，恢复暂停状态以便重试
+   float target=segmentEnded?segmentStart:segmentCursor;
+   segmentPaused=false;segmentEnded=false;
+   try{startAt(r,progress,target);}
+   catch(...){segmentPaused=true;throw;}
+  }else{
+   float now=r.get<float>(progress,"nowTime");
+   pauseAt(r,progress,now,false);
+  }
+  return true;
+ }
  if(action==2){startAt(r,progress,segmentStart);return true;}
  if(action==3){segmentStart=0;segmentEnd=segmentDuration;segment=false;restartPending=true;resumeAt(r,progress,0);r.put(info,"canLevelOver",true);return true;}
  if(action==7){if(!std::isfinite(requestedPosition)||requestedPosition<0)return false;float cursor=std::clamp(requestedPosition,0.f,std::max(0.f,segmentDuration-.01f));prepareRange(r,progress,cursor);P audio=sourceObject(r);float clip=std::max(0.f,cursor+clipOffset(r,progress));r.call(audio,"Seek",{"System.Single"},{&clip});pauseAt(r,progress,cursor,false);restartPending=true;return true;}
