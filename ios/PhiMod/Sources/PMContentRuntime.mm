@@ -22,7 +22,13 @@ NSDictionary*officialCache=nil;
 NSDictionary*baseline=nil;NSArray*originalChapters=nil;NSDictionary*currentChart=nil;NSString*resourceSubdir=@"";
 std::map<P,uint32_t>textures;std::map<std::string,uint32_t>assets;std::map<P,std::string>refs;std::map<std::string,int>users;
 std::map<std::string,std::map<int,NSDictionary*>>variants;std::map<P,NSDictionary*>extras;std::map<P,V3>noteScales,lineScales;std::map<int,uint32_t>decorText,decorImage;
-struct Fake{NSDictionary*note;int line;bool below;};std::vector<Fake>fakeNotes;std::map<int,std::vector<phimod::RpeFloorSegment>>sourceFloors;std::map<size_t,std::pair<uint32_t,uint32_t>>fakeHoldEnds;std::map<size_t,uint32_t>fakeRenderers;std::map<size_t,V3>fakeScales;std::map<size_t,double>fakeRetryAt;std::set<size_t>failedFakes;std::vector<uint32_t>visualRoots;
+struct Fake{NSDictionary*note;int line;bool below;double start,end;};
+struct FakeVisualCache{P transform=nullptr;P capTransforms[2]{};Bounds bounds{};bool shown=false;bool capShown[2]{false,false};bool colorSet=false,scaleSet=false;Color color{};V3 scale{};};
+std::map<size_t,FakeVisualCache>fakeVisualCache;
+std::vector<size_t>fakeSchedule;std::set<size_t>activeFakes;size_t fakeCursor=0;bool fakeScheduleReady=false;double fakeLastTime=0;
+struct ControlPoint{double x,value;int easing;};
+std::map<NSArray*,std::vector<ControlPoint>>controlCache;
+std::vector<Fake>fakeNotes;std::map<int,std::vector<phimod::RpeFloorSegment>>sourceFloors;std::map<size_t,std::pair<uint32_t,uint32_t>>fakeHoldEnds;std::map<size_t,uint32_t>fakeRenderers;std::map<size_t,V3>fakeScales;std::map<size_t,double>fakeRetryAt;std::set<size_t>failedFakes;std::vector<uint32_t>visualRoots;
 // Engine-provided baseline sortingOrder per judge line, so pmDecor.zOrder=0
 // never sinks a custom-chart line behind the background.
 std::map<P,int>lineBaseOrder;
@@ -121,7 +127,7 @@ P audio(Runtime&r,NSString*path){
  }catch(...){r.gchandle_free(clipRoot);throw;}
 }
 NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=key.lowercaseString;*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":@"image";return id;}
-void clearVisuals(Runtime&r){for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();fakeNotes.clear();fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();failedFakes.clear();currentChart=nil;}
+void clearVisuals(Runtime&r){for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();failedFakes.clear();currentChart=nil;}
 void applyCachedChapterCover(Runtime&r,P card,const char*codeField,const char*loaderField){
  NSString*code=r.string(r.get<P>(card,codeField));if(!code.length)return;auto found=assets.find(code.UTF8String);if(found==assets.end())return;P sprite=target(r,found->second);if(!r.alive(sprite))return;
  P loader=r.get<P>(card,loaderField);if(!r.alive(loader))return;bool changed=false;
@@ -297,7 +303,22 @@ namespace {
 double scalar(id value,double fallback=0){return [value respondsToSelector:@selector(doubleValue)]?[value doubleValue]:fallback;}
 phimod::rpe::Event visualEvent(NSDictionary*v,int channel=-1){phimod::rpe::Event e;e.s=scalar(v[@"startTime"]);e.e=scalar(v[@"endTime"]);id a=v[@"start"],b=v[@"end"];if(channel>=0){a=[a isKindOfClass:NSArray.class]&&[a count]>channel?a[channel]:@255;b=[b isKindOfClass:NSArray.class]&&[b count]>channel?b[channel]:@255;}e.a=scalar(a);e.b=scalar(b);if(channel>=0){e.a/=255;e.b/=255;}e.easing=(int)scalar(v[@"easingType"],1);e.left=scalar(v[@"easingLeft"],0);e.right=scalar(v[@"easingRight"],1);NSArray*p=v[@"bezierPoints"];if([v[@"bezier"] boolValue]&&p.count==4){e.bezier=true;for(int i=0;i<4;++i)e.points[i]=scalar(p[i]);}return e;}
 double trackValue(NSArray*a,double now,double fallback,int channel=-1){NSDictionary*last=nil;for(NSDictionary*v in a){if(scalar(v[@"startTime"])<=now)last=v;else break;}return last?visualEvent(last,channel).value(now):fallback;}
-double control(NSDictionary*d,NSString*key,double distance){NSArray*points=d[key];if(!points.count)return 1;NSString*value=[key substringToIndex:key.length-7];NSArray*sorted=[points sortedArrayUsingComparator:^NSComparisonResult(id a,id b){double x=scalar(a[@"x"]),y=scalar(b[@"x"]);return x<y?NSOrderedAscending:x>y?NSOrderedDescending:NSOrderedSame;}];if(distance<=scalar(sorted[0][@"x"]))return scalar(sorted[0][value],1);for(NSUInteger i=1;i<sorted.count;++i){NSDictionary*a=sorted[i-1],*b=sorted[i];double x=scalar(a[@"x"]),end=scalar(b[@"x"]);if(distance<=end){double q=end>x?(distance-x)/(end-x):1;return scalar(a[value],1)+(scalar(b[value],1)-scalar(a[value],1))*phimod::rpe::ease((int)scalar(b[@"easing"],1),q);}}return scalar(sorted.lastObject[value],1);}
+double control(NSDictionary*d,NSString*key,double distance){
+ NSArray*points=d[key];if(!points.count)return 1;
+ auto found=controlCache.find(points);
+ if(found==controlCache.end()){
+  NSString*value=[key substringToIndex:key.length-7];std::vector<ControlPoint>cached;cached.reserve(points.count);
+  for(NSDictionary*p in points)cached.push_back({scalar(p[@"x"]),scalar(p[value],1),(int)scalar(p[@"easing"],1)});
+  std::stable_sort(cached.begin(),cached.end(),[](const auto&a,const auto&b){return a.x<b.x;});
+  found=controlCache.emplace(points,std::move(cached)).first;
+ }
+ const auto&track=found->second;
+ if(distance<=track.front().x)return track.front().value;
+ auto next=std::lower_bound(track.begin(),track.end(),distance,[](const auto&p,double x){return p.x<x;});
+ if(next==track.end())return track.back().value;
+ const auto&a=*(next-1);const auto&b=*next;double q=b.x>a.x?(distance-a.x)/(b.x-a.x):1;
+ return a.value+(b.value-a.value)*phimod::rpe::ease(b.easing,q);
+}
 P addComponent(Runtime&r,P go,P type){return r.call(go,"AddComponent",{"System.Type"},{r.type_get_object(r.class_get_type(type))});}
 P graphic(Runtime&r,P go){P list=r.children(go,r.type("UnityEngine","SpriteRenderer"));return list&&r.array_length(list)?r.arrayAt(list,0):nullptr;}
 float floor(Runtime&r,P info,int index){P a=r.get<P>(info,"floorPositions");return a&&index>=0&&uintptr_t(index)<r.array_length(a)?r.unbox<float>(r.arrayAt(a,index)):0;}
@@ -323,20 +344,38 @@ void visuals(Runtime&r,P progress){
  }
  // Fake notes are independent SpriteRenderers: never native score/judgement
  // controllers. Only the local 8-second window is allocated.
- if(fakeNotes.empty()){for(NSUInteger li=0;li<data.count;++li)for(NSString*side in @[@"notesAbove",@"notesBelow"])for(NSDictionary*n in data[li][side])if([n[@"pmFake"] boolValue])fakeNotes.push_back({n,(int)li,[side isEqualToString:@"notesBelow"]});}
- for(size_t i=0;i<fakeNotes.size();++i){
- if(fakeRetryAt.count(i)&&NSDate.timeIntervalSinceReferenceDate<fakeRetryAt[i])continue;
- auto&f=fakeNotes[i];
- float start=scalar(f.note[@"pmTime"],scalar(f.note[@"time"])/64);
- float length=scalar(f.note[@"pmDuration"]);
- bool visible=f.line<total && now<start+((int)scalar(f.note[@"type"])==3?length:0) && now>=start-8;
- P renderer=target(r,fakeRenderers.count(i)?fakeRenderers[i]:0);
- if(!visible){
-  if(renderer){bool no=false;r.call(renderer,"set_enabled",{"System.Boolean"},{&no});}
-  auto ends=fakeHoldEnds.find(i);if(ends!=fakeHoldEnds.end())for(uint32_t h:{ends->second.first,ends->second.second}){P sr=target(r,h);if(r.alive(sr)){bool no=false;r.call(sr,"set_enabled",{"System.Boolean"},{&no});}}
-  continue;
+ if(!fakeScheduleReady){
+  for(NSUInteger li=0;li<data.count;++li)for(NSString*side in @[@"notesAbove",@"notesBelow"])for(NSDictionary*n in data[li][side])if([n[@"pmFake"] boolValue]){
+   double start=scalar(n[@"pmTime"],scalar(n[@"time"])/64);
+   double end=start+((int)scalar(n[@"type"])==3?scalar(n[@"pmDuration"]):0);
+   fakeSchedule.push_back(fakeNotes.size());fakeNotes.push_back({n,(int)li,[side isEqualToString:@"notesBelow"],start,end});
+  }
+  std::stable_sort(fakeSchedule.begin(),fakeSchedule.end(),[](size_t a,size_t b){return fakeNotes[a].start<fakeNotes[b].start;});
+  fakeScheduleReady=true;
  }
- P line=r.at(lineList,f.line);
+ auto hideFake=[&](size_t i){
+  auto visual=fakeVisualCache.find(i);if(visual==fakeVisualCache.end()||!visual->second.shown)return;
+  bool no=false;P renderer=target(r,fakeRenderers.at(i));r.call(renderer,"set_enabled",{"System.Boolean"},{&no});visual->second.shown=false;
+  auto ends=fakeHoldEnds.find(i);if(ends!=fakeHoldEnds.end())for(int k=0;k<2;++k)if(visual->second.capShown[k]){
+   P sr=target(r,k?ends->second.second:ends->second.first);r.call(sr,"set_enabled",{"System.Boolean"},{&no});visual->second.capShown[k]=false;
+  }
+ };
+ // A practice seek/repeat rebuilds the window once; normal frames visit only
+ // notes whose existing eight-second visibility window has begun.
+ if(now<fakeLastTime){for(size_t i:activeFakes)hideFake(i);activeFakes.clear();fakeCursor=0;}
+ fakeLastTime=now;
+ while(fakeCursor<fakeSchedule.size()&&fakeNotes[fakeSchedule[fakeCursor]].start-8<=now){size_t i=fakeSchedule[fakeCursor++];if(now<fakeNotes[i].end)activeFakes.insert(i);}
+ for(auto it=activeFakes.begin();it!=activeFakes.end();){if(now>=fakeNotes[*it].end){hideFake(*it);it=activeFakes.erase(it);}else ++it;}
+ if(activeFakes.empty())return;
+ float worldSpeed=r.staticValue<float>(r.klass("LevelInformation"),"Speed","System.Single");
+ double retryClock=NSDate.timeIntervalSinceReferenceDate;
+ std::map<int,double>frameFloors;std::map<int,P>frameLines;
+ for(size_t i:activeFakes){
+ auto retry=fakeRetryAt.find(i);if(retry!=fakeRetryAt.end()&&retryClock<retry->second)continue;
+ auto&f=fakeNotes[i];double start=f.start;
+ if(f.line>=total)continue;
+ auto renderEntry=fakeRenderers.find(i);P renderer=renderEntry==fakeRenderers.end()?nullptr:target(r,renderEntry->second);
+ auto lineEntry=frameLines.find(f.line);if(lineEntry==frameLines.end())lineEntry=frameLines.emplace(f.line,r.at(lineList,f.line)).first;P line=lineEntry->second;
  if(!renderer){
   P go=nullptr;std::vector<P>created;std::vector<uint32_t>newHandles;
   try{
@@ -380,6 +419,7 @@ void visuals(Runtime&r,P progress){
     r.call(transform,"SetParent",{"UnityEngine.Transform","System.Boolean"},{owner,&no});
     P sr=addComponent(r,obj,r.type("UnityEngine","SpriteRenderer"));
     r.call(sr,"set_sprite",{"UnityEngine.Sprite"},{sprite});
+    r.call(sr,"set_enabled",{"System.Boolean"},{&no});
     r.call(sr,"set_sortingLayerID",{"System.Int32"},{&sortingLayer});
     r.call(sr,"set_sortingOrder",{"System.Int32"},{&order});
     if(r.alive(sourceRenderer)){P material=r.call(sourceRenderer,"get_sharedMaterial");if(material)r.call(sr,"set_sharedMaterial",{"UnityEngine.Material"},{material});}
@@ -396,6 +436,11 @@ void visuals(Runtime&r,P progress){
     tail=r.gchandle_new(tailRenderer,false);newHandles.push_back(tail);
    }
    uint32_t body=r.gchandle_new(renderer,false);newHandles.push_back(body);
+   FakeVisualCache cached;cached.transform=tr;
+   if(type==3){cached.bounds=r.unbox<Bounds>(r.call(sprites[0],"get_bounds"));cached.capTransforms[0]=r.call(target(r,head),"get_transform");cached.capTransforms[1]=r.call(target(r,tail),"get_transform");
+    for(int k=0;k<2;++k){V3 cp{0,cached.bounds.center.y+(k?cached.bounds.extents.y:-cached.bounds.extents.y),0};r.call(cached.capTransforms[k],"set_localPosition",{"UnityEngine.Vector3"},{&cp});}
+   }
+   fakeVisualCache[i]=cached;
    fakeScales[i]=base;if(type==3)fakeHoldEnds[i]={head,tail};fakeRenderers[i]=body;
    bool report=i<8||failedFakes.count(i);fakeRetryAt.erase(i);failedFakes.erase(i);
    if(report)log([NSString stringWithFormat:@"Fake note %zu ready type=%d scale=(%.5f,%.5f) nativeFactor=%.5f",i,type,base.x,base.y,factor]);
@@ -408,44 +453,54 @@ void visuals(Runtime&r,P progress){
   }
  }
 
- float worldSpeed=r.staticValue<float>(r.klass("LevelInformation"),"Speed","System.Single");
- // floorPositions 的索引是 JudgeLineControl.index，不是 judgeLineList 数组位置
- int lineIndex=r.get<int>(line,"index");
- double currentFloor=sourceFloor(f.line,now,floor(r,info,lineIndex));
+ auto floorEntry=frameFloors.find(f.line);
+ if(floorEntry==frameFloors.end()){
+  // Avoid managed array reads when the source speed track is available.
+  auto source=sourceFloors.find(f.line);double value;
+  if(source!=sourceFloors.end()&&!source->second.empty())value=phimod::rpeFloor(source->second,now,0);
+  else{int lineIndex=r.get<int>(line,"index");value=floor(r,info,lineIndex);}
+  floorEntry=frameFloors.emplace(f.line,value).first;
+ }
+ double currentFloor=floorEntry->second;
+ auto&visual=fakeVisualCache.at(i);
  bool isHold=(int)scalar(f.note[@"type"])==3;
  NSDictionary*decor=data[f.line][@"pmDecor"];
  double distance=(scalar(f.note[@"floorPosition"])-currentFloor)*rpeFloorToDistance+scalar(f.note[@"pmYOffset"]);
  auto geometry=rpeGeometry(scalar(f.note[@"floorPosition"])-currentFloor,scalar(f.note[@"pmEndFloor"],scalar(f.note[@"floorPosition"]))-currentFloor,0,scalar(f.note[@"pmRawSpeed"],1),scalar(f.note[@"pmYOffset"]),control(decor,@"yControl",distance),worldSpeed,isHold&&now>=start);
  V3 position{(float)(scalar(f.note[@"positionX"])*control(decor,@"posControl",distance)),f.below?-geometry.head:geometry.head,0};
- P tr=r.call(renderer,"get_transform");
+ P tr=visual.transform;
  float sizeX=scalar(f.note[@"pmSize"],1)*control(decor,@"sizeControl",distance);
  if(!std::isfinite(sizeX))sizeX=1;
  // Preserve native prefab aspect; RPE size changes only note width.
  V3 size=fakeScales.at(i);size.x*=sizeX;
  if(isHold){
-  P sprite=r.call(renderer,"get_sprite");Bounds bounds=r.unbox<Bounds>(r.call(sprite,"get_bounds"));
+  const Bounds&bounds=visual.bounds;
   if(bounds.extents.y>0.00001f){
    auto layout=rpeHoldLayout(geometry,bounds.extents.y*2,bounds.center.y-bounds.extents.y,f.below);
    size.y=layout.scale;position.y=layout.origin;
    auto ends=fakeHoldEnds.find(i);
-   if(ends!=fakeHoldEnds.end())for(int k=0;k<2;++k){P sr=target(r,k?ends->second.second:ends->second.first);if(!r.alive(sr))continue;
-    P ct=r.call(sr,"get_transform");V3 cs{1,.22f/std::fabs(size.y),1},cp{0,bounds.center.y+(k?bounds.extents.y:-bounds.extents.y),0};
-    r.call(ct,"set_localScale",{"UnityEngine.Vector3"},{&cs});r.call(ct,"set_localPosition",{"UnityEngine.Vector3"},{&cp});
+   if(ends!=fakeHoldEnds.end())for(int k=0;k<2;++k){P sr=target(r,k?ends->second.second:ends->second.first);if(!sr)continue;
+    if(!visual.scaleSet||visual.scale.y!=size.y){P ct=visual.capTransforms[k];V3 cs{1,.22f/std::fabs(size.y),1};r.call(ct,"set_localScale",{"UnityEngine.Vector3"},{&cs});}
    }
   }
  }
  r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&position});
- r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&size});
+ if(!visual.scaleSet||visual.scale.x!=size.x||visual.scale.y!=size.y||visual.scale.z!=size.z){r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&size});visual.scale=size;visual.scaleSet=true;}
  float alpha=scalar(f.note[@"pmAlpha"],1);
  if(!std::isfinite(alpha)||alpha<0)alpha=0;
  if(alpha>1)alpha=1;
  alpha*=std::clamp((float)control(decor,@"alphaControl",distance),0.f,1.f);
  if(start-now>scalar(f.note[@"pmVisible"],999999))alpha=0;
  Color color{1,1,1,alpha};
- auto ends=fakeHoldEnds.find(i);if(ends!=fakeHoldEnds.end())for(int k=0;k<2;++k){P sr=target(r,k?ends->second.second:ends->second.first);if(r.alive(sr)){bool show=k||now<start;r.call(sr,"set_color",{"UnityEngine.Color"},{&color});r.call(sr,"set_enabled",{"System.Boolean"},{&show});}}
- r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});
- bool yes=true;
- r.call(renderer,"set_enabled",{"System.Boolean"},{&yes});
+ bool colorChanged=!visual.colorSet||visual.color.a!=color.a;
+ auto ends=fakeHoldEnds.find(i);if(ends!=fakeHoldEnds.end())for(int k=0;k<2;++k){
+  P sr=target(r,k?ends->second.second:ends->second.first);bool show=k||now<start;
+  if(colorChanged)r.call(sr,"set_color",{"UnityEngine.Color"},{&color});
+  if(visual.capShown[k]!=show){r.call(sr,"set_enabled",{"System.Boolean"},{&show});visual.capShown[k]=show;}
+ }
+ if(colorChanged){r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});visual.color=color;visual.colorSet=true;}
+ if(!visual.shown){bool yes=true;r.call(renderer,"set_enabled",{"System.Boolean"},{&yes});visual.shown=true;}
+
 }
 }
 void noteMoved(Runtime&r,P controlObject,bool hold){
