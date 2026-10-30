@@ -26,7 +26,6 @@ struct Fake{NSDictionary*note;int line;bool below;};std::vector<Fake>fakeNotes;s
 // never sinks a custom-chart line behind the background.
 std::map<P,int>lineBaseOrder;
 // Fake notes that already failed to build; never retried in the same chart.
-std::set<size_t>failedFakes;
 void log(NSString*s){PMDiagnosticsWrite(s.UTF8String);}
 P target(Runtime&r,uint32_t h){return h?r.gchandle_get_target(h):nullptr;}
 P keep(Runtime&r,P p){if(p)visualRoots.push_back(r.gchandle_new(p,false));return p;}
@@ -394,6 +393,7 @@ void visuals(Runtime&r,P progress){
  r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});
  bool yes=true;
  r.call(renderer,"set_enabled",{"System.Boolean"},{&yes});
+}
 }
 void noteMoved(Runtime&r,P controlObject,bool hold){
  P note=r.get<P>(controlObject,"noteInfor");auto it=extras.find(note);if(it==extras.end())return;
