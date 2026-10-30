@@ -21,7 +21,7 @@ NSDictionary*officialCache=nil;
 NSDictionary*baseline=nil;NSArray*originalChapters=nil;NSDictionary*currentChart=nil;NSString*resourceSubdir=@"";
 std::map<P,uint32_t>textures;std::map<std::string,uint32_t>assets;std::map<P,std::string>refs;std::map<std::string,int>users;
 std::map<std::string,std::map<int,NSDictionary*>>variants;std::map<P,NSDictionary*>extras;std::map<P,V3>noteScales,lineScales;std::map<int,uint32_t>decorText,decorImage;
-struct Fake{NSDictionary*note;int line;bool below;};std::vector<Fake>fakeNotes;std::map<size_t,uint32_t>fakeRenderers;std::vector<uint32_t>visualRoots;
+struct Fake{NSDictionary*note;int line;bool below;};std::vector<Fake>fakeNotes;std::map<size_t,uint32_t>fakeRenderers;std::set<size_t>failedFakes;std::vector<uint32_t>visualRoots;
 // Engine-provided baseline sortingOrder per judge line, so pmDecor.zOrder=0
 // never sinks a custom-chart line behind the background.
 std::map<P,int>lineBaseOrder;
@@ -315,58 +315,85 @@ void visuals(Runtime&r,P progress){
  // controllers. Only the local 8-second window is allocated.
  if(fakeNotes.empty()){for(NSUInteger li=0;li<data.count;++li)for(NSString*side in @[@"notesAbove",@"notesBelow"])for(NSDictionary*n in data[li][side])if([n[@"pmFake"] boolValue])fakeNotes.push_back({n,(int)li,[side isEqualToString:@"notesBelow"]});}
  for(size_t i=0;i<fakeNotes.size();++i){
-  if(failedFakes.count(i))continue;
-  auto&f=fakeNotes[i];float start=scalar(f.note[@"pmTime"],scalar(f.note[@"time"])/64);float length=scalar(f.note[@"pmDuration"]);bool visible=f.line<total&&now<=start+length&&now>=start-8;P renderer=target(r,fakeRenderers.count(i)?fakeRenderers[i]:0);
-  if(!visible){if(renderer){bool no=false;r.call(renderer,"set_enabled",{"System.Boolean"},{&no});}continue;}
-  P line=r.at(lineList,f.line);
-  if(!renderer){
-   P go=nullptr;
-   try{
-    go=r.object_new(r.type("UnityEngine","GameObject"));keep(r,go);r.call(go,".ctor",{"System.String"},{r.string_new("PhiMod RPE Fake")});
-    P tr=r.call(go,"get_transform");bool no=false;r.call(tr,"SetParent",{"UnityEngine.Transform","System.Boolean"},{r.call(line,"get_transform"),&no});
-    renderer=addComponent(r,go,r.type("UnityEngine","SpriteRenderer"));
-   }catch(const std::exception&e){log([NSString stringWithFormat:@"Fake note %zu renderer create failed: %s",i,e.what()]);failedFakes.insert(i);continue;}
-   P sprite=nullptr;
-   // 1) JudgeLineControl 上的 Click/Drag/Flick prefab
-   try{
-    const char*name=scalar(f.note[@"type"])==2?"Drag":scalar(f.note[@"type"])==4?"Flick":"Click";
-    P prefab=r.get<P>(line,name),source=prefab?graphic(r,prefab):nullptr;
-    if(source)sprite=r.call(source,"get_sprite");
-   }catch(const std::exception&e){log([NSString stringWithFormat:@"Fake note %zu prefab lookup failed: %s",i,e.what()]);}
-   // 2) fallback: NoteUpdateManager 对应 controls 的第一个实例
-   if(!r.alive(sprite)){
-    try{
-     P mgr=r.get<P>(judge,"noteUpdateManager");int t=scalar(f.note[@"type"]);
-     const char*list=t==2?"dragControls":t==4?"flickControls":t==3?"holdControls":"clickControls";
-     P controls=r.get<P>(mgr,list);
-     if(controls&&r.count(controls)>0){P c=r.at(controls,0);P sr=r.get<P>(c,"_spriteRenderer");if(r.alive(sr))sprite=r.call(sr,"get_sprite");}
-    }catch(const std::exception&e){log([NSString stringWithFormat:@"Fake note %zu control lookup failed: %s",i,e.what()]);}
-   }
-   // 3) fallback: 判定线 sprite（形状不对，但至少可见）
-   if(!r.alive(sprite)){
-    try{P lr=r.get<P>(line,"_judgeLineSpriteRenderer");if(r.alive(lr))sprite=r.call(lr,"get_sprite");}catch(...){}
-   }
-   if(!r.alive(sprite)){
-    log([NSString stringWithFormat:@"Fake note %zu has no sprite source; skipped",i]);failedFakes.insert(i);
-    if(r.alive(go))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{go});
-    continue;
-   }
-   r.call(renderer,"set_sprite",{"UnityEngine.Sprite"},{sprite});
-   fakeRenderers[i]=r.gchandle_new(renderer,false);
-  }
-  float worldSpeed=r.staticValue<float>(r.klass("LevelInformation"),"Speed","System.Single");
-  // floorPositions 的索引是 JudgeLineControl.index，不是 judgeLineList 数组位置；
-  // 两者在隐藏判定线场景下不同，必须用 index。
-  int lineIndex=r.get<int>(line,"index");
-  float lineFloor=floor(r,info,lineIndex);
-  float y=(scalar(f.note[@"floorPosition"])-lineFloor)*worldSpeed*scalar(f.note[@"pmRawSpeed"],1)+scalar(f.note[@"pmYOffset"])*rpeOffsetToFloor*worldSpeed;
-  V3 position{(float)scalar(f.note[@"positionX"]),f.below?-y:y,0};
-  P tr=r.call(renderer,"get_transform");r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&position});
-  V3 size{(float)scalar(f.note[@"pmSize"],1),.22f,1};r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&size});
-  float alpha=scalar(f.note[@"pmAlpha"],1);if(!std::isfinite(alpha)||alpha<0)alpha=0;if(alpha>1)alpha=1;
-  Color color{1,1,1,alpha};r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});
-  bool yes=true;r.call(renderer,"set_enabled",{"System.Boolean"},{&yes});
+ if(failedFakes.count(i))continue;
+ auto&f=fakeNotes[i];
+ float start=scalar(f.note[@"pmTime"],scalar(f.note[@"time"])/64);
+ float length=scalar(f.note[@"pmDuration"]);
+ bool visible=f.line<total && now<=start+length && now>=start-8;
+ P renderer=target(r,fakeRenderers.count(i)?fakeRenderers[i]:0);
+ if(!visible){
+  if(renderer){bool no=false;r.call(renderer,"set_enabled",{"System.Boolean"},{&no});}
+  continue;
  }
+ P line=r.at(lineList,f.line);
+ if(!renderer){
+  P go=nullptr,tr=nullptr;
+  try{
+   go=r.object_new(r.type("UnityEngine","GameObject"));
+   keep(r,go);
+   r.call(go,".ctor",{"System.String"},{r.string_new("PhiMod RPE Fake")});
+   tr=r.call(go,"get_transform");
+   bool no=false;
+   r.call(tr,"SetParent",{"UnityEngine.Transform","System.Boolean"},{r.call(line,"get_transform"),&no});
+   renderer=addComponent(r,go,r.type("UnityEngine","SpriteRenderer"));
+  }catch(const std::exception&e){
+   log([NSString stringWithFormat:@"Fake note %zu renderer create failed: %s",i,e.what()]);
+   failedFakes.insert(i);
+   continue;
+  }
+  P sprite=nullptr;
+  // 优先 JudgeLineControl 上的 Click prefab
+  try{
+   P prefab=r.get<P>(line,"Click");
+   P source=prefab?graphic(r,prefab):nullptr;
+   if(source)sprite=r.call(source,"get_sprite");
+  }catch(const std::exception&e){
+   log([NSString stringWithFormat:@"Fake note %zu Click prefab unavailable: %s",i,e.what()]);
+  }
+  // fallback：NoteUpdateManager.clickControls[0] 的 sprite（Tap 形状，不是 hold body）
+  if(!r.alive(sprite)){
+   try{
+    P judge=r.get<P>(progress,"judgeControl");
+    P mgr=r.get<P>(judge,"noteUpdateManager");
+    P controls=r.get<P>(mgr,"clickControls");
+    if(controls&&r.count(controls)>0){
+     P c=r.at(controls,0);
+     P sr=r.get<P>(c,"_spriteRenderer");
+     if(r.alive(sr))sprite=r.call(sr,"get_sprite");
+    }
+   }catch(const std::exception&e){
+    log([NSString stringWithFormat:@"Fake note %zu clickControls fallback failed: %s",i,e.what()]);
+   }
+  }
+  // 不再回退到 _judgeLineSpriteRenderer：判定线 sprite 是 1920x3 长条，会显示成判定线
+  if(!r.alive(sprite)){
+   log([NSString stringWithFormat:@"Fake note %zu has no sprite source; skipped",i]);
+   failedFakes.insert(i);
+   if(r.alive(go))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{go});
+   continue;
+  }
+  r.call(renderer,"set_sprite",{"UnityEngine.Sprite"},{sprite});
+  fakeRenderers[i]=r.gchandle_new(renderer,false);
+ }
+ float worldSpeed=r.staticValue<float>(r.klass("LevelInformation"),"Speed","System.Single");
+ // floorPositions 的索引是 JudgeLineControl.index，不是 judgeLineList 数组位置
+ int lineIndex=r.get<int>(line,"index");
+ float y=(scalar(f.note[@"floorPosition"])-floor(r,info,lineIndex))*worldSpeed*scalar(f.note[@"pmRawSpeed"],1)+scalar(f.note[@"pmYOffset"])*rpeOffsetToFloor*worldSpeed;
+ V3 position{(float)scalar(f.note[@"positionX"]),f.below?-y:y,0};
+ P tr=r.call(renderer,"get_transform");
+ r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&position});
+ float sizeX=scalar(f.note[@"pmSize"],1);
+ if(!std::isfinite(sizeX)||sizeX<0.1f)sizeX=1.f;
+ if(sizeX>3.f)sizeX=3.f;
+ V3 size{sizeX,.22f,1};
+ r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&size});
+ float alpha=scalar(f.note[@"pmAlpha"],1);
+ if(!std::isfinite(alpha)||alpha<0)alpha=0;
+ if(alpha>1)alpha=1;
+ Color color{1,1,1,alpha};
+ r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});
+ bool yes=true;
+ r.call(renderer,"set_enabled",{"System.Boolean"},{&yes});
 }
 void noteMoved(Runtime&r,P controlObject,bool hold){
  P note=r.get<P>(controlObject,"noteInfor");auto it=extras.find(note);if(it==extras.end())return;
@@ -381,52 +408,30 @@ void noteMoved(Runtime&r,P controlObject,bool hold){
  scale.x=noteScales[controlObject].x*scalar(n[@"pmSize"],1)*control(d,@"sizeControl",distance);
  r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});
  if(n[@"pmRawSpeed"]){
-  float speed=r.staticValue<float>(r.klass("LevelInformation"),"Speed","System.Single");
-  V3 position=r.unbox<V3>(r.call(tr,"get_localPosition"));bool below=r.get<int>(note,"judgeLineIndex")%2;
-  float rawSpeed=scalar(n[@"pmRawSpeed"],1);
-  auto geometry=rpeGeometry(delta,scalar(n[@"pmEndFloor"],scalar(n[@"floorPosition"]))-floor(r,info,index),0,rawSpeed,scalar(n[@"pmYOffset"]),yControlValue,speed,hold&&now>=start);
-  position.x=r.get<float>(note,"positionX")*control(d,@"posControl",distance);
-  position.y=below?-geometry.head:geometry.head;
-  if(hold){
-   // Only override Hold geometry while the integrated length is positive.
-   // A non-positive length means the Hold has already crossed the judge
-   // line (or the source data is degenerate); the engine destroys the
-   // body/head/tail itself. Writing scale.y=0.00001 then makes the body
-   // vanish and the head/tail compensation (.22/scale.y = 22000x) push
-   // them off screen, which is the "only body / only head / only tail"
-   // symptom. Leaving the engine's layout untouched fixes it.
-   // yControl==0 is a deliberate line-hide in RPE; we explicitly zero alpha
-   // below instead of asking the engine to render a normal Hold.
-   float length=geometry.tail-geometry.head;
-   bool hidden=std::fabs(yControlValue)<0.0001f;
-   bool degenerate=!std::isfinite(length)||length<=0.0001f||std::fabs(rawSpeed)<=0.0001f;
-   if(!hidden&&!degenerate){
-    P renderer=r.get<P>(controlObject,"_holdSpriteRenderer");
-    P sprite=r.alive(renderer)?r.call(renderer,"get_sprite"):nullptr;
-    if(sprite){
-     Bounds bounds=r.unbox<Bounds>(r.call(sprite,"get_bounds"));
-     float height=bounds.extents.y*2;
-     if(height>.00001f){
-      auto layout=rpeHoldLayout(geometry,height,bounds.center.y-bounds.extents.y,below);
-      position.y=layout.origin;scale.y=layout.scale;
-      r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});
-      // Only cap the compensation at the high end to avoid 2200x blow-ups
-      // on near-zero bodies; do not clamp the low end, otherwise long Holds
-      // (scale.y>4.4) would grow their head/tail instead of holding them at
-      // the RPE-canonical .22 units.
-      float compensation=.22f/std::max(0.00001f,std::fabs(scale.y));
-      if(compensation>100.f)compensation=100.f;
-      for(const char*name:{"holdHead","holdEnd"}){
-       P child=r.get<P>(controlObject,name);if(!r.alive(child))continue;P childTr=r.call(child,"get_transform");
-       V3 cs=r.unbox<V3>(r.call(childTr,"get_localScale"));cs.y=compensation;r.call(childTr,"set_localScale",{"UnityEngine.Vector3"},{&cs});
-       V3 cp=r.unbox<V3>(r.call(childTr,"get_localPosition"));cp.y=std::string(name)=="holdEnd"?bounds.center.y+bounds.extents.y:bounds.center.y-bounds.extents.y;r.call(childTr,"set_localPosition",{"UnityEngine.Vector3"},{&cp});
-      }
-     }
-    }
-   }
+ float speed=r.staticValue<float>(r.klass("LevelInformation"),"Speed","System.Single");
+ V3 position=r.unbox<V3>(r.call(tr,"get_localPosition"));
+ bool below=r.get<int>(note,"judgeLineIndex")%2;
+ float rawSpeed=scalar(n[@"pmRawSpeed"],1);
+ float yControl=control(d,@"yControl",distance);
+ float yOffset=scalar(n[@"pmYOffset"],0);
+ position.x=r.get<float>(note,"positionX")*control(d,@"posControl",distance);
+ if(hold){
+  // 引擎已经把 body 长度、head/tail 局部位置、below 镜像都算对了。
+  // rpeHoldLayout 的 floor 单位与 sprite 世界高度不匹配，会把 scale.y 压到 ~0.00001；
+  // position.y 再按 below 取负又会把引擎的镜像翻回去。
+  // 这里保留引擎的 transform，只把 RPE 的 yOffset（按 yControl 缩放）叠到 position.y。
+  if(std::isfinite(yOffset)&&std::fabs(yOffset)>.00001f){
+   float yc=(std::isfinite(yControl)&&std::fabs(yControl)>.00001f)?yControl:1.f;
+   float shift=yOffset*rpeOffsetToFloor*rawSpeed*speed*yc;
+   position.y+=below?-shift:shift;
   }
-  position.z=0;r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&position});
+ }else{
+  auto geometry=rpeGeometry(delta,scalar(n[@"pmEndFloor"],scalar(n[@"floorPosition"]))-floor(r,info,index),0,rawSpeed,yOffset,yControl,speed,false);
+  position.y=below?-geometry.head:geometry.head;
  }
+ position.z=0;
+ r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&position});
+}
  float alpha=scalar(n[@"pmAlpha"],1)*control(d,@"alphaControl",distance);
  if(!std::isfinite(alpha)||alpha<0)alpha=0;if(alpha>1)alpha=1;
  if(start-now>scalar(n[@"pmVisible"],999999))alpha=0;
