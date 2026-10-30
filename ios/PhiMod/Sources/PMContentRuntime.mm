@@ -22,7 +22,7 @@ NSDictionary*officialCache=nil;
 NSDictionary*baseline=nil;NSArray*originalChapters=nil;NSDictionary*currentChart=nil;NSString*resourceSubdir=@"";
 std::map<P,uint32_t>textures;std::map<std::string,uint32_t>assets;std::map<P,std::string>refs;std::map<std::string,int>users;
 std::map<std::string,std::map<int,NSDictionary*>>variants;std::map<P,NSDictionary*>extras;std::map<P,V3>noteScales,lineScales;std::map<int,uint32_t>decorText,decorImage;
-struct Fake{NSDictionary*note;int line;bool below;};std::vector<Fake>fakeNotes;std::map<int,std::vector<phimod::RpeFloorSegment>>sourceFloors;std::map<size_t,std::pair<uint32_t,uint32_t>>fakeHoldEnds;std::map<size_t,uint32_t>fakeRenderers;std::set<size_t>failedFakes;std::vector<uint32_t>visualRoots;
+struct Fake{NSDictionary*note;int line;bool below;};std::vector<Fake>fakeNotes;std::map<int,std::vector<phimod::RpeFloorSegment>>sourceFloors;std::map<size_t,std::pair<uint32_t,uint32_t>>fakeHoldEnds;std::map<size_t,uint32_t>fakeRenderers;std::map<size_t,V3>fakeScales;std::map<size_t,double>fakeRetryAt;std::set<size_t>failedFakes;std::vector<uint32_t>visualRoots;
 // Engine-provided baseline sortingOrder per judge line, so pmDecor.zOrder=0
 // never sinks a custom-chart line behind the background.
 std::map<P,int>lineBaseOrder;
@@ -121,7 +121,7 @@ P audio(Runtime&r,NSString*path){
  }catch(...){r.gchandle_free(clipRoot);throw;}
 }
 NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=key.lowercaseString;*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":@"image";return id;}
-void clearVisuals(Runtime&r){for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();fakeNotes.clear();fakeRenderers.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();failedFakes.clear();currentChart=nil;}
+void clearVisuals(Runtime&r){for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();fakeNotes.clear();fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();failedFakes.clear();currentChart=nil;}
 void applyCachedChapterCover(Runtime&r,P card,const char*codeField,const char*loaderField){
  NSString*code=r.string(r.get<P>(card,codeField));if(!code.length)return;auto found=assets.find(code.UTF8String);if(found==assets.end())return;P sprite=target(r,found->second);if(!r.alive(sprite))return;
  P loader=r.get<P>(card,loaderField);if(!r.alive(loader))return;bool changed=false;
@@ -325,11 +325,11 @@ void visuals(Runtime&r,P progress){
  // controllers. Only the local 8-second window is allocated.
  if(fakeNotes.empty()){for(NSUInteger li=0;li<data.count;++li)for(NSString*side in @[@"notesAbove",@"notesBelow"])for(NSDictionary*n in data[li][side])if([n[@"pmFake"] boolValue])fakeNotes.push_back({n,(int)li,[side isEqualToString:@"notesBelow"]});}
  for(size_t i=0;i<fakeNotes.size();++i){
- if(failedFakes.count(i))continue;
+ if(fakeRetryAt.count(i)&&NSDate.timeIntervalSinceReferenceDate<fakeRetryAt[i])continue;
  auto&f=fakeNotes[i];
  float start=scalar(f.note[@"pmTime"],scalar(f.note[@"time"])/64);
  float length=scalar(f.note[@"pmDuration"]);
- bool visible=f.line<total && now<=start+length && now>=start-8;
+ bool visible=f.line<total && now<start+((int)scalar(f.note[@"type"])==3?length:0) && now>=start-8;
  P renderer=target(r,fakeRenderers.count(i)?fakeRenderers[i]:0);
  if(!visible){
   if(renderer){bool no=false;r.call(renderer,"set_enabled",{"System.Boolean"},{&no});}
@@ -338,74 +338,76 @@ void visuals(Runtime&r,P progress){
  }
  P line=r.at(lineList,f.line);
  if(!renderer){
-  P go=nullptr,tr=nullptr;
+  P go=nullptr;std::vector<P>created;std::vector<uint32_t>newHandles;
   try{
-   go=r.object_new(r.type("UnityEngine","GameObject"));
-   keep(r,go);
-   r.call(go,".ctor",{"System.String"},{r.string_new("PhiMod RPE Fake")});
-   tr=r.call(go,"get_transform");
-   bool no=false;
-   r.call(tr,"SetParent",{"UnityEngine.Transform","System.Boolean"},{r.call(line,"get_transform"),&no});
-   renderer=addComponent(r,go,r.type("UnityEngine","SpriteRenderer"));
-  }catch(const std::exception&e){
-   log([NSString stringWithFormat:@"Fake note %zu renderer create failed: %s",i,e.what()]);
-   failedFakes.insert(i);
-   continue;
-  }
-  P sprite=nullptr;
-  // 优先 JudgeLineControl 上的 Click prefab
-  try{
-   int fakeType=(int)scalar(f.note[@"type"],1);
-   const char*prefabName=fakeType==2?"Drag":fakeType==4?"Flick":fakeType==3?"Hold":"Click";
+   int type=(int)scalar(f.note[@"type"],1);
+   const char*prefabName=type==2?"Drag":type==4?"Flick":type==3?"Hold":"Click";
+   const char*controlName=type==2?"DragControl":type==4?"FlickControl":type==3?"HoldControl":"ClickControl";
    P prefab=r.get<P>(line,prefabName);
-   P source=prefab?graphic(r,prefab):nullptr;
-   if(fakeType==3&&prefab){P hc=r.component(prefab,r.klass("HoldControl"));if(hc){P body=r.get<P>(hc,"_holdSpriteRenderer");if(r.alive(body))source=body;}}
-   if(source)sprite=r.call(source,"get_sprite");
-  }catch(const std::exception&e){
-   log([NSString stringWithFormat:@"Fake note %zu Click prefab unavailable: %s",i,e.what()]);
-  }
-  // fallback：NoteUpdateManager.clickControls[0] 的 sprite（Tap 形状，不是 hold body）
-  if(!r.alive(sprite)&&(int)scalar(f.note[@"type"],1)==1){
-   try{
-    P judge=r.get<P>(progress,"judgeControl");
-    P mgr=r.get<P>(judge,"noteUpdateManager");
-    P controls=r.get<P>(mgr,"clickControls");
-    if(controls&&r.count(controls)>0){
-     P c=r.at(controls,0);
-     P sr=r.get<P>(c,"_spriteRenderer");
-     if(r.alive(sr))sprite=r.call(sr,"get_sprite");
-    }
-   }catch(const std::exception&e){
-    log([NSString stringWithFormat:@"Fake note %zu clickControls fallback failed: %s",i,e.what()]);
+   if(!r.alive(prefab))throw std::runtime_error("Native note prefab is not ready");
+   P controller=r.component(prefab,r.klass(controlName));
+   if(!r.alive(controller))throw std::runtime_error("Native prefab controller missing");
+   P sprites[3]{};
+   if(type==3){
+    P images=r.get<P>(controller,"noteImages");
+    if(!images||r.array_length(images)<3)throw std::runtime_error("Hold prefab noteImages incomplete");
+    sprites[0]=r.arrayAt(images,1);sprites[1]=r.arrayAt(images,0);sprites[2]=r.arrayAt(images,2);
+   }else sprites[0]=r.get<P>(controller,"noteImage");
+   for(int k=0;k<(type==3?3:1);++k)if(!r.alive(sprites[k]))throw std::runtime_error("Native serialized note sprite is not ready");
+   // CreateNote uses the prefab's actual scale, the user's noteScale and
+   // Screen aspect compensation. A fixed .22 cannot reproduce that size.
+   P parent=r.call(line,"get_transform"),prefabTransform=r.call(prefab,"get_transform");
+   V3 prefabScale=r.unbox<V3>(r.call(prefabTransform,"get_lossyScale"));
+   V3 parentScale=r.unbox<V3>(r.call(parent,"get_lossyScale"));
+   float noteScale=r.get<float>(line,"noteScale");
+   int screenWidth=r.unbox<int>(r.stat(r.type("UnityEngine","Screen"),"get_width"));
+   int screenHeight=r.unbox<int>(r.stat(r.type("UnityEngine","Screen"),"get_height"));
+   if(screenHeight<=0||screenWidth<=0||!std::isfinite(noteScale)||noteScale<=0)throw std::runtime_error("Native note sizing not ready");
+   // The line may currently be hidden by an animated zero scale. Retry after
+   // it becomes visible rather than caching an infinite local scale forever.
+   for(float v:{parentScale.x,parentScale.y,parentScale.z})if(!std::isfinite(v)||std::fabs(v)<1e-6f)throw std::runtime_error("Fake note parent temporarily has zero scale");
+   float factor=noteScale*std::min(1.f,(float(screenWidth)/screenHeight)/(16.f/9.f));
+   V3 base{prefabScale.x/parentScale.x*factor,prefabScale.y/parentScale.y*factor,prefabScale.z/parentScale.z*factor};
+   P sourceRenderer=r.component(prefab,r.type("UnityEngine","SpriteRenderer"));
+   int layer=r.unbox<int>(r.call(prefab,"get_layer"));
+   int sortingLayer=sourceRenderer?r.unbox<int>(r.call(sourceRenderer,"get_sortingLayerID")):0;
+   int order=(int)scalar(data[f.line][@"pmDecor"][@"zOrder"])*4+(type==3?1:2);
+   auto makeRenderer=[&](P sprite,P owner,const char*name){
+    P obj=r.object_new(r.type("UnityEngine","GameObject"));keep(r,obj);created.push_back(obj);
+    r.call(obj,".ctor",{"System.String"},{r.string_new(name)});
+    r.call(obj,"set_layer",{"System.Int32"},{&layer});
+    P transform=r.call(obj,"get_transform");bool no=false;
+    r.call(transform,"SetParent",{"UnityEngine.Transform","System.Boolean"},{owner,&no});
+    P sr=addComponent(r,obj,r.type("UnityEngine","SpriteRenderer"));
+    r.call(sr,"set_sprite",{"UnityEngine.Sprite"},{sprite});
+    r.call(sr,"set_sortingLayerID",{"System.Int32"},{&sortingLayer});
+    r.call(sr,"set_sortingOrder",{"System.Int32"},{&order});
+    if(r.alive(sourceRenderer)){P material=r.call(sourceRenderer,"get_sharedMaterial");if(material)r.call(sr,"set_sharedMaterial",{"UnityEngine.Material"},{material});}
+    return sr;
+   };
+   renderer=makeRenderer(sprites[0],parent,"PhiMod RPE Fake");go=created.front();
+   P tr=r.call(renderer,"get_transform");
+   if(type!=3&&f.below){V3 angles{180,0,0};r.call(tr,"set_localEulerAngles",{"UnityEngine.Vector3"},{&angles});}
+   uint32_t head=0,tail=0;
+   if(type==3){
+    P headRenderer=makeRenderer(sprites[1],tr,"PhiMod Fake Hold Head");
+    P tailRenderer=makeRenderer(sprites[2],tr,"PhiMod Fake Hold Tail");
+    head=r.gchandle_new(headRenderer,false);newHandles.push_back(head);
+    tail=r.gchandle_new(tailRenderer,false);newHandles.push_back(tail);
    }
-  }
-  // 不再回退到 _judgeLineSpriteRenderer：判定线 sprite 是 1920x3 长条，会显示成判定线
-  if(!r.alive(sprite)){
-   log([NSString stringWithFormat:@"Fake note %zu has no sprite source; skipped",i]);
-   failedFakes.insert(i);
-   if(r.alive(go))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{go});
+   uint32_t body=r.gchandle_new(renderer,false);newHandles.push_back(body);
+   fakeScales[i]=base;if(type==3)fakeHoldEnds[i]={head,tail};fakeRenderers[i]=body;
+   bool report=i<8||failedFakes.count(i);fakeRetryAt.erase(i);failedFakes.erase(i);
+   if(report)log([NSString stringWithFormat:@"Fake note %zu ready type=%d scale=(%.5f,%.5f) nativeFactor=%.5f",i,type,base.x,base.y,factor]);
+  }catch(const std::exception&e){
+   for(auto h:newHandles)r.gchandle_free(h);
+   for(P obj:created)try{if(r.alive(obj))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{obj});}catch(...){}
+   renderer=nullptr;fakeRetryAt[i]=NSDate.timeIntervalSinceReferenceDate+.5;
+   if(failedFakes.insert(i).second)log([NSString stringWithFormat:@"Fake note %zu deferred (will retry): %s",i,e.what()]);
    continue;
   }
-  r.call(renderer,"set_sprite",{"UnityEngine.Sprite"},{sprite});
-  fakeRenderers[i]=r.gchandle_new(renderer,false);
-  if((int)scalar(f.note[@"type"])==3){
-   P prefab=r.get<P>(line,"Hold"),hc=prefab?r.component(prefab,r.klass("HoldControl")):nullptr;
-   uint32_t handles[2]{};
-   for(int k=0;k<2;++k){
-    P src=hc?r.get<P>(hc,k?"_holdEndSpriteRenderer1":"_holdHeadSpriteRenderer"):nullptr;
-    if(!r.alive(src))continue;
-    P image=r.call(src,"get_sprite");if(!r.alive(image))continue;
-    P child=r.object_new(r.type("UnityEngine","GameObject"));keep(r,child);
-    r.call(child,".ctor",{"System.String"},{r.string_new(k?"PhiMod Fake Hold Tail":"PhiMod Fake Hold Head")});
-    P ct=r.call(child,"get_transform");bool no=false;
-    r.call(ct,"SetParent",{"UnityEngine.Transform","System.Boolean"},{tr,&no});
-    P sr=addComponent(r,child,r.type("UnityEngine","SpriteRenderer"));r.call(sr,"set_sprite",{"UnityEngine.Sprite"},{image});
-    handles[k]=r.gchandle_new(sr,false);
-   }
-   fakeHoldEnds[i]={handles[0],handles[1]};
-  }
-
  }
+
  float worldSpeed=r.staticValue<float>(r.klass("LevelInformation"),"Speed","System.Single");
  // floorPositions 的索引是 JudgeLineControl.index，不是 judgeLineList 数组位置
  int lineIndex=r.get<int>(line,"index");
@@ -418,8 +420,8 @@ void visuals(Runtime&r,P progress){
  P tr=r.call(renderer,"get_transform");
  float sizeX=scalar(f.note[@"pmSize"],1)*control(decor,@"sizeControl",distance);
  if(!std::isfinite(sizeX))sizeX=1;
- // Native note sprites use .22 on both axes; size affects width only.
- V3 size{.22f*sizeX,.22f,1};
+ // Preserve native prefab aspect; RPE size changes only note width.
+ V3 size=fakeScales.at(i);size.x*=sizeX;
  if(isHold){
   P sprite=r.call(renderer,"get_sprite");Bounds bounds=r.unbox<Bounds>(r.call(sprite,"get_bounds"));
   if(bounds.extents.y>0.00001f){
@@ -437,9 +439,10 @@ void visuals(Runtime&r,P progress){
  float alpha=scalar(f.note[@"pmAlpha"],1);
  if(!std::isfinite(alpha)||alpha<0)alpha=0;
  if(alpha>1)alpha=1;
+ alpha*=std::clamp((float)control(decor,@"alphaControl",distance),0.f,1.f);
  if(start-now>scalar(f.note[@"pmVisible"],999999))alpha=0;
  Color color{1,1,1,alpha};
- auto ends=fakeHoldEnds.find(i);if(ends!=fakeHoldEnds.end())for(uint32_t h:{ends->second.first,ends->second.second}){P sr=target(r,h);if(r.alive(sr)){bool yes=true;r.call(sr,"set_color",{"UnityEngine.Color"},{&color});r.call(sr,"set_enabled",{"System.Boolean"},{&yes});}}
+ auto ends=fakeHoldEnds.find(i);if(ends!=fakeHoldEnds.end())for(int k=0;k<2;++k){P sr=target(r,k?ends->second.second:ends->second.first);if(r.alive(sr)){bool show=k||now<start;r.call(sr,"set_color",{"UnityEngine.Color"},{&color});r.call(sr,"set_enabled",{"System.Boolean"},{&show});}}
  r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});
  bool yes=true;
  r.call(renderer,"set_enabled",{"System.Boolean"},{&yes});
