@@ -8,6 +8,7 @@
 #import <UIKit/UIKit.h>
 #include "../Core/PMRPECore.hpp"
 #include "../Core/PMRPEGeometry.hpp"
+#include "../Core/PMChartCore.hpp"
 #include <map>
 #include <set>
 #include <chrono>
@@ -21,7 +22,7 @@ NSDictionary*officialCache=nil;
 NSDictionary*baseline=nil;NSArray*originalChapters=nil;NSDictionary*currentChart=nil;NSString*resourceSubdir=@"";
 std::map<P,uint32_t>textures;std::map<std::string,uint32_t>assets;std::map<P,std::string>refs;std::map<std::string,int>users;
 std::map<std::string,std::map<int,NSDictionary*>>variants;std::map<P,NSDictionary*>extras;std::map<P,V3>noteScales,lineScales;std::map<int,uint32_t>decorText,decorImage;
-struct Fake{NSDictionary*note;int line;bool below;};std::vector<Fake>fakeNotes;std::map<int,std::vector<RpeFloorSegment>>sourceFloors;std::map<size_t,std::pair<uint32_t,uint32_t>>fakeHoldEnds;std::map<size_t,uint32_t>fakeRenderers;std::set<size_t>failedFakes;std::vector<uint32_t>visualRoots;
+struct Fake{NSDictionary*note;int line;bool below;};std::vector<Fake>fakeNotes;std::map<int,std::vector<phimod::RpeFloorSegment>>sourceFloors;std::map<size_t,std::pair<uint32_t,uint32_t>>fakeHoldEnds;std::map<size_t,uint32_t>fakeRenderers;std::set<size_t>failedFakes;std::vector<uint32_t>visualRoots;
 // Engine-provided baseline sortingOrder per judge line, so pmDecor.zOrder=0
 // never sinks a custom-chart line behind the background.
 std::map<P,int>lineBaseOrder;
@@ -300,7 +301,7 @@ double control(NSDictionary*d,NSString*key,double distance){NSArray*points=d[key
 P addComponent(Runtime&r,P go,P type){return r.call(go,"AddComponent",{"System.Type"},{r.type_get_object(r.class_get_type(type))});}
 P graphic(Runtime&r,P go){P list=r.children(go,r.type("UnityEngine","SpriteRenderer"));return list&&r.array_length(list)?r.arrayAt(list,0):nullptr;}
 float floor(Runtime&r,P info,int index){P a=r.get<P>(info,"floorPositions");return a&&index>=0&&uintptr_t(index)<r.array_length(a)?r.unbox<float>(r.arrayAt(a,index)):0;}
-double sourceFloor(int index,double now,double fallback){auto it=sourceFloors.find(index);return it==sourceFloors.end()?fallback:rpeFloor(it->second,now,fallback);}
+double sourceFloor(int index,double now,double fallback){auto it=sourceFloors.find(index);return it==sourceFloors.end()?fallback:phimod::rpeFloor(it->second,now,fallback);}
 
 }
 void visuals(Runtime&r,P progress){
