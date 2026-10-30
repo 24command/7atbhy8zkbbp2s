@@ -22,6 +22,11 @@ NSDictionary*baseline=nil;NSArray*originalChapters=nil;NSDictionary*currentChart
 std::map<P,uint32_t>textures;std::map<std::string,uint32_t>assets;std::map<P,std::string>refs;std::map<std::string,int>users;
 std::map<std::string,std::map<int,NSDictionary*>>variants;std::map<P,NSDictionary*>extras;std::map<P,V3>noteScales,lineScales;std::map<int,uint32_t>decorText,decorImage;
 struct Fake{NSDictionary*note;int line;bool below;};std::vector<Fake>fakeNotes;std::map<size_t,uint32_t>fakeRenderers;std::vector<uint32_t>visualRoots;
+// Engine-provided baseline sortingOrder per judge line, so pmDecor.zOrder=0
+// never sinks a custom-chart line behind the background.
+std::map<P,int>lineBaseOrder;
+// Fake notes that already failed to build; never retried in the same chart.
+std::set<size_t>failedFakes;
 void log(NSString*s){PMDiagnosticsWrite(s.UTF8String);}
 P target(Runtime&r,uint32_t h){return h?r.gchandle_get_target(h):nullptr;}
 P keep(Runtime&r,P p){if(p)visualRoots.push_back(r.gchandle_new(p,false));return p;}
@@ -116,7 +121,7 @@ P audio(Runtime&r,NSString*path){
  }catch(...){r.gchandle_free(clipRoot);throw;}
 }
 NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=key.lowercaseString;*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":@"image";return id;}
-void clearVisuals(Runtime&r){for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();fakeNotes.clear();fakeRenderers.clear();currentChart=nil;}
+void clearVisuals(Runtime&r){for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();fakeNotes.clear();fakeRenderers.clear();lineBaseOrder.clear();failedFakes.clear();currentChart=nil;}
 void applyCachedChapterCover(Runtime&r,P card,const char*codeField,const char*loaderField){
  NSString*code=r.string(r.get<P>(card,codeField));if(!code.length)return;auto found=assets.find(code.UTF8String);if(found==assets.end())return;P sprite=target(r,found->second);if(!r.alive(sprite))return;
  P loader=r.get<P>(card,loaderField);if(!r.alive(loader))return;bool changed=false;
@@ -291,16 +296,147 @@ float floor(Runtime&r,P info,int index){P a=r.get<P>(info,"floorPositions");retu
 }
 void visuals(Runtime&r,P progress){
  if(!currentChart)return;P judge=r.get<P>(progress,"judgeControl"),lineList=r.get<P>(judge,"judgeLineControls"),info=r.get<P>(progress,"levelInformation");float now=r.get<float>(progress,"nowTime");NSArray*data=currentChart[@"judgeLineList"];int total=std::min<int>(r.count(lineList),(int)data.count);if(total<=0)return;
- for(int i=0;i<total;++i){P line=r.at(lineList,i),tr=r.call(line,"get_transform"),renderer=r.get<P>(line,"_judgeLineSpriteRenderer");if(!r.alive(renderer))continue;NSDictionary*d=data[i][@"pmDecor"];if(!d)continue;V3 scale=r.unbox<V3>(r.call(tr,"get_localScale"));if(!lineScales.count(line))lineScales[line]=scale;scale=lineScales[line];scale.x*=trackValue(d[@"scaleXEvents"],now,1);scale.y*=trackValue(d[@"scaleYEvents"],now,1);r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});Color color=r.unbox<Color>(r.call(renderer,"get_color"));NSArray*colors=d[@"colorEvents"];if(colors.count){color.r=trackValue(colors,now,1,0);color.g=trackValue(colors,now,1,1);color.b=trackValue(colors,now,1,2);}int order=(int)scalar(d[@"zOrder"])*4;r.call(renderer,"set_sortingOrder",{"System.Int32"},{&order});r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});NSString*texture=d[@"Texture"];if(texture.length&&![texture isEqualToString:@"line.png"]&&!decorImage.count(i)){NSString*folder=[PMContentStore.shared asset:levelID];NSString*path=[[[folder stringByAppendingPathComponent:resourceSubdir]stringByAppendingPathComponent:texture]stringByStandardizingPath];if([path hasPrefix:[folder stringByAppendingString:@"/"]]&&[NSFileManager.defaultManager fileExistsAtPath:path]){P sprite=image(r,path);keep(r,sprite);auto t=textures.find(sprite);if(t!=textures.end()){visualRoots.push_back(t->second);textures.erase(t);}r.call(renderer,"set_sprite",{"UnityEngine.Sprite"},{sprite});decorImage[i]=r.gchandle_new(sprite,false);}}
- NSArray*events=d[@"textEvents"];NSDictionary*textEvent=nil;for(NSDictionary*e in events)if(now>=scalar(e[@"startTime"]))textEvent=e;else break;if(textEvent){P mesh=target(r,decorText[i]);if(!r.alive(mesh)){P go=r.object_new(r.type("UnityEngine","GameObject"));keep(r,go);r.call(go,".ctor",{"System.String"},{r.string_new("PhiMod RPE Text")});P meshClass=r.type("UnityEngine","TextMesh");mesh=addComponent(r,go,meshClass);P childTr=r.call(go,"get_transform");bool no=false;r.call(childTr,"SetParent",{"UnityEngine.Transform","System.Boolean"},{tr,&no});float size=.18f;int fontSize=64,anchor=4;r.call(mesh,"set_characterSize",{"System.Single"},{&size});r.call(mesh,"set_fontSize",{"System.Int32"},{&fontSize});r.call(mesh,"set_anchor",{"UnityEngine.TextAnchor"},{&anchor});P label=r.get<P>(r.get<P>(progress,"scoreControl"),"comboText");P font=r.call(label,"get_font");if(font)r.call(mesh,"set_font",{"UnityEngine.Font"},{font});decorText[i]=r.gchandle_new(mesh,false);}NSString*a=[textEvent[@"start"] description],*b=[textEvent[@"end"] description];NSString*value=a;if([a containsString:@"%P%"]){NSUInteger n=MIN(a.length,(NSUInteger)(b.length*std::clamp((now-scalar(textEvent[@"startTime"]))/std::max(.001,scalar(textEvent[@"endTime"])-scalar(textEvent[@"startTime"])),0.,1.)));value=[b substringToIndex:MIN(n,b.length)];}r.text(mesh,value.UTF8String);r.call(mesh,"set_color",{"UnityEngine.Color"},{&color});}
+ for(int i=0;i<total;++i){
+  P line=r.at(lineList,i),tr=r.call(line,"get_transform"),renderer=r.get<P>(line,"_judgeLineSpriteRenderer");if(!r.alive(renderer))continue;NSDictionary*d=data[i][@"pmDecor"];if(!d)continue;
+  V3 scale=r.unbox<V3>(r.call(tr,"get_localScale"));if(!lineScales.count(line))lineScales[line]=scale;scale=lineScales[line];scale.x*=trackValue(d[@"scaleXEvents"],now,1);scale.y*=trackValue(d[@"scaleYEvents"],now,1);r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});
+  Color color=r.unbox<Color>(r.call(renderer,"get_color"));NSArray*colors=d[@"colorEvents"];if(colors.count){color.r=trackValue(colors,now,1,0);color.g=trackValue(colors,now,1,1);color.b=trackValue(colors,now,1,2);}
+  // Keep the engine's judge-line sortingOrder as a baseline. pmDecor.zOrder
+  // defaults to 0; writing sortingOrder=0 moves every custom-chart judge line
+  // to the background layer, where it is hidden behind the chart background.
+  auto found=lineBaseOrder.find(line);
+  int base=found==lineBaseOrder.end()?(lineBaseOrder[line]=r.unbox<int>(r.call(renderer,"get_sortingOrder"))):found->second;
+  int order=base+(int)scalar(d[@"zOrder"])*4;
+  r.call(renderer,"set_sortingOrder",{"System.Int32"},{&order});
+  r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});
+  NSString*texture=d[@"Texture"];if(texture.length&&![texture isEqualToString:@"line.png"]&&!decorImage.count(i)){NSString*folder=[PMContentStore.shared asset:levelID];NSString*path=[[[folder stringByAppendingPathComponent:resourceSubdir]stringByAppendingPathComponent:texture]stringByStandardizingPath];if([path hasPrefix:[folder stringByAppendingString:@"/"]]&&[NSFileManager.defaultManager fileExistsAtPath:path]){P sprite=image(r,path);keep(r,sprite);auto t=textures.find(sprite);if(t!=textures.end()){visualRoots.push_back(t->second);textures.erase(t);}r.call(renderer,"set_sprite",{"UnityEngine.Sprite"},{sprite});decorImage[i]=r.gchandle_new(sprite,false);}}
+  NSArray*events=d[@"textEvents"];NSDictionary*textEvent=nil;for(NSDictionary*e in events)if(now>=scalar(e[@"startTime"]))textEvent=e;else break;if(textEvent){P mesh=target(r,decorText[i]);if(!r.alive(mesh)){P go=r.object_new(r.type("UnityEngine","GameObject"));keep(r,go);r.call(go,".ctor",{"System.String"},{r.string_new("PhiMod RPE Text")});P meshClass=r.type("UnityEngine","TextMesh");mesh=addComponent(r,go,meshClass);P childTr=r.call(go,"get_transform");bool no=false;r.call(childTr,"SetParent",{"UnityEngine.Transform","System.Boolean"},{tr,&no});float size=.18f;int fontSize=64,anchor=4;r.call(mesh,"set_characterSize",{"System.Single"},{&size});r.call(mesh,"set_fontSize",{"System.Int32"},{&fontSize});r.call(mesh,"set_anchor",{"UnityEngine.TextAnchor"},{&anchor});P label=r.get<P>(r.get<P>(progress,"scoreControl"),"comboText");P font=r.call(label,"get_font");if(font)r.call(mesh,"set_font",{"UnityEngine.Font"},{font});decorText[i]=r.gchandle_new(mesh,false);}NSString*a=[textEvent[@"start"] description],*b=[textEvent[@"end"] description];NSString*value=a;if([a containsString:@"%P%"]){NSUInteger n=MIN(a.length,(NSUInteger)(b.length*std::clamp((now-scalar(textEvent[@"startTime"]))/std::max(.001,scalar(textEvent[@"endTime"])-scalar(textEvent[@"startTime"])),0.,1.)));value=[b substringToIndex:MIN(n,b.length)];}r.text(mesh,value.UTF8String);r.call(mesh,"set_color",{"UnityEngine.Color"},{&color});}
  }
  // Fake notes are independent SpriteRenderers: never native score/judgement
  // controllers. Only the local 8-second window is allocated.
  if(fakeNotes.empty()){for(NSUInteger li=0;li<data.count;++li)for(NSString*side in @[@"notesAbove",@"notesBelow"])for(NSDictionary*n in data[li][side])if([n[@"pmFake"] boolValue])fakeNotes.push_back({n,(int)li,[side isEqualToString:@"notesBelow"]});}
- for(size_t i=0;i<fakeNotes.size();++i){auto&f=fakeNotes[i];float start=scalar(f.note[@"pmTime"],scalar(f.note[@"time"])/64);float length=scalar(f.note[@"pmDuration"]);bool visible=f.line<total&&now<=start+length&&now>=start-8;P renderer=target(r,fakeRenderers.count(i)?fakeRenderers[i]:0);if(!visible){if(renderer){bool no=false;r.call(renderer,"set_enabled",{"System.Boolean"},{&no});}continue;}P line=r.at(lineList,f.line);if(!renderer){P go=r.object_new(r.type("UnityEngine","GameObject"));keep(r,go);r.call(go,".ctor",{"System.String"},{r.string_new("PhiMod RPE Fake")});P tr=r.call(go,"get_transform");bool no=false;r.call(tr,"SetParent",{"UnityEngine.Transform","System.Boolean"},{r.call(line,"get_transform"),&no});renderer=addComponent(r,go,r.type("UnityEngine","SpriteRenderer"));const char*name=scalar(f.note[@"type"])==2?"Drag":scalar(f.note[@"type"])==4?"Flick":"Click";P prefab=r.get<P>(line,name),source=graphic(r,prefab);if(source)r.call(renderer,"set_sprite",{"UnityEngine.Sprite"},{r.call(source,"get_sprite")});fakeRenderers[i]=r.gchandle_new(renderer,false);}float worldSpeed=r.staticValue<float>(r.klass("LevelInformation"),"Speed","System.Single");float y=(scalar(f.note[@"floorPosition"])-floor(r,info,f.line))*worldSpeed*scalar(f.note[@"pmRawSpeed"],1)+scalar(f.note[@"pmYOffset"])*rpeOffsetToFloor*worldSpeed;V3 position{(float)scalar(f.note[@"positionX"]),f.below?-y:y,0};P tr=r.call(renderer,"get_transform");r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&position});V3 size{(float)scalar(f.note[@"pmSize"],1),.22f,1};r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&size});Color color{1,1,1,(float)scalar(f.note[@"pmAlpha"],1)};r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});bool yes=true;r.call(renderer,"set_enabled",{"System.Boolean"},{&yes});}
+ for(size_t i=0;i<fakeNotes.size();++i){
+  if(failedFakes.count(i))continue;
+  auto&f=fakeNotes[i];float start=scalar(f.note[@"pmTime"],scalar(f.note[@"time"])/64);float length=scalar(f.note[@"pmDuration"]);bool visible=f.line<total&&now<=start+length&&now>=start-8;P renderer=target(r,fakeRenderers.count(i)?fakeRenderers[i]:0);
+  if(!visible){if(renderer){bool no=false;r.call(renderer,"set_enabled",{"System.Boolean"},{&no});}continue;}
+  P line=r.at(lineList,f.line);
+  if(!renderer){
+   P go=nullptr;
+   try{
+    go=r.object_new(r.type("UnityEngine","GameObject"));keep(r,go);r.call(go,".ctor",{"System.String"},{r.string_new("PhiMod RPE Fake")});
+    P tr=r.call(go,"get_transform");bool no=false;r.call(tr,"SetParent",{"UnityEngine.Transform","System.Boolean"},{r.call(line,"get_transform"),&no});
+    renderer=addComponent(r,go,r.type("UnityEngine","SpriteRenderer"));
+   }catch(const std::exception&e){log([NSString stringWithFormat:@"Fake note %zu renderer create failed: %s",i,e.what()]);failedFakes.insert(i);continue;}
+   P sprite=nullptr;
+   // 1) JudgeLineControl 上的 Click/Drag/Flick prefab
+   try{
+    const char*name=scalar(f.note[@"type"])==2?"Drag":scalar(f.note[@"type"])==4?"Flick":"Click";
+    P prefab=r.get<P>(line,name),source=prefab?graphic(r,prefab):nullptr;
+    if(source)sprite=r.call(source,"get_sprite");
+   }catch(const std::exception&e){log([NSString stringWithFormat:@"Fake note %zu prefab lookup failed: %s",i,e.what()]);}
+   // 2) fallback: NoteUpdateManager 对应 controls 的第一个实例
+   if(!r.alive(sprite)){
+    try{
+     P mgr=r.get<P>(judge,"noteUpdateManager");int t=scalar(f.note[@"type"]);
+     const char*list=t==2?"dragControls":t==4?"flickControls":t==3?"holdControls":"clickControls";
+     P controls=r.get<P>(mgr,list);
+     if(controls&&r.count(controls)>0){P c=r.at(controls,0);P sr=r.get<P>(c,"_spriteRenderer");if(r.alive(sr))sprite=r.call(sr,"get_sprite");}
+    }catch(const std::exception&e){log([NSString stringWithFormat:@"Fake note %zu control lookup failed: %s",i,e.what()]);}
+   }
+   // 3) fallback: 判定线 sprite（形状不对，但至少可见）
+   if(!r.alive(sprite)){
+    try{P lr=r.get<P>(line,"_judgeLineSpriteRenderer");if(r.alive(lr))sprite=r.call(lr,"get_sprite");}catch(...){}
+   }
+   if(!r.alive(sprite)){
+    log([NSString stringWithFormat:@"Fake note %zu has no sprite source; skipped",i]);failedFakes.insert(i);
+    if(r.alive(go))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{go});
+    continue;
+   }
+   r.call(renderer,"set_sprite",{"UnityEngine.Sprite"},{sprite});
+   fakeRenderers[i]=r.gchandle_new(renderer,false);
+  }
+  float worldSpeed=r.staticValue<float>(r.klass("LevelInformation"),"Speed","System.Single");
+  // floorPositions 的索引是 JudgeLineControl.index，不是 judgeLineList 数组位置；
+  // 两者在隐藏判定线场景下不同，必须用 index。
+  int lineIndex=r.get<int>(line,"index");
+  float lineFloor=floor(r,info,lineIndex);
+  float y=(scalar(f.note[@"floorPosition"])-lineFloor)*worldSpeed*scalar(f.note[@"pmRawSpeed"],1)+scalar(f.note[@"pmYOffset"])*rpeOffsetToFloor*worldSpeed;
+  V3 position{(float)scalar(f.note[@"positionX"]),f.below?-y:y,0};
+  P tr=r.call(renderer,"get_transform");r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&position});
+  V3 size{(float)scalar(f.note[@"pmSize"],1),.22f,1};r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&size});
+  float alpha=scalar(f.note[@"pmAlpha"],1);if(!std::isfinite(alpha)||alpha<0)alpha=0;if(alpha>1)alpha=1;
+  Color color{1,1,1,alpha};r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});
+  bool yes=true;r.call(renderer,"set_enabled",{"System.Boolean"},{&yes});
+ }
 }
-void noteMoved(Runtime&r,P controlObject,bool hold){P note=r.get<P>(controlObject,"noteInfor");auto it=extras.find(note);if(it==extras.end())return;NSDictionary*n=it->second;int index=r.get<int>(note,"judgeLineIndex")/2;NSArray*lines=currentChart[@"judgeLineList"];NSDictionary*d=index>=0&&index<(int)lines.count?lines[index][@"pmDecor"]:nil;P progress=r.get<P>(controlObject,"progressControl"),info=r.get<P>(controlObject,"levelInformation"),tr=r.call(controlObject,"get_transform");float now=r.get<float>(progress,"nowTime"),start=r.get<float>(note,"realTime");V3 scale=r.unbox<V3>(r.call(tr,"get_localScale"));if(!noteScales.count(controlObject))noteScales[controlObject]=scale;float delta=scalar(n[@"floorPosition"])-floor(r,info,index);float distance=delta*rpeFloorToDistance+scalar(n[@"pmYOffset"]);scale.x=noteScales[controlObject].x*scalar(n[@"pmSize"],1)*control(d,@"sizeControl",distance);r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});if(n[@"pmRawSpeed"]){float speed=r.staticValue<float>(r.klass("LevelInformation"),"Speed","System.Single");V3 position=r.unbox<V3>(r.call(tr,"get_localPosition"));bool below=r.get<int>(note,"judgeLineIndex")%2;auto geometry=rpeGeometry(delta,scalar(n[@"pmEndFloor"],scalar(n[@"floorPosition"]))-floor(r,info,index),0,scalar(n[@"pmRawSpeed"],1),scalar(n[@"pmYOffset"]),control(d,@"yControl",distance),speed,hold&&now>=start);position.x=r.get<float>(note,"positionX")*control(d,@"posControl",distance);position.y=below?-geometry.head:geometry.head;if(hold){P renderer=r.get<P>(controlObject,"_holdSpriteRenderer");P sprite=r.alive(renderer)?r.call(renderer,"get_sprite"):nullptr;if(sprite){Bounds bounds=r.unbox<Bounds>(r.call(sprite,"get_bounds"));float height=bounds.extents.y*2;if(height>.00001f){auto layout=rpeHoldLayout(geometry,height,bounds.center.y-bounds.extents.y,below);position.y=layout.origin;scale.y=layout.scale;r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});for(const char*name:{"holdHead","holdEnd"}){P child=r.get<P>(controlObject,name);if(!r.alive(child))continue;P childTr=r.call(child,"get_transform");V3 cs=r.unbox<V3>(r.call(childTr,"get_localScale"));cs.y=.22f/std::max(.00001f,std::fabs(scale.y));r.call(childTr,"set_localScale",{"UnityEngine.Vector3"},{&cs});V3 cp=r.unbox<V3>(r.call(childTr,"get_localPosition"));cp.y=std::string(name)=="holdEnd"?bounds.center.y+bounds.extents.y:bounds.center.y-bounds.extents.y;r.call(childTr,"set_localPosition",{"UnityEngine.Vector3"},{&cp});}}}}position.z=0;r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&position});}float alpha=scalar(n[@"pmAlpha"],1)*control(d,@"alphaControl",distance);if(start-now>scalar(n[@"pmVisible"],999999))alpha=0;for(const char*field:hold?std::vector<const char*>{"_holdHeadSpriteRenderer","_holdSpriteRenderer","_holdEndSpriteRenderer1"}:std::vector<const char*>{"_spriteRenderer"}){P renderer=r.get<P>(controlObject,field);if(!r.alive(renderer))continue;Color color=r.unbox<Color>(r.call(renderer,"get_color"));color.a=std::min(color.a,alpha);r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});int order=(int)scalar(d[@"zOrder"])*4+(hold?1:2);r.call(renderer,"set_sortingOrder",{"System.Int32"},{&order});}}
-
+void noteMoved(Runtime&r,P controlObject,bool hold){
+ P note=r.get<P>(controlObject,"noteInfor");auto it=extras.find(note);if(it==extras.end())return;
+ NSDictionary*n=it->second;int index=r.get<int>(note,"judgeLineIndex")/2;NSArray*lines=currentChart[@"judgeLineList"];
+ NSDictionary*d=index>=0&&index<(int)lines.count?lines[index][@"pmDecor"]:nil;
+ P progress=r.get<P>(controlObject,"progressControl"),info=r.get<P>(controlObject,"levelInformation"),tr=r.call(controlObject,"get_transform");
+ float now=r.get<float>(progress,"nowTime"),start=r.get<float>(note,"realTime");
+ V3 scale=r.unbox<V3>(r.call(tr,"get_localScale"));if(!noteScales.count(controlObject))noteScales[controlObject]=scale;
+ float delta=scalar(n[@"floorPosition"])-floor(r,info,index);
+ float distance=delta*rpeFloorToDistance+scalar(n[@"pmYOffset"]);
+ float yControlValue=control(d,@"yControl",distance);
+ scale.x=noteScales[controlObject].x*scalar(n[@"pmSize"],1)*control(d,@"sizeControl",distance);
+ r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});
+ if(n[@"pmRawSpeed"]){
+  float speed=r.staticValue<float>(r.klass("LevelInformation"),"Speed","System.Single");
+  V3 position=r.unbox<V3>(r.call(tr,"get_localPosition"));bool below=r.get<int>(note,"judgeLineIndex")%2;
+  float rawSpeed=scalar(n[@"pmRawSpeed"],1);
+  auto geometry=rpeGeometry(delta,scalar(n[@"pmEndFloor"],scalar(n[@"floorPosition"]))-floor(r,info,index),0,rawSpeed,scalar(n[@"pmYOffset"]),yControlValue,speed,hold&&now>=start);
+  position.x=r.get<float>(note,"positionX")*control(d,@"posControl",distance);
+  position.y=below?-geometry.head:geometry.head;
+  if(hold){
+   // Only override Hold geometry while the integrated length is positive.
+   // A non-positive length means the Hold has already crossed the judge
+   // line (or the source data is degenerate); the engine destroys the
+   // body/head/tail itself. Writing scale.y=0.00001 then makes the body
+   // vanish and the head/tail compensation (.22/scale.y = 22000x) push
+   // them off screen, which is the "only body / only head / only tail"
+   // symptom. Leaving the engine's layout untouched fixes it.
+   // yControl==0 is a deliberate line-hide in RPE; we explicitly zero alpha
+   // below instead of asking the engine to render a normal Hold.
+   float length=geometry.tail-geometry.head;
+   bool hidden=std::fabs(yControlValue)<0.0001f;
+   bool degenerate=!std::isfinite(length)||length<=0.0001f||std::fabs(rawSpeed)<=0.0001f;
+   if(!hidden&&!degenerate){
+    P renderer=r.get<P>(controlObject,"_holdSpriteRenderer");
+    P sprite=r.alive(renderer)?r.call(renderer,"get_sprite"):nullptr;
+    if(sprite){
+     Bounds bounds=r.unbox<Bounds>(r.call(sprite,"get_bounds"));
+     float height=bounds.extents.y*2;
+     if(height>.00001f){
+      auto layout=rpeHoldLayout(geometry,height,bounds.center.y-bounds.extents.y,below);
+      position.y=layout.origin;scale.y=layout.scale;
+      r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});
+      // Only cap the compensation at the high end to avoid 2200x blow-ups
+      // on near-zero bodies; do not clamp the low end, otherwise long Holds
+      // (scale.y>4.4) would grow their head/tail instead of holding them at
+      // the RPE-canonical .22 units.
+      float compensation=.22f/std::max(0.00001f,std::fabs(scale.y));
+      if(compensation>100.f)compensation=100.f;
+      for(const char*name:{"holdHead","holdEnd"}){
+       P child=r.get<P>(controlObject,name);if(!r.alive(child))continue;P childTr=r.call(child,"get_transform");
+       V3 cs=r.unbox<V3>(r.call(childTr,"get_localScale"));cs.y=compensation;r.call(childTr,"set_localScale",{"UnityEngine.Vector3"},{&cs});
+       V3 cp=r.unbox<V3>(r.call(childTr,"get_localPosition"));cp.y=std::string(name)=="holdEnd"?bounds.center.y+bounds.extents.y:bounds.center.y-bounds.extents.y;r.call(childTr,"set_localPosition",{"UnityEngine.Vector3"},{&cp});
+      }
+     }
+    }
+   }
+  }
+  position.z=0;r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&position});
+ }
+ float alpha=scalar(n[@"pmAlpha"],1)*control(d,@"alphaControl",distance);
+ if(!std::isfinite(alpha)||alpha<0)alpha=0;if(alpha>1)alpha=1;
+ if(start-now>scalar(n[@"pmVisible"],999999))alpha=0;
+ if(hold&&std::fabs(yControlValue)<0.0001f)alpha=0;
+ for(const char*field:hold?std::vector<const char*>{"_holdHeadSpriteRenderer","_holdSpriteRenderer","_holdEndSpriteRenderer1"}:std::vector<const char*>{"_spriteRenderer"}){
+  P renderer=r.get<P>(controlObject,field);if(!r.alive(renderer))continue;
+  Color color=r.unbox<Color>(r.call(renderer,"get_color"));color.a=std::min(color.a,alpha);r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});
+  int order=(int)scalar(d[@"zOrder"])*4+(hold?1:2);r.call(renderer,"set_sortingOrder",{"System.Int32"},{&order});
+ }
+}
 void ranking(Runtime&r,P self,P mi,void(*original)(P,P)){if(!baseline){original(self,mi);return;}P previous=r.get<P>(self,"song");uint32_t oldRoot=r.gchandle_new(previous,false);P official=decode(r,baseline,"SongBase");uint32_t newRoot=r.gchandle_new(official,false);try{r.put(self,"song",official);original(self,mi);r.put(self,"song",previous);}catch(...){try{r.put(self,"song",previous);}catch(...){}r.gchandle_free(oldRoot);r.gchandle_free(newRoot);throw;}r.gchandle_free(oldRoot);r.gchandle_free(newRoot);}
 void validatePcmCopy(Runtime&r){
  float samples[]={.25f,-.5f,0.f,1.f};int zero=0,count=4;void*ptr=samples;
@@ -346,11 +482,19 @@ void validate(Runtime&r){
  r.field(r.klass("GameInformation"),"nowChapterCode","System.String",true);r.field(r.klass("GameInformation"),"nextScene","System.String",true);r.field(r.klass("GameInformation"),"song","SongBase",false);r.field(r.klass("GameInformation"),"chapters","Chapter[]",false);
  r.field(r.klass("ChartNote"),"judgeLineIndex","System.Int32",false);r.field(r.klass("LevelControl"),"chart","Chart",false);r.field(r.klass("LevelControl"),"songsName","UnityEngine.UI.Text",false);
  r.field(r.klass("LevelInformation"),"floorPositions","System.Single[]",false);r.field(r.klass("LevelInformation"),"Speed","System.Single",true);
- P renderer=r.type("UnityEngine","SpriteRenderer");r.resolve(renderer,"get_sprite");r.resolve(renderer,"set_sprite",{"UnityEngine.Sprite"});r.resolve(renderer,"get_color");r.resolve(renderer,"set_color",{"UnityEngine.Color"});r.resolve(renderer,"set_sortingOrder",{"System.Int32"});r.resolve(r.type("UnityEngine","Sprite"),"Create",{"UnityEngine.Texture2D","UnityEngine.Rect","UnityEngine.Vector2","System.Single"},true);
+ P renderer=r.type("UnityEngine","SpriteRenderer");r.resolve(renderer,"get_sprite");r.resolve(renderer,"set_sprite",{"UnityEngine.Sprite"});r.resolve(renderer,"get_color");r.resolve(renderer,"set_color",{"UnityEngine.Color"});r.resolve(renderer,"set_sortingOrder",{"System.Int32"});r.resolve(renderer,"get_sortingOrder");r.resolve(r.type("UnityEngine","Sprite"),"Create",{"UnityEngine.Texture2D","UnityEngine.Rect","UnityEngine.Vector2","System.Single"},true);
  r.resolve(texture,".ctor",{"System.Int32","System.Int32","UnityEngine.TextureFormat","System.Boolean"});
  P uiImage=r.type("UnityEngine.UI","Image");r.resolve(uiImage,"get_sprite");r.resolve(uiImage,"set_sprite",{"UnityEngine.Sprite"});r.field(r.klass("AddressableImageLoader"),"_image","UnityEngine.UI.Image",false);r.field(r.klass("AddressableImageLoader"),"_sprite","UnityEngine.SpriteRenderer",false);
  r.resolve(r.type("UnityEngine","TextAsset"),".ctor",{"System.String"});r.resolve(r.type("UnityEngine","AudioClip"),"Create",{"System.String","System.Int32","System.Int32","System.Int32","System.Boolean"},true);r.resolve(r.type("System.Runtime.InteropServices","Marshal"),"copy_from_unmanaged",{"System.IntPtr","System.Int32","System.Array","System.Int32"},true);
  r.resolve(r.type("UnityEngine","AudioClip"),"SetData",{"System.Single[]","System.Int32"});
+ // Fake note rendering needs these; missing fields fall through to fallback
+ // chains inside visuals() rather than aborting the frame.
+ for(const char*name:{"Click","Drag","Flick","Hold"})
+  try{r.field(r.klass("JudgeLineControl"),name,"UnityEngine.GameObject",false);}catch(...){}
+ for(const char*name:{"clickControls","dragControls","holdControls","flickControls"}){
+  std::string t="System.Collections.Generic.List<";t+=!strcmp(name,"clickControls")?"ClickControl":!strcmp(name,"dragControls")?"DragControl":!strcmp(name,"holdControls")?"HoldControl":"FlickControl";t+='>';
+  try{r.field(r.klass("NoteUpdateManager"),name,t.c_str(),false);}catch(...){}
+ }
  validatePcmCopy(r);
 }
 }
