@@ -21,7 +21,7 @@ NSDictionary*officialCache=nil;
 NSDictionary*baseline=nil;NSArray*originalChapters=nil;NSDictionary*currentChart=nil;NSString*resourceSubdir=@"";
 std::map<P,uint32_t>textures;std::map<std::string,uint32_t>assets;std::map<P,std::string>refs;std::map<std::string,int>users;
 std::map<std::string,std::map<int,NSDictionary*>>variants;std::map<P,NSDictionary*>extras;std::map<P,V3>noteScales,lineScales;std::map<int,uint32_t>decorText,decorImage;
-struct Fake{NSDictionary*note;int line;bool below;};std::vector<Fake>fakeNotes;std::map<size_t,uint32_t>fakeRenderers;std::set<size_t>failedFakes;std::vector<uint32_t>visualRoots;
+struct Fake{NSDictionary*note;int line;bool below;};std::vector<Fake>fakeNotes;std::map<int,std::vector<RpeFloorSegment>>sourceFloors;std::map<size_t,std::pair<uint32_t,uint32_t>>fakeHoldEnds;std::map<size_t,uint32_t>fakeRenderers;std::set<size_t>failedFakes;std::vector<uint32_t>visualRoots;
 // Engine-provided baseline sortingOrder per judge line, so pmDecor.zOrder=0
 // never sinks a custom-chart line behind the background.
 std::map<P,int>lineBaseOrder;
@@ -120,7 +120,7 @@ P audio(Runtime&r,NSString*path){
  }catch(...){r.gchandle_free(clipRoot);throw;}
 }
 NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=key.lowercaseString;*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":@"image";return id;}
-void clearVisuals(Runtime&r){for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();fakeNotes.clear();fakeRenderers.clear();lineBaseOrder.clear();failedFakes.clear();currentChart=nil;}
+void clearVisuals(Runtime&r){for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();fakeNotes.clear();fakeRenderers.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();failedFakes.clear();currentChart=nil;}
 void applyCachedChapterCover(Runtime&r,P card,const char*codeField,const char*loaderField){
  NSString*code=r.string(r.get<P>(card,codeField));if(!code.length)return;auto found=assets.find(code.UTF8String);if(found==assets.end())return;P sprite=target(r,found->second);if(!r.alive(sprite))return;
  P loader=r.get<P>(card,loaderField);if(!r.alive(loader))return;bool changed=false;
@@ -283,7 +283,15 @@ bool assetRelease(Runtime&r,P self,bool force){
 }
 void levelInfo(Runtime&r,P song,int slot,P info){NSString*id=r.string(r.get<P>(song,"songsId"));NSDictionary*custom=songFor(id,slot);if(!custom||!info)return;NSString*identifier=custom[@"id"];for(const auto&entry:std::vector<std::pair<const char*,NSString*>>{{"songsId",identifier},{"songsName",custom[@"title"] ?: @""},{"composer",custom[@"composer"] ?: @""},{"charter",custom[@"charter"] ?: @""},{"illustrator",custom[@"illustrator"] ?: @""},{"songsDifficulty",[custom[@"difficulty"] description]}})r.put(info,entry.first,r.managedString(entry.second));for(auto pair:std::vector<std::pair<const char*,const char*>>{{"musicAddressableKey","music"},{"chartAddressableKey","chart"},{"illustrationKey","image"}}){NSString*k=[NSString stringWithFormat:@"PM/%@/%s@%lu",identifier,pair.second,(unsigned long)PMContentStore.shared.revision];r.put(info,pair.first,r.managedString(k));}}
 void beforeChart(Runtime&r,P level){if(!levelID.length)return;NSString*path=[[PMContentStore.shared asset:levelID]stringByAppendingPathComponent:@"chart.json"];NSData*d=[NSData dataWithContentsOfFile:path];currentChart=d?[NSJSONSerialization JSONObjectWithData:d options:0 error:nil]:nil;if(!currentChart)throw std::runtime_error("Custom visual chart missing");resourceSubdir=@"";for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"]isEqualToString:levelID])resourceSubdir=s[@"resourceRoot"] ?: @"";}
-void afterChart(Runtime&r,P level){if(!currentChart)return;P chart=r.get<P>(level,"chart"),lines=r.get<P>(chart,"judgeLineList");NSArray*data=currentChart[@"judgeLineList"];for(int i=0,n=std::min<int>(r.count(lines),(int)data.count);i<n;++i){P line=r.at(lines,i);for(NSString*side in @[@"notesAbove",@"notesBelow"]){P list=r.get<P>(line,side.UTF8String);NSMutableArray*real=[NSMutableArray new];for(NSDictionary*note in data[i][side])if(![note[@"pmFake"] boolValue])[real addObject:note];for(int j=0,total=std::min<int>(r.count(list),(int)real.count);j<total;++j){P note=r.at(list,j);extras[note]=real[j];if(real[j][@"pmTime"])r.put(note,"realTime",[real[j][@"pmTime"] floatValue]);if(real[j][@"pmDuration"]&&r.get<int>(note,"type")==3)r.put(note,"holdTime",[real[j][@"pmDuration"] floatValue]);}}}}
+void afterChart(Runtime&r,P level){if(!currentChart)return;sourceFloors.clear();int sourceIndex=0;
+ for(NSDictionary*sourceLine in currentChart[@"judgeLineList"]){
+  double secondsPerTick=60.0/(32.0*[sourceLine[@"bpm"] doubleValue]);
+  auto&track=sourceFloors[sourceIndex++];
+  if(!std::isfinite(secondsPerTick)||secondsPerTick<=0)continue;
+  for(NSDictionary*event in sourceLine[@"speedEvents"])track.push_back({[event[@"startTime"] doubleValue]*secondsPerTick,[event[@"endTime"] doubleValue]*secondsPerTick,[event[@"value"] doubleValue],[event[@"floorPosition"] doubleValue]});
+  std::stable_sort(track.begin(),track.end(),[](const auto&a,const auto&b){return a.start<b.start;});
+ }
+P chart=r.get<P>(level,"chart"),lines=r.get<P>(chart,"judgeLineList");NSArray*data=currentChart[@"judgeLineList"];for(int i=0,n=std::min<int>(r.count(lines),(int)data.count);i<n;++i){P line=r.at(lines,i);for(NSString*side in @[@"notesAbove",@"notesBelow"]){P list=r.get<P>(line,side.UTF8String);NSMutableArray*real=[NSMutableArray new];for(NSDictionary*note in data[i][side])if(![note[@"pmFake"] boolValue])[real addObject:note];for(int j=0,total=std::min<int>(r.count(list),(int)real.count);j<total;++j){P note=r.at(list,j);extras[note]=real[j];if(real[j][@"pmTime"])r.put(note,"realTime",[real[j][@"pmTime"] floatValue]);if(real[j][@"pmDuration"]&&r.get<int>(note,"type")==3)r.put(note,"holdTime",[real[j][@"pmDuration"] floatValue]);}}}}
 namespace {
 double scalar(id value,double fallback=0){return [value respondsToSelector:@selector(doubleValue)]?[value doubleValue]:fallback;}
 phimod::rpe::Event visualEvent(NSDictionary*v,int channel=-1){phimod::rpe::Event e;e.s=scalar(v[@"startTime"]);e.e=scalar(v[@"endTime"]);id a=v[@"start"],b=v[@"end"];if(channel>=0){a=[a isKindOfClass:NSArray.class]&&[a count]>channel?a[channel]:@255;b=[b isKindOfClass:NSArray.class]&&[b count]>channel?b[channel]:@255;}e.a=scalar(a);e.b=scalar(b);if(channel>=0){e.a/=255;e.b/=255;}e.easing=(int)scalar(v[@"easingType"],1);e.left=scalar(v[@"easingLeft"],0);e.right=scalar(v[@"easingRight"],1);NSArray*p=v[@"bezierPoints"];if([v[@"bezier"] boolValue]&&p.count==4){e.bezier=true;for(int i=0;i<4;++i)e.points[i]=scalar(p[i]);}return e;}
@@ -292,6 +300,8 @@ double control(NSDictionary*d,NSString*key,double distance){NSArray*points=d[key
 P addComponent(Runtime&r,P go,P type){return r.call(go,"AddComponent",{"System.Type"},{r.type_get_object(r.class_get_type(type))});}
 P graphic(Runtime&r,P go){P list=r.children(go,r.type("UnityEngine","SpriteRenderer"));return list&&r.array_length(list)?r.arrayAt(list,0):nullptr;}
 float floor(Runtime&r,P info,int index){P a=r.get<P>(info,"floorPositions");return a&&index>=0&&uintptr_t(index)<r.array_length(a)?r.unbox<float>(r.arrayAt(a,index)):0;}
+double sourceFloor(int index,double now,double fallback){auto it=sourceFloors.find(index);return it==sourceFloors.end()?fallback:rpeFloor(it->second,now,fallback);}
+
 }
 void visuals(Runtime&r,P progress){
  if(!currentChart)return;P judge=r.get<P>(progress,"judgeControl"),lineList=r.get<P>(judge,"judgeLineControls"),info=r.get<P>(progress,"levelInformation");float now=r.get<float>(progress,"nowTime");NSArray*data=currentChart[@"judgeLineList"];int total=std::min<int>(r.count(lineList),(int)data.count);if(total<=0)return;
@@ -322,6 +332,7 @@ void visuals(Runtime&r,P progress){
  P renderer=target(r,fakeRenderers.count(i)?fakeRenderers[i]:0);
  if(!visible){
   if(renderer){bool no=false;r.call(renderer,"set_enabled",{"System.Boolean"},{&no});}
+  auto ends=fakeHoldEnds.find(i);if(ends!=fakeHoldEnds.end())for(uint32_t h:{ends->second.first,ends->second.second}){P sr=target(r,h);if(r.alive(sr)){bool no=false;r.call(sr,"set_enabled",{"System.Boolean"},{&no});}}
   continue;
  }
  P line=r.at(lineList,f.line);
@@ -343,14 +354,17 @@ void visuals(Runtime&r,P progress){
   P sprite=nullptr;
   // 优先 JudgeLineControl 上的 Click prefab
   try{
-   P prefab=r.get<P>(line,"Click");
+   int fakeType=(int)scalar(f.note[@"type"],1);
+   const char*prefabName=fakeType==2?"Drag":fakeType==4?"Flick":fakeType==3?"Hold":"Click";
+   P prefab=r.get<P>(line,prefabName);
    P source=prefab?graphic(r,prefab):nullptr;
+   if(fakeType==3&&prefab){P hc=r.component(prefab,r.klass("HoldControl"));if(hc){P body=r.get<P>(hc,"_holdSpriteRenderer");if(r.alive(body))source=body;}}
    if(source)sprite=r.call(source,"get_sprite");
   }catch(const std::exception&e){
    log([NSString stringWithFormat:@"Fake note %zu Click prefab unavailable: %s",i,e.what()]);
   }
   // fallback：NoteUpdateManager.clickControls[0] 的 sprite（Tap 形状，不是 hold body）
-  if(!r.alive(sprite)){
+  if(!r.alive(sprite)&&(int)scalar(f.note[@"type"],1)==1){
    try{
     P judge=r.get<P>(progress,"judgeControl");
     P mgr=r.get<P>(judge,"noteUpdateManager");
@@ -373,23 +387,58 @@ void visuals(Runtime&r,P progress){
   }
   r.call(renderer,"set_sprite",{"UnityEngine.Sprite"},{sprite});
   fakeRenderers[i]=r.gchandle_new(renderer,false);
+  if((int)scalar(f.note[@"type"])==3){
+   P prefab=r.get<P>(line,"Hold"),hc=prefab?r.component(prefab,r.klass("HoldControl")):nullptr;
+   uint32_t handles[2]{};
+   for(int k=0;k<2;++k){
+    P src=hc?r.get<P>(hc,k?"_holdEndSpriteRenderer1":"_holdHeadSpriteRenderer"):nullptr;
+    if(!r.alive(src))continue;
+    P image=r.call(src,"get_sprite");if(!r.alive(image))continue;
+    P child=r.object_new(r.type("UnityEngine","GameObject"));keep(r,child);
+    r.call(child,".ctor",{"System.String"},{r.string_new(k?"PhiMod Fake Hold Tail":"PhiMod Fake Hold Head")});
+    P ct=r.call(child,"get_transform");bool no=false;
+    r.call(ct,"SetParent",{"UnityEngine.Transform","System.Boolean"},{tr,&no});
+    P sr=addComponent(r,child,r.type("UnityEngine","SpriteRenderer"));r.call(sr,"set_sprite",{"UnityEngine.Sprite"},{image});
+    handles[k]=r.gchandle_new(sr,false);
+   }
+   fakeHoldEnds[i]={handles[0],handles[1]};
+  }
+
  }
  float worldSpeed=r.staticValue<float>(r.klass("LevelInformation"),"Speed","System.Single");
  // floorPositions 的索引是 JudgeLineControl.index，不是 judgeLineList 数组位置
  int lineIndex=r.get<int>(line,"index");
- float y=(scalar(f.note[@"floorPosition"])-floor(r,info,lineIndex))*worldSpeed*scalar(f.note[@"pmRawSpeed"],1)+scalar(f.note[@"pmYOffset"])*rpeOffsetToFloor*worldSpeed;
- V3 position{(float)scalar(f.note[@"positionX"]),f.below?-y:y,0};
+ double currentFloor=sourceFloor(f.line,now,floor(r,info,lineIndex));
+ bool isHold=(int)scalar(f.note[@"type"])==3;
+ NSDictionary*decor=data[f.line][@"pmDecor"];
+ double distance=(scalar(f.note[@"floorPosition"])-currentFloor)*rpeFloorToDistance+scalar(f.note[@"pmYOffset"]);
+ auto geometry=rpeGeometry(scalar(f.note[@"floorPosition"])-currentFloor,scalar(f.note[@"pmEndFloor"],scalar(f.note[@"floorPosition"]))-currentFloor,0,scalar(f.note[@"pmRawSpeed"],1),scalar(f.note[@"pmYOffset"]),control(decor,@"yControl",distance),worldSpeed,isHold&&now>=start);
+ V3 position{(float)(scalar(f.note[@"positionX"])*control(decor,@"posControl",distance)),f.below?-geometry.head:geometry.head,0};
  P tr=r.call(renderer,"get_transform");
+ float sizeX=scalar(f.note[@"pmSize"],1)*control(decor,@"sizeControl",distance);
+ if(!std::isfinite(sizeX))sizeX=1;
+ // Native note sprites use .22 on both axes; size affects width only.
+ V3 size{.22f*sizeX,.22f,1};
+ if(isHold){
+  P sprite=r.call(renderer,"get_sprite");Bounds bounds=r.unbox<Bounds>(r.call(sprite,"get_bounds"));
+  if(bounds.extents.y>0.00001f){
+   auto layout=rpeHoldLayout(geometry,bounds.extents.y*2,bounds.center.y-bounds.extents.y,f.below);
+   size.y=layout.scale;position.y=layout.origin;
+   auto ends=fakeHoldEnds.find(i);
+   if(ends!=fakeHoldEnds.end())for(int k=0;k<2;++k){P sr=target(r,k?ends->second.second:ends->second.first);if(!r.alive(sr))continue;
+    P ct=r.call(sr,"get_transform");V3 cs{1,.22f/std::fabs(size.y),1},cp{0,bounds.center.y+(k?bounds.extents.y:-bounds.extents.y),0};
+    r.call(ct,"set_localScale",{"UnityEngine.Vector3"},{&cs});r.call(ct,"set_localPosition",{"UnityEngine.Vector3"},{&cp});
+   }
+  }
+ }
  r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&position});
- float sizeX=scalar(f.note[@"pmSize"],1);
- if(!std::isfinite(sizeX)||sizeX<0.1f)sizeX=1.f;
- if(sizeX>3.f)sizeX=3.f;
- V3 size{sizeX,.22f,1};
  r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&size});
  float alpha=scalar(f.note[@"pmAlpha"],1);
  if(!std::isfinite(alpha)||alpha<0)alpha=0;
  if(alpha>1)alpha=1;
+ if(start-now>scalar(f.note[@"pmVisible"],999999))alpha=0;
  Color color{1,1,1,alpha};
+ auto ends=fakeHoldEnds.find(i);if(ends!=fakeHoldEnds.end())for(uint32_t h:{ends->second.first,ends->second.second}){P sr=target(r,h);if(r.alive(sr)){bool yes=true;r.call(sr,"set_color",{"UnityEngine.Color"},{&color});r.call(sr,"set_enabled",{"System.Boolean"},{&yes});}}
  r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});
  bool yes=true;
  r.call(renderer,"set_enabled",{"System.Boolean"},{&yes});
@@ -402,7 +451,8 @@ void noteMoved(Runtime&r,P controlObject,bool hold){
  P progress=r.get<P>(controlObject,"progressControl"),info=r.get<P>(controlObject,"levelInformation"),tr=r.call(controlObject,"get_transform");
  float now=r.get<float>(progress,"nowTime"),start=r.get<float>(note,"realTime");
  V3 scale=r.unbox<V3>(r.call(tr,"get_localScale"));if(!noteScales.count(controlObject))noteScales[controlObject]=scale;
- float delta=scalar(n[@"floorPosition"])-floor(r,info,index);
+ double currentFloor=sourceFloor(index,now,floor(r,info,index));
+ float delta=scalar(n[@"floorPosition"])-currentFloor;
  float distance=delta*rpeFloorToDistance+scalar(n[@"pmYOffset"]);
  float yControlValue=control(d,@"yControl",distance);
  scale.x=noteScales[controlObject].x*scalar(n[@"pmSize"],1)*control(d,@"sizeControl",distance);
@@ -416,17 +466,28 @@ void noteMoved(Runtime&r,P controlObject,bool hold){
  float yOffset=scalar(n[@"pmYOffset"],0);
  position.x=r.get<float>(note,"positionX")*control(d,@"posControl",distance);
  if(hold){
-  // 引擎已经把 body 长度、head/tail 局部位置、below 镜像都算对了。
-  // rpeHoldLayout 的 floor 单位与 sprite 世界高度不匹配，会把 scale.y 压到 ~0.00001；
-  // position.y 再按 below 取负又会把引擎的镜像翻回去。
-  // 这里保留引擎的 transform，只把 RPE 的 yOffset（按 yControl 缩放）叠到 position.y。
-  if(std::isfinite(yOffset)&&std::fabs(yOffset)>.00001f){
-   float yc=(std::isfinite(yControl)&&std::fabs(yControl)>.00001f)?yControl:1.f;
-   float shift=yOffset*rpeOffsetToFloor*rawSpeed*speed*yc;
-   position.y+=below?-shift:shift;
+  // Android applyRpeGeometry: both endpoints use the same source integral.
+  // Once started, pin the head to the line and shorten the remaining body.
+  auto geometry=rpeGeometry(delta,scalar(n[@"pmEndFloor"],scalar(n[@"floorPosition"]))-currentFloor,0,rawSpeed,yOffset,yControl,speed,now>=start);
+  P body=r.get<P>(controlObject,"_holdSpriteRenderer"),sprite=r.alive(body)?r.call(body,"get_sprite"):nullptr;
+  if(r.alive(sprite)){
+   Bounds bounds=r.unbox<Bounds>(r.call(sprite,"get_bounds"));float height=2*bounds.extents.y;
+   if(height>0.00001f){
+    auto layout=rpeHoldLayout(geometry,height,bounds.center.y-bounds.extents.y,below);
+    scale.y=layout.scale;position.y=layout.origin;
+    // Native below Holds can already be rotated; mirror exactly once via scale.
+    V3 zero{0,0,0};r.call(tr,"set_localEulerAngles",{"UnityEngine.Vector3"},{&zero});
+    for(int k=0;k<2;++k){
+     P child=r.get<P>(controlObject,k?"holdEnd":"holdHead");if(!r.alive(child))continue;
+     P ct=r.call(child,"get_transform");V3 cs=r.unbox<V3>(r.call(ct,"get_localScale"));cs.y=.22f/std::fabs(scale.y);
+     r.call(ct,"set_localScale",{"UnityEngine.Vector3"},{&cs});
+     if(k||!r.get<bool>(controlObject,"_holdHeadIsDestroyed")){V3 cp=r.unbox<V3>(r.call(ct,"get_localPosition"));cp.y=bounds.center.y+(k?bounds.extents.y:-bounds.extents.y);r.call(ct,"set_localPosition",{"UnityEngine.Vector3"},{&cp});}
+    }
+    r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});
+   }
   }
  }else{
-  auto geometry=rpeGeometry(delta,scalar(n[@"pmEndFloor"],scalar(n[@"floorPosition"]))-floor(r,info,index),0,rawSpeed,yOffset,yControl,speed,false);
+  auto geometry=rpeGeometry(delta,scalar(n[@"pmEndFloor"],scalar(n[@"floorPosition"]))-currentFloor,0,rawSpeed,yOffset,yControl,speed,false);
   position.y=below?-geometry.head:geometry.head;
  }
  position.z=0;
