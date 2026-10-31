@@ -2,6 +2,35 @@
 #import <Foundation/Foundation.h>
 #include <cmath>
 
+// Android org.json accepts numeric strings and treats optional JSON null as
+// absent. Normalize only known schema fields; unknown condition types still fail.
+inline id PMNormalizeUnlockRule(id raw){
+ if(!raw||raw==NSNull.null)return nil;
+ if(![raw isKindOfClass:NSDictionary.class])return raw;
+ NSMutableDictionary*rule=[raw mutableCopy];
+ void (^number)(NSMutableDictionary*,NSString*)=^(NSMutableDictionary*d,NSString*k){
+  id v=d[k];if(v==NSNull.null){[d removeObjectForKey:k];return;}
+  if(![v isKindOfClass:NSString.class])return;
+  NSScanner*scanner=[NSScanner scannerWithString:v];double n=0;
+  if([scanner scanDouble:&n]&&scanner.isAtEnd&&std::isfinite(n))d[k]=@(n);
+ };
+ void (^boolean)(NSMutableDictionary*,NSString*)=^(NSMutableDictionary*d,NSString*k){
+  id v=d[k];if(v==NSNull.null){[d removeObjectForKey:k];return;}
+  if([v isKindOfClass:NSString.class]){if([v caseInsensitiveCompare:@"true"]==NSOrderedSame)d[k]=@YES;else if([v caseInsensitiveCompare:@"false"]==NSOrderedSame)d[k]=@NO;}
+ };
+ for(NSString*k in @[@"mode",@"animation",@"chain",@"conditions"])if(rule[k]==NSNull.null)[rule removeObjectForKey:k];
+ boolean(rule,@"enabled");number(rule,@"playTiming");
+ if([rule[@"conditions"] isKindOfClass:NSArray.class]){
+  NSMutableArray*out=[NSMutableArray new];
+  for(id rawCondition in rule[@"conditions"]){
+   if(![rawCondition isKindOfClass:NSDictionary.class]){[out addObject:rawCondition];continue;}
+   NSMutableDictionary*c=[rawCondition mutableCopy];number(c,@"value");number(c,@"slot");[out addObject:c];
+  }rule[@"conditions"]=out;
+ }
+ if([rule[@"chain"] isKindOfClass:NSDictionary.class]){NSMutableDictionary*c=[rule[@"chain"] mutableCopy];boolean(c,@"enabled");number(c,@"slot");rule[@"chain"]=c;}
+ return rule;
+}
+
 // Mirrors UnlockRules.validate in the Android chapter format.
 inline NSString *PMUnlockValidationError(id raw) {
  if (!raw) return nil;

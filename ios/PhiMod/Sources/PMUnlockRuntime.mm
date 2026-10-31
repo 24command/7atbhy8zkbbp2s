@@ -25,7 +25,7 @@ P target(Runtime&r,uint32_t h){return h?r.gchandle_get_target(h):nullptr;}
 NSString*slotName(int slot){return @[@"EZ",@"HD",@"IN",@"AT"][std::clamp(slot,0,3)];}
 NSDictionary*entity(NSString*id){NSDictionary*db=[PMContentStore.shared snapshot];for(NSDictionary*s in db[@"songs"])if([s[@"id"] isEqualToString:id])return s;for(NSDictionary*c in db[@"chapters"])if([c[@"id"] isEqualToString:id])return c;return nil;}
 NSDictionary*songEntity(NSString*id,int slot){NSDictionary*db=[PMContentStore.shared snapshot];NSString*selected=db[@"chartSelections"][[NSString stringWithFormat:@"%@@%d",id,slot]];NSDictionary*fallback=nil;for(NSDictionary*s in db[@"songs"]){if(![s[@"id"] isEqualToString:id]&&![s[@"groupId"] isEqualToString:id])continue;if(![[s[@"level"] uppercaseString] isEqualToString:slotName(slot)])continue;if([s[@"id"] isEqualToString:selected])return s;if(!fallback)fallback=s;}return fallback;}
-NSDictionary*ruleFor(NSString*id){return entity(id)[@"unlock"];}
+NSDictionary*ruleFor(NSString*id){return PMNormalizeUnlockRule(entity(id)[@"unlock"]);}
 P record(Runtime&r,NSString*id,int slot){try{return r.call(r.mainGame(),"GetSongRecord",{"System.String","System.String"},{r.managedString(id),r.managedString(slotName(slot))});}catch(...){return nullptr;}}
 double rksValue(Runtime&r){try{P gi=r.mainGame();P boxed=r.call(gi,"get_RankingScore");return r.unbox<float>(boxed);}catch(...){return -1;}}
 bool recordPass(Runtime&r,NSDictionary*c){

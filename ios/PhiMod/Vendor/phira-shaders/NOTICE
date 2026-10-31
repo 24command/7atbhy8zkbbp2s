@@ -1,0 +1,3 @@
+GLSL presets originate from Phira-Pro/prpr/src/core/shaders, provided in the user-supplied Phira-Pro-main archive. Distributed under GPL-3.0. Original per-shader source attribution is retained in native/rpe_shader_presets.h.
+
+The preset source rpe_shader_presets.h was copied from the supplied PhigrosPhi 0.1.5-v4 Android mod. The iOS backend translates these presets to Metal at runtime. Original shader comments and GPL-3.0 license are retained.

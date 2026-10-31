@@ -8,6 +8,7 @@ bool assetConstructor(pmbridge::Runtime&,void*self,void*key);bool assetRelease(p
 void levelInfo(pmbridge::Runtime&,void*song,int slot,void*info);
 void selectorFrame(pmbridge::Runtime&,void*selector);
 NSDictionary*officialSnapshot();NSDictionary*cachedOfficialSnapshot();NSDictionary*command(NSString*action,NSString*identifier,int slot);
+void beforeInformation(pmbridge::Runtime&,void*level);
 void beforeChart(pmbridge::Runtime&,void*level);void afterChart(pmbridge::Runtime&,void*level);
 void visuals(pmbridge::Runtime&,void*progress);void noteMoved(pmbridge::Runtime&,void*control,bool hold);
 void ranking(pmbridge::Runtime&,void*,void*,void(*)(void*,void*));

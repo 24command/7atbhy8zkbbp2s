@@ -5,6 +5,10 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <objc/runtime.h>
 
+@interface UIViewController (PMSkinRefresh)
+- (void)reloadPacks;
+@end
+
 @interface PMResourcePackPicker : NSObject <UIDocumentPickerDelegate>
 @property(nonatomic,weak) UIViewController *presenter;
 @property(nonatomic) dispatch_queue_t worker;
@@ -14,6 +18,7 @@
 @implementation PMResourcePackPicker
 - (void)showResult:(NSString*)message presenter:(UIViewController*)presenter picker:(UIDocumentPickerViewController*)picker {
  void(^show)(void)=^{
+  if([presenter respondsToSelector:@selector(reloadPacks)])[(id)presenter reloadPacks];
   UIAlertController*a=[UIAlertController alertControllerWithTitle:@"Resource pack" message:message preferredStyle:UIAlertControllerStyleAlert];
   [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
   if(presenter)[presenter presentViewController:a animated:YES completion:^{objc_setAssociatedObject(presenter,@selector(PMShowResourcePackPicker),nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}];
@@ -84,11 +89,76 @@
 }
 @end
 
-void PMShowResourcePackPicker(UIView *source){
+static void PMImportResourcePack(UIView *source){
  UIViewController*presenter=source.window.rootViewController;if(!presenter)return;while(presenter.presentedViewController)presenter=presenter.presentedViewController;
+ if([presenter isKindOfClass:UINavigationController.class])presenter=((UINavigationController*)presenter).visibleViewController;
  PMResourcePackPicker*delegate=[PMResourcePackPicker new];delegate.presenter=presenter;delegate.worker=dispatch_queue_create("phimod.resource-pack.import",DISPATCH_QUEUE_SERIAL);
  objc_setAssociatedObject(presenter,@selector(PMShowResourcePackPicker),delegate,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
  UIDocumentPickerViewController*p=[[UIDocumentPickerViewController alloc]initForOpeningContentTypes:@[UTTypeZIP,UTTypeData] asCopy:YES];p.delegate=delegate;p.allowsMultipleSelection=NO;[presenter presentViewController:p animated:YES completion:nil];
 }
 
 
+
+@interface PMSkinLibrary : UITableViewController
+@property(nonatomic,strong) NSArray* packs;
+@property(nonatomic,copy) NSString* root;
+@property(nonatomic,copy) NSString* selected;
+@property(nonatomic) BOOL enabled;
+@end
+@implementation PMSkinLibrary
+- (void)viewDidLoad {
+ [super viewDidLoad];self.title=@"\u97f3\u7b26\u76ae\u80a4";
+ self.root=[NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject stringByAppendingPathComponent:@"PhiMod/resources"];
+ self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc]initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
+ self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc]initWithBarButtonSystemItem:UIBarButtonSystemItemAdd target:self action:@selector(importPack)];
+}
+- (void)viewWillAppear:(BOOL)animated {[super viewWillAppear:animated];[self reloadPacks];}
+- (void)reloadPacks {
+ NSMutableArray*items=[NSMutableArray new];NSFileManager*f=NSFileManager.defaultManager;
+ for(NSString*name in [f contentsOfDirectoryAtPath:self.root error:nil]){
+  NSString*path=[self.root stringByAppendingPathComponent:name];BOOL dir=NO;
+  if(![f fileExistsAtPath:path isDirectory:&dir]||!dir)continue;
+  BOOL valid=YES;for(NSString*file in @[@"click.png",@"drag.png",@"flick.png",@"hold.png"])if(![f fileExistsAtPath:[path stringByAppendingPathComponent:file]])valid=NO;
+  if(valid)[items addObject:name];
+ }
+ self.packs=[items sortedArrayUsingSelector:@selector(localizedStandardCompare:)];
+ self.selected=[[NSString stringWithContentsOfFile:[self.root stringByAppendingPathComponent:@"active.txt"] encoding:NSUTF8StringEncoding error:nil]stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+ self.enabled=PMSettingBool("skinEnabled");[self.tableView reloadData];
+}
+- (void)close {[self dismissViewControllerAnimated:YES completion:nil];}
+- (void)importPack {PMImportResourcePack(self.view);}
+- (NSInteger)tableView:(UITableView*)tableView numberOfRowsInSection:(NSInteger)section {return self.packs.count+1;}
+- (NSString*)tableView:(UITableView*)tableView titleForFooterInSection:(NSInteger)section {return @"\u9009\u62e9\u540e\u4e0b\u6b21\u8fdb\u5165\u6b4c\u66f2\u751f\u6548\u3002\u70b9\u51fb + \u5bfc\u5165\u65b0\u76ae\u80a4\u3002";}
+- (UITableViewCell*)tableView:(UITableView*)tableView cellForRowAtIndexPath:(NSIndexPath*)indexPath {
+ UITableViewCell*cell=[tableView dequeueReusableCellWithIdentifier:@"skin"];
+ if(!cell)cell=[[UITableViewCell alloc]initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"skin"];
+ NSString*name=indexPath.row?self.packs[indexPath.row-1]:nil;NSString*display=name;
+ if(name.length>37&&[name characterAtIndex:36]=='-'&&[[NSUUID alloc]initWithUUIDString:[name substringToIndex:36]])display=[name substringFromIndex:37];
+ cell.textLabel.text=name?display:@"\u539f\u7248\u6837\u5f0f";cell.detailTextLabel.text=name;
+ cell.accessoryType=(!name?!self.enabled:(self.enabled&&[name isEqualToString:self.selected]))?UITableViewCellAccessoryCheckmark:UITableViewCellAccessoryNone;
+ return cell;
+}
+- (void)tableView:(UITableView*)tableView didSelectRowAtIndexPath:(NSIndexPath*)indexPath {
+ [tableView deselectRowAtIndexPath:indexPath animated:YES];
+ NSString*name=indexPath.row?self.packs[indexPath.row-1]:nil;
+ NSString*path=[self.root stringByAppendingPathComponent:@"active.txt"];
+ NSData*previous=[NSData dataWithContentsOfFile:path];NSError*error=nil;NSString*settingsError=nil;BOOL ok=YES;
+ if(name){for(NSString*file in @[@"click.png",@"drag.png",@"flick.png",@"hold.png"])if(![NSFileManager.defaultManager fileExistsAtPath:[[self.root stringByAppendingPathComponent:name]stringByAppendingPathComponent:file]])ok=NO;
+  if(ok)ok=[name writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&error];
+ }
+ if(ok){ok=[[PMSettings shared]setValue:@(name!=nil) forKey:@"skinEnabled" error:&settingsError];
+  if(!ok&&name){if(previous)[previous writeToFile:path atomically:YES];else[NSFileManager.defaultManager removeItemAtPath:path error:nil];}
+ }
+ [self reloadPacks];
+ NSString*message=ok?@"\u5df2\u9009\u62e9\uff0c\u4e0b\u6b21\u8fdb\u5165\u6b4c\u66f2\u751f\u6548\u3002":(error.localizedDescription?:settingsError?:@"Skin files missing; import the pack again.");
+ UIAlertController*a=[UIAlertController alertControllerWithTitle:self.title message:message preferredStyle:UIAlertControllerStyleAlert];
+ [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[self presentViewController:a animated:YES completion:nil];
+}
+@end
+void PMShowResourcePackPicker(UIView*source){
+ UIViewController*presenter=source.window.rootViewController;if(!presenter)return;
+ while(presenter.presentedViewController)presenter=presenter.presentedViewController;
+ PMSkinLibrary*list=[[PMSkinLibrary alloc]initWithStyle:UITableViewStyleInsetGrouped];
+ UINavigationController*nav=[[UINavigationController alloc]initWithRootViewController:list];nav.modalPresentationStyle=UIModalPresentationFormSheet;
+ [presenter presentViewController:nav animated:YES completion:nil];
+}

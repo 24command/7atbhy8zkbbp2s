@@ -246,7 +246,7 @@ BOOL validateUnlockReferences(NSDictionary*entity,NSDictionary*songMap,NSDiction
  for(NSDictionary*c in rule[@"conditions"]){
   NSString*type=c[@"type"],*ref=c[@"ref"];if([type isEqualToString:@"rks"])continue;
   BOOL chapter=[type isEqualToString:@"chapter"];
-  if(!(chapter?chapterMap[ref]:songMap[ref])&&![(chapter?officialChapters:officialSongs) containsObject:ref]){if(error)*error=err(@"Unlock rule references a dependency absent from this package/game");return NO;}
+  if(!(chapter?chapterMap[ref]:songMap[ref])&&![(chapter?officialChapters:officialSongs) containsObject:ref]){if(error)*error=err([NSString stringWithFormat:@"Unlock condition %@ in %@ references missing %@: %@. Import the dependency chapter/song first or export it with the package.",type,entity[@"id"]?:@"?",chapter?@"chapter":@"song",ref]);return NO;}
  }
  NSDictionary*chain=rule[@"chain"];NSString*next=chain[@"song"];
  if([chain[@"enabled"] boolValue]&&!songMap[next]&&![officialSongs containsObject:next]){if(error)*error=err(@"Unlock chain references a missing song");return NO;}
@@ -294,7 +294,14 @@ NSArray*remapSongOrder(NSArray*source,NSDictionary*songMap,NSSet*official,NSErro
   [ruleMap addEntriesFromDictionary:groupMap];[ruleMap addEntriesFromDictionary:songMap];
   NSMutableSet*officialChapters=[NSMutableSet new];for(NSDictionary*c in pmcontent::cachedOfficialSnapshot()[@"chapters"])if(c[@"chapterCode"])[officialChapters addObject:c[@"chapterCode"]];
   NSMutableArray*entities=[sourceSongs mutableCopy];[entities addObjectsFromArray:sourceDependencies];[entities addObject:sourceChapter];
-  for(NSDictionary*entity in entities)if(!validateUnlockReferences(entity,ruleMap,chapterMap,available,officialChapters,error))return NO;
+  // Normalize decoded mutable entities before validation/remapping/media checks.
+  for(NSMutableDictionary*entity in entities){id rule=PMNormalizeUnlockRule(entity[@"unlock"]);if(rule)entity[@"unlock"]=rule;else[entity removeObjectForKey:@"unlock"];if(entity[@"coverSwitch"]==NSNull.null)[entity removeObjectForKey:@"coverSwitch"];}
+  // Dependencies may already be installed locally. Package mappings win on
+  // collision; otherwise keep the installed ID so rules remain meaningful.
+  for(NSDictionary*local in db[@"songs"]){NSString*sid=local[@"id"],*gid=local[@"groupId"];if(sid&&!ruleMap[sid])ruleMap[sid]=sid;if(gid&&!ruleMap[gid])ruleMap[gid]=gid;}
+  NSMutableDictionary*unlockChapterMap=[chapterMap mutableCopy];
+  for(NSDictionary*local in db[@"chapters"]){NSString*cid=local[@"id"];if(cid&&!unlockChapterMap[cid])unlockChapterMap[cid]=cid;}
+  for(NSDictionary*entity in entities)if(!validateUnlockReferences(entity,ruleMap,unlockChapterMap,available,officialChapters,error))return NO;
   if(!validateUnlockMedia(sourceChapter,[root stringByAppendingPathComponent:@"chapter"],error)||!validateChapterImages([root stringByAppendingPathComponent:@"chapter"],error))return NO;
   for(NSDictionary*dep in sourceDependencies){NSString*folder=[root stringByAppendingPathComponent:[@"chapters/" stringByAppendingString:dep[@"id"]]];if(!validateUnlockMedia(dep,folder,error)||!validateChapterImages(folder,error))return NO;}
   for(NSDictionary*song in sourceSongs)if(!validateUnlockMedia(song,[root stringByAppendingPathComponent:[@"songs/" stringByAppendingString:song[@"id"]]],error))return NO;

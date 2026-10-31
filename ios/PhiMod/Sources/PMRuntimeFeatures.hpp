@@ -1,6 +1,7 @@
 #pragma once
 #include "PMIL2CPP.hpp"
 namespace pmfeatures {
+void* noteSprite(pmbridge::Runtime&,int type,int part,void*original);
 void attach(pmbridge::Runtime&);
 void levelBegin(pmbridge::Runtime&, void* level);
 void levelEnd(pmbridge::Runtime&);

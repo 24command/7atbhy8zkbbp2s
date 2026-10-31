@@ -485,6 +485,7 @@ void onLevelCodes(P self,P mi){
 }
 void onLevelInformation(P self,P mi){
  uint64_t count=++levelInfoCalls;diagf("LevelControl.SetInformation enter n=%llu",(unsigned long long)count);
+ if(!broken)try{pmcontent::beforeInformation(R(),self);}catch(const std::exception&e){fault(e);}
  orig<VoidFn>(h::levelInfo)(self,mi);
  diagf("LevelControl.SetInformation original returned n=%llu",(unsigned long long)count);
  if(!broken)try{pmmodes::afterInformation(R(),self);pmcontent::afterChart(R(),self);pmfeatures::afterChart(R(),self);}catch(const std::exception&e){fault(e);}

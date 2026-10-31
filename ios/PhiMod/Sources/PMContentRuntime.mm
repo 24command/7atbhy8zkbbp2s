@@ -1,5 +1,6 @@
 #include "PMContentRuntime.hpp"
 #include "PMUnlockRuntime.hpp"
+#include "PMRuntimeFeatures.hpp"
 #import "PMContentStore.h"
 #import "PMChartConvert.h"
 #import "PMDiagnostics.h"
@@ -22,6 +23,9 @@ NSDictionary*officialCache=nil;
 NSDictionary*baseline=nil;NSArray*originalChapters=nil;NSDictionary*currentChart=nil;NSString*resourceSubdir=@"";
 std::map<P,uint32_t>textures;std::map<std::string,uint32_t>assets;std::map<P,std::string>refs;std::map<std::string,int>users;
 std::map<std::string,std::map<int,NSDictionary*>>variants;std::map<P,NSDictionary*>extras;std::map<P,V3>noteScales,lineScales;std::map<int,uint32_t>decorText,decorImage;
+struct StoryVisual {P go=nullptr,tr=nullptr,graphic=nullptr,canvas=nullptr;bool text=false;NSString*lastText=nil;};
+std::map<int,StoryVisual>storyVisuals;std::map<int,double>storyRetry;std::set<int>storyReported;
+NSArray*storyFiles=nil;bool storyIndexed=false;
 struct Fake{NSDictionary*note;int line;bool below;double start,end;};
 struct FakeVisualCache{P transform=nullptr;P capTransforms[2]{};Bounds bounds{};bool shown=false;bool capShown[2]{false,false};bool colorSet=false,scaleSet=false;Color color{};V3 scale{};};
 std::map<size_t,FakeVisualCache>fakeVisualCache;
@@ -60,27 +64,55 @@ void apply(Runtime&r){capture(r);if(!baseline||playing)return;NSDictionary*db=[P
  for(NSMutableDictionary*c in chapters){NSString*id=c[@"chapterCode"];NSDictionary*patch=db[@"chapterOverrides"][id];for(NSString*k in @[@"title",@"subTitle",@"banner"])if(patch[k])c[@"songInfo"][k]=patch[k];}
  for(NSDictionary*c in db[@"chapters"]){NSString*before=c[@"before"];if(!before.length)continue;NSUInteger from=NSNotFound,to=NSNotFound;for(NSUInteger i=0;i<chapters.count;++i){if([chapters[i][@"chapterCode"] isEqualToString:c[@"id"]])from=i;if([chapters[i][@"chapterCode"] isEqualToString:before])to=i;}if(from!=NSNotFound&&to!=NSNotFound&&from!=to){id v=chapters[from];[chapters removeObjectAtIndex:from];if(from<to)--to;[chapters insertObject:v atIndex:to];}}
  P gi=r.mainGame(),newBase=decode(r,songBase,"SongBase");uint32_t baseHandle=r.gchandle_new(newBase,false);P arr=r.array_new(r.klass("Chapter"),chapters.count);uint32_t arrHandle=r.gchandle_new(arr,false);try{for(NSUInteger i=0;i<chapters.count;++i){P c=decode(r,chapters[i],"Chapter");uint32_t h=r.gchandle_new(c,false);P info=r.get<P>(c,"songInfo");r.put(info,"<songsBypassLimited>k__BackingField",r.get<P>(info,"songs"));int index=(int)i;r.invokeOn(r.resolve(r.type("System","Array"),"SetValue",{"System.Object","System.Int32"}),arr,{c,&index});r.gchandle_free(h);}r.call(newBase,"MarkDirty");r.put(gi,"song",newBase);r.put(gi,"chapters",arr);}catch(...){r.gchandle_free(arrHandle);r.gchandle_free(baseHandle);throw;}r.gchandle_free(arrHandle);r.gchandle_free(baseHandle);applied=PMContentStore.shared.revision;appliedMainline=PMSettingBool("mainlineUnlock");log([NSString stringWithFormat:@"Content applied: %lu groups, %lu chapters",(unsigned long)variants.size(),(unsigned long)chapters.count]);}
-P image(Runtime&r,NSString*path){
+P image(Runtime&r,NSString*path,bool background=false,bool lineTexture=false,V2 anchor={.5f,.5f}){
  if(![NSFileManager.defaultManager fileExistsAtPath:path]){
   NSString*chapterID=path.stringByDeletingLastPathComponent.lastPathComponent;
   for(NSDictionary*song in [PMContentStore.shared snapshot][@"songs"])if([song[@"targetChapter"]isEqualToString:chapterID]){NSString*fallback=[[PMContentStore.shared asset:song[@"id"]]stringByAppendingPathComponent:@"image.png"];if([NSFileManager.defaultManager fileExistsAtPath:fallback]){path=fallback;break;}}
  }
- UIImage*img=[UIImage imageWithContentsOfFile:path];if(!img)throw std::runtime_error("Cover image could not be decoded");
- CGFloat sourceW=img.size.width*img.scale,sourceH=img.size.height*img.scale;
+ // Clear cover and background requests share CPU-side image preparation.
+ // Bound retained encoded data; Unity object ownership stays in AssetRef.
+ static NSCache<NSString*,NSDictionary*>*preparedImages;
+ static dispatch_once_t imageCacheOnce;
+ dispatch_once(&imageCacheOnce,^{preparedImages=[NSCache new];preparedImages.totalCostLimit=24*1024*1024;preparedImages.countLimit=16;});
  CGFloat maxSide=PMSettingBool("dynamicLargeTextures")?4096.0:2048.0;
  CGFloat maxEncoded=PMSettingBool("dynamicLargeTextures")?64.0:32.0;
- CGFloat factor=MIN(1.0,maxSide/MAX(sourceW,sourceH));if(!std::isfinite(factor)||factor<=0)throw std::runtime_error("Cover image dimensions invalid");
- CGSize size=CGSizeMake(MAX(1,round(sourceW*factor)),MAX(1,round(sourceH*factor)));
- UIGraphicsImageRendererFormat*rendererFormat=[UIGraphicsImageRendererFormat defaultFormat];rendererFormat.scale=1;
- UIGraphicsImageRenderer*renderer=[[UIGraphicsImageRenderer alloc]initWithSize:size format:rendererFormat];
- img=[renderer imageWithActions:^(UIGraphicsImageRendererContext*c){[img drawInRect:CGRectMake(0,0,size.width,size.height)];}];
- CGImageRef cg=img.CGImage;if(!cg)throw std::runtime_error("Cover image has no bitmap representation");
- int w=(int)CGImageGetWidth(cg),h=(int)CGImageGetHeight(cg);if(w<=0||h<=0||w>maxSide||h>maxSide)throw std::runtime_error("Cover image size invalid");
- NSData*encoded=UIImagePNGRepresentation(img);if(!encoded||!encoded.length||encoded.length>maxEncoded*1024*1024||encoded.length>INT_MAX)throw std::runtime_error("Cover PNG encoding failed or exceeded limit");
+ NSDictionary*attributes=[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
+ if(!attributes)throw std::runtime_error("Cover image is missing");
+ NSString*cacheKey=[NSString stringWithFormat:@"%@|%@|%@|%.0f|%lu",path,attributes[NSFileSize],attributes[NSFileModificationDate],maxSide,(unsigned long)PMContentStore.shared.revision];
+ NSDictionary*prepared=[preparedImages objectForKey:cacheKey];NSData*encoded=nil;
+ CGFloat sourceW=0,sourceH=0;
+ if(prepared){encoded=prepared[@"data"];sourceW=[prepared[@"width"] doubleValue];sourceH=[prepared[@"height"] doubleValue];}
+ else{
+  NSData*original=[NSData dataWithContentsOfFile:path options:NSDataReadingMappedIfSafe error:nil];
+  UIImage*img=original?[UIImage imageWithData:original]:nil;if(!img)throw std::runtime_error("Cover image could not be decoded");
+  sourceW=img.size.width*img.scale;sourceH=img.size.height*img.scale;
+  if(!std::isfinite(sourceW)||!std::isfinite(sourceH)||sourceW<=0||sourceH<=0)throw std::runtime_error("Cover image dimensions invalid");
+  const unsigned char pngMagic[8]={137,80,78,71,13,10,26,10};
+  bool directPNG=original.length>=8&&!memcmp(original.bytes,pngMagic,8)&&img.imageOrientation==UIImageOrientationUp&&sourceW<=maxSide&&sourceH<=maxSide;
+  if(directPNG)encoded=original;
+  else{
+   CGFloat factor=MIN(1.0,maxSide/MAX(sourceW,sourceH));
+   CGSize size=CGSizeMake(MAX(1,round(sourceW*factor)),MAX(1,round(sourceH*factor)));
+   UIGraphicsImageRendererFormat*rendererFormat=[UIGraphicsImageRendererFormat defaultFormat];rendererFormat.scale=1;
+   UIGraphicsImageRenderer*renderer=[[UIGraphicsImageRenderer alloc]initWithSize:size format:rendererFormat];
+   img=[renderer imageWithActions:^(UIGraphicsImageRendererContext*c){[img drawInRect:CGRectMake(0,0,size.width,size.height)];}];
+   encoded=UIImagePNGRepresentation(img);
+  }
+  if(!encoded.length||encoded.length>maxEncoded*1024*1024||encoded.length>INT_MAX)throw std::runtime_error("Cover PNG encoding failed or exceeded limit");
+  // Avoid retaining a single huge image that exceeds the entire cache budget.
+  if(encoded.length<=24*1024*1024)[preparedImages setObject:@{@"data":encoded,@"width":@(sourceW),@"height":@(sourceH)} forKey:cacheKey cost:encoded.length];
+ }
+
  P bytes=r.array_new(r.type("System","Byte"),encoded.length);if(!bytes)throw std::runtime_error("Cover managed byte array allocation failed");uint32_t bytesRoot=r.gchandle_new(bytes,false);
  try{void*ptr=(void*)encoded.bytes;int zero=0,count=(int)encoded.length;r.stat(r.type("System.Runtime.InteropServices","Marshal"),"copy_from_unmanaged",{"System.IntPtr","System.Int32","System.Array","System.Int32"},{&ptr,&zero,bytes,&count});
   P texture=r.object_new(r.type("UnityEngine","Texture2D"));if(!texture)throw std::runtime_error("Cover texture allocation failed");uint32_t texRoot=r.gchandle_new(texture,false);
-  try{int width=2,height=2,format=4;bool mipmaps=false;r.call(texture,".ctor",{"System.Int32","System.Int32","UnityEngine.TextureFormat","System.Boolean"},{&width,&height,&format,&mipmaps});bool markNonReadable=true;bool loaded=r.unbox<bool>(r.stat(r.type("UnityEngine","ImageConversion"),"LoadImage",{"UnityEngine.Texture2D","System.Byte[]","System.Boolean"},{texture,bytes,&markNonReadable}));if(!loaded)throw std::runtime_error("Unity ImageConversion rejected cover image");int actualW=r.unbox<int>(r.call(texture,"get_width")),actualH=r.unbox<int>(r.call(texture,"get_height"));Rect rect{0,0,(float)actualW,(float)actualH};V2 pivot{.5,.5};float ppu=100;P sprite=r.stat(r.type("UnityEngine","Sprite"),"Create",{"UnityEngine.Texture2D","UnityEngine.Rect","UnityEngine.Vector2","System.Single"},{texture,&rect,&pivot,&ppu});if(!sprite)throw std::runtime_error("Sprite creation returned null");textures[sprite]=texRoot;r.gchandle_free(bytesRoot);return sprite;}catch(...){r.gchandle_free(texRoot);throw;}
+  try{int width=2,height=2,format=4;bool mipmaps=false;r.call(texture,".ctor",{"System.Int32","System.Int32","UnityEngine.TextureFormat","System.Boolean"},{&width,&height,&format,&mipmaps});bool markNonReadable=true;bool loaded=r.unbox<bool>(r.stat(r.type("UnityEngine","ImageConversion"),"LoadImage",{"UnityEngine.Texture2D","System.Byte[]","System.Boolean"},{texture,bytes,&markNonReadable}));if(!loaded)throw std::runtime_error("Unity ImageConversion rejected cover image");int actualW=r.unbox<int>(r.call(texture,"get_width")),actualH=r.unbox<int>(r.call(texture,"get_height"));Rect rect{0,0,(float)actualW,(float)actualH};V2 pivot=lineTexture?anchor:V2{.5,.5};
+   // Android image(): backgrounds cover the native 38.4 x 21.6 canvas.
+   // min(PPU) enlarges both axes uniformly, retaining aspect without bars.
+   // Use decoded dimensions so downsampling never shrinks world-space coverage.
+   float ppu=background?std::min(actualW/38.4f,actualH/21.6f):lineTexture?100.f*actualW/sourceW:100.f;
+   if(!std::isfinite(ppu)||ppu<=0)throw std::runtime_error("Invalid background sprite density");
+   P sprite=r.stat(r.type("UnityEngine","Sprite"),"Create",{"UnityEngine.Texture2D","UnityEngine.Rect","UnityEngine.Vector2","System.Single"},{texture,&rect,&pivot,&ppu});if(!sprite)throw std::runtime_error("Sprite creation returned null");textures[sprite]=texRoot;r.gchandle_free(bytesRoot);return sprite;}catch(...){r.gchandle_free(texRoot);throw;}
  }catch(...){r.gchandle_free(bytesRoot);throw;}
 }
 P audio(Runtime&r,NSString*path){
@@ -126,8 +158,8 @@ P audio(Runtime&r,NSString*path){
   r.gchandle_free(clipRoot);return clip;
  }catch(...){r.gchandle_free(clipRoot);throw;}
 }
-NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=key.lowercaseString;*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":@"image";return id;}
-void clearVisuals(Runtime&r){for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();failedFakes.clear();currentChart=nil;}
+NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=key.lowercaseString;*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":[lower containsString:@"blur"]?@"blur":@"image";return id;}
+void clearVisuals(Runtime&r){for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();failedFakes.clear();currentChart=nil;}
 void applyCachedChapterCover(Runtime&r,P card,const char*codeField,const char*loaderField){
  NSString*code=r.string(r.get<P>(card,codeField));if(!code.length)return;auto found=assets.find(code.UTF8String);if(found==assets.end())return;P sprite=target(r,found->second);if(!r.alive(sprite))return;
  P loader=r.get<P>(card,loaderField);if(!r.alive(loader))return;bool changed=false;
@@ -270,7 +302,7 @@ NSDictionary*command(NSString*action,NSString*identifier,int slot){
 void selectorFrame(Runtime&r,P selector){if(!pendingSong.length||r.get<bool>(selector,"exit")||r.get<bool>(selector,"isMoving"))return;P items=r.call(selector,"get_SongItems");int n=r.count(items);for(int i=0;i<n;++i){P item=r.at(items,i),song=r.get<P>(item,"songInfo");if(![r.string(r.get<P>(song,"songsId")) isEqualToString:pendingSong])continue;r.put(selector,"nowSong",i);r.put(selector,"nowLevel",pendingSlot);int level=pendingSlot;r.call(selector,"SetLevel",{"System.Int32"},{&level});pendingSong=nil;r.call(selector,"NormalStart");return;}}
 void levelBegin(Runtime&r){playing=true;if(chapterSelectorRoot){r.gchandle_free(chapterSelectorRoot);chapterSelectorRoot=0;}P info=r.get<P>(r.mainGame(),"levelStartInfo");NSString*id=info?r.string(r.get<P>(info,"songsId")):@"";levelID=[PMContentStore.shared asset:id]?id:nil;lastCustom=levelID.length>0;}
 void levelEnd(Runtime&r){playing=false;levelID=nil;lastCustom=false;pendingSong=nil;if(chapterSelectorRoot){r.gchandle_free(chapterSelectorRoot);chapterSelectorRoot=0;}clearVisuals(r);}
-bool assetConstructor(Runtime&r,P self,P key){NSString*kind=nil,*identifier=keyID(r.string(key),&kind);if(!identifier)return false;r.put(self,"key",key);r.put(self,"refCount",1);try{std::string cacheKey=r.string(key).UTF8String;P obj=nullptr;auto found=assets.find(cacheKey);if(found!=assets.end())obj=target(r,found->second);if(!r.alive(obj)){NSString*folder=[PMContentStore.shared asset:identifier];if([kind isEqualToString:@"chart"]){NSString*json=[NSString stringWithContentsOfFile:[folder stringByAppendingPathComponent:@"chart-native.json"] encoding:NSUTF8StringEncoding error:nil];if(!json)throw std::runtime_error("Custom chart not found");log([NSString stringWithFormat:@"Content chart text ready: chars=%lu",(unsigned long)json.length]);obj=r.object_new(r.type("UnityEngine","TextAsset"));uint32_t h=r.gchandle_new(obj,false);try{r.call(obj,".ctor",{"System.String"},{r.managedString(json)});}catch(...){r.gchandle_free(h);throw;}r.gchandle_free(h);}else if([kind isEqualToString:@"music"]){NSString*m4a=[folder stringByAppendingPathComponent:@"music.m4a"];NSString*caf=[folder stringByAppendingPathComponent:@"music.caf"];obj=audio(r,[NSFileManager.defaultManager fileExistsAtPath:m4a]?m4a:caf);}else obj=image(r,pmunlock::coverPath(r,identifier));assets[cacheKey]=r.gchandle_new(obj,false);}refs[self]=cacheKey;users[cacheKey]++;r.put(self,"obj",obj);r.put(self,"<IsDone>k__BackingField",true);r.put(self,"<IsFailed>k__BackingField",false);if([kind isEqualToString:@"image"])try{syncChapterCoverFallbacks(r);}catch(const std::exception&e){log([NSString stringWithFormat:@"Content chapter cover fallback failed: %s",e.what()]);}log([@"Content asset loaded: " stringByAppendingString:r.string(key)]);}catch(const std::exception&e){r.put<P>(self,"obj",nullptr);r.put(self,"<IsDone>k__BackingField",true);r.put(self,"<IsFailed>k__BackingField",true);log([NSString stringWithFormat:@"Content asset failed: %@ (%s)",r.string(key),e.what()]);}return true;}
+bool assetConstructor(Runtime&r,P self,P key){NSString*kind=nil,*identifier=keyID(r.string(key),&kind);if(!identifier)return false;r.put(self,"key",key);r.put(self,"refCount",1);try{std::string cacheKey=r.string(key).UTF8String;P obj=nullptr;auto found=assets.find(cacheKey);if(found!=assets.end())obj=target(r,found->second);if(!r.alive(obj)){NSString*folder=[PMContentStore.shared asset:identifier];if([kind isEqualToString:@"chart"]){NSString*json=[NSString stringWithContentsOfFile:[folder stringByAppendingPathComponent:@"chart-native.json"] encoding:NSUTF8StringEncoding error:nil];if(!json)throw std::runtime_error("Custom chart not found");log([NSString stringWithFormat:@"Content chart text ready: chars=%lu",(unsigned long)json.length]);obj=r.object_new(r.type("UnityEngine","TextAsset"));uint32_t h=r.gchandle_new(obj,false);try{r.call(obj,".ctor",{"System.String"},{r.managedString(json)});}catch(...){r.gchandle_free(h);throw;}r.gchandle_free(h);}else if([kind isEqualToString:@"music"]){NSString*m4a=[folder stringByAppendingPathComponent:@"music.m4a"];NSString*caf=[folder stringByAppendingPathComponent:@"music.caf"];obj=audio(r,[NSFileManager.defaultManager fileExistsAtPath:m4a]?m4a:caf);}else obj=image(r,pmunlock::coverPath(r,identifier),[kind isEqualToString:@"blur"]);assets[cacheKey]=r.gchandle_new(obj,false);}refs[self]=cacheKey;users[cacheKey]++;r.put(self,"obj",obj);r.put(self,"<IsDone>k__BackingField",true);r.put(self,"<IsFailed>k__BackingField",false);if([kind isEqualToString:@"image"])try{syncChapterCoverFallbacks(r);}catch(const std::exception&e){log([NSString stringWithFormat:@"Content chapter cover fallback failed: %s",e.what()]);}log([@"Content asset loaded: " stringByAppendingString:r.string(key)]);}catch(const std::exception&e){r.put<P>(self,"obj",nullptr);r.put(self,"<IsDone>k__BackingField",true);r.put(self,"<IsFailed>k__BackingField",true);log([NSString stringWithFormat:@"Content asset failed: %@ (%s)",r.string(key),e.what()]);}return true;}
 bool assetRelease(Runtime&r,P self,bool force){
  NSString*kind=nil;P key=r.get<P>(self,"key");if(!keyID(r.string(key),&kind))return false;
  int n=r.get<int>(self,"refCount");if(!force&&n>1){r.put(self,"refCount",n-1);return true;}
@@ -298,7 +330,27 @@ void afterChart(Runtime&r,P level){if(!currentChart)return;sourceFloors.clear();
   for(NSDictionary*event in sourceLine[@"speedEvents"])track.push_back({[event[@"startTime"] doubleValue]*secondsPerTick,[event[@"endTime"] doubleValue]*secondsPerTick,[event[@"value"] doubleValue],[event[@"floorPosition"] doubleValue]});
   std::stable_sort(track.begin(),track.end(),[](const auto&a,const auto&b){return a.start<b.start;});
  }
-P chart=r.get<P>(level,"chart"),lines=r.get<P>(chart,"judgeLineList");NSArray*data=currentChart[@"judgeLineList"];for(int i=0,n=std::min<int>(r.count(lines),(int)data.count);i<n;++i){P line=r.at(lines,i);for(NSString*side in @[@"notesAbove",@"notesBelow"]){P list=r.get<P>(line,side.UTF8String);NSMutableArray*real=[NSMutableArray new];for(NSDictionary*note in data[i][side])if(![note[@"pmFake"] boolValue])[real addObject:note];for(int j=0,total=std::min<int>(r.count(list),(int)real.count);j<total;++j){P note=r.at(list,j);extras[note]=real[j];if(real[j][@"pmTime"])r.put(note,"realTime",[real[j][@"pmTime"] floatValue]);if(real[j][@"pmDuration"]&&r.get<int>(note,"type")==3)r.put(note,"holdTime",[real[j][@"pmDuration"] floatValue]);}}}}
+// Native SetInformation may reorder note lists. Bind before that call and
+// restore timing by object identity, never by its post-sort array position.
+for(const auto&entry:extras){P note=entry.first;NSDictionary*source=entry.second;
+ if(source[@"pmTime"]){float time=[source[@"pmTime"] floatValue];if(std::isfinite(time))r.put(note,"realTime",time);}
+ // A Tap converted into a Hold must retain the mode's generated duration.
+ if([source[@"type"] intValue]==3&&r.get<int>(note,"type")==3&&source[@"pmDuration"]){float duration=[source[@"pmDuration"] floatValue];if(std::isfinite(duration)&&duration>=0)r.put(note,"holdTime",duration);}
+}
+}
+void beforeInformation(Runtime&r,P level){
+ extras.clear();if(!currentChart)return;
+ P chart=r.get<P>(level,"chart"),lines=r.get<P>(chart,"judgeLineList");NSArray*data=currentChart[@"judgeLineList"];
+ if(r.count(lines)!=(int)data.count)throw std::runtime_error("Custom source/native line count mismatch");
+ for(int i=0;i<(int)data.count;++i){P line=r.at(lines,i);
+  for(NSString*side in @[@"notesAbove",@"notesBelow"]){P list=r.get<P>(line,side.UTF8String);NSMutableArray*real=[NSMutableArray new];
+   for(NSDictionary*source in data[i][side])if(![source[@"pmFake"] boolValue])[real addObject:source];
+   if(r.count(list)!=(int)real.count)throw std::runtime_error("Custom source/native note count mismatch");
+   for(int j=0;j<(int)real.count;++j)extras[r.at(list,j)]=real[j];
+  }
+ }
+}
+
 namespace {
 double scalar(id value,double fallback=0){return [value respondsToSelector:@selector(doubleValue)]?[value doubleValue]:fallback;}
 phimod::rpe::Event visualEvent(NSDictionary*v,int channel=-1){phimod::rpe::Event e;e.s=scalar(v[@"startTime"]);e.e=scalar(v[@"endTime"]);id a=v[@"start"],b=v[@"end"];if(channel>=0){a=[a isKindOfClass:NSArray.class]&&[a count]>channel?a[channel]:@255;b=[b isKindOfClass:NSArray.class]&&[b count]>channel?b[channel]:@255;}e.a=scalar(a);e.b=scalar(b);if(channel>=0){e.a/=255;e.b/=255;}e.easing=(int)scalar(v[@"easingType"],1);e.left=scalar(v[@"easingLeft"],0);e.right=scalar(v[@"easingRight"],1);NSArray*p=v[@"bezierPoints"];if([v[@"bezier"] boolValue]&&p.count==4){e.bezier=true;for(int i=0;i<4;++i)e.points[i]=scalar(p[i]);}return e;}
@@ -324,6 +376,104 @@ P graphic(Runtime&r,P go){P list=r.children(go,r.type("UnityEngine","SpriteRende
 float floor(Runtime&r,P info,int index){P a=r.get<P>(info,"floorPositions");return a&&index>=0&&uintptr_t(index)<r.array_length(a)?r.unbox<float>(r.arrayAt(a,index)):0;}
 double sourceFloor(int index,double now,double fallback){auto it=sourceFloors.find(index);return it==sourceFloors.end()?fallback:phimod::rpeFloor(it->second,now,fallback);}
 
+NSString*storyTexturePath(NSString*name){
+ if(![name isKindOfClass:NSString.class]||!name.length)return nil;
+ name=[name stringByReplacingOccurrencesOfString:@"\\" withString:@"/"];
+ if(name.isAbsolutePath)return nil;
+ for(NSString*part in [name componentsSeparatedByString:@"/"])if([part isEqualToString:@".."])return nil;
+ NSString*root=[[PMContentStore.shared asset:levelID]stringByStandardizingPath];
+ if(!root.length)return nil;
+ NSString*prefix=[root stringByAppendingString:@"/"];
+ for(NSString*base in @[[root stringByAppendingPathComponent:resourceSubdir?:@""],root]){
+  NSString*path=[[base stringByAppendingPathComponent:name]stringByStandardizingPath];
+  if([path hasPrefix:prefix]&&[NSFileManager.defaultManager fileExistsAtPath:path])return path;
+ }
+ if(!storyIndexed){storyFiles=[NSFileManager.defaultManager subpathsOfDirectoryAtPath:root error:nil];storyIndexed=true;}
+ NSString*match=nil;
+ for(NSString*rel in storyFiles){
+  BOOL matches=[rel caseInsensitiveCompare:name]==NSOrderedSame||[rel.lowercaseString hasSuffix:[@"/" stringByAppendingString:name.lowercaseString]];
+  if(!matches)continue;
+  NSString*path=[[root stringByAppendingPathComponent:rel]stringByStandardizingPath];BOOL dir=NO;
+  if(![path hasPrefix:prefix]||![NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&dir]||dir)continue;
+  if(match)return nil; // Ambiguous names must not pick an unrelated image.
+  match=path;
+ }
+ return match;
+}
+void updateStory(Runtime&r,int index,P line,P nativeRenderer,NSDictionary*d,NSArray*lineAlpha,float now,P progress,Color color,int order){
+ bool hasText=[d[@"textEvents"] count]>0;
+ NSString*texture=[d[@"Texture"] isKindOfClass:NSString.class]?d[@"Texture"]:nil;
+ if(!hasText&&(!texture.length||[texture isEqualToString:@"line.png"]))return;
+ auto found=storyVisuals.find(index);
+ if(found==storyVisuals.end()){
+  double clock=NSDate.timeIntervalSinceReferenceDate;
+  auto retry=storyRetry.find(index);if(retry!=storyRetry.end()&&clock<retry->second)return;
+  P createdRoot=nullptr;
+  try{
+   P camera=r.stat(r.type("UnityEngine","Camera"),"get_main");
+   if(!r.alive(camera))throw std::runtime_error("Storyboard camera not ready");
+   float width=2*r.unbox<float>(r.call(camera,"get_orthographicSize"))*std::min(16.f/9.f,r.unbox<float>(r.call(camera,"get_aspect")));
+   if(!std::isfinite(width)||width<=0)throw std::runtime_error("Invalid storyboard viewport");
+   StoryVisual v;v.text=hasText;
+   P sprite=nullptr;
+   if(!hasText){
+    NSString*path=storyTexturePath(texture);
+    if(!path)throw std::runtime_error("Storyboard texture missing or ambiguous");
+    NSArray*a=d[@"anchor"];V2 anchor{.5,.5};if([a isKindOfClass:NSArray.class]&&a.count==2){anchor.x=scalar(a[0],.5);anchor.y=scalar(a[1],.5);}
+    sprite=image(r,path,false,true,anchor);keep(r,sprite);
+    auto t=textures.find(sprite);if(t!=textures.end()){visualRoots.push_back(t->second);textures.erase(t);}
+   }
+   v.go=r.object_new(r.type("UnityEngine","GameObject"));keep(r,v.go);createdRoot=v.go;
+   r.call(v.go,".ctor",{"System.String"},{r.string_new(hasText?"PhiMod Story Text":"PhiMod Story Image")});
+   v.tr=r.call(v.go,"get_transform");
+   int layer=r.unbox<int>(r.call(r.call(line,"get_gameObject"),"get_layer"));r.call(v.go,"set_layer",{"System.Int32"},{&layer});
+   int sorting=r.unbox<int>(r.call(nativeRenderer,"get_sortingLayerID"));
+   if(hasText){
+    v.canvas=addComponent(r,v.go,r.type("UnityEngine","Canvas"));int mode=2;bool yes=true,no=false;
+    r.call(v.canvas,"set_renderMode",{"UnityEngine.RenderMode"},{&mode});r.call(v.canvas,"set_worldCamera",{"UnityEngine.Camera"},{camera});
+    r.call(v.canvas,"set_overrideSorting",{"System.Boolean"},{&yes});r.call(v.canvas,"set_sortingLayerID",{"System.Int32"},{&sorting});
+    v.tr=r.call(v.go,"get_transform");V2 rect{1024,300};r.call(v.tr,"set_sizeDelta",{"UnityEngine.Vector2"},{&rect});
+    v.graphic=addComponent(r,v.go,r.type("UnityEngine.UI","Text"));
+    P label=r.get<P>(r.get<P>(progress,"scoreControl"),"comboText");P font=r.call(label,"get_font");r.call(v.graphic,"set_font",{"UnityEngine.Font"},{font});
+    int fontSize=48,alignment=4,overflow=1;
+    r.call(v.graphic,"set_fontSize",{"System.Int32"},{&fontSize});r.call(v.graphic,"set_alignment",{"UnityEngine.TextAnchor"},{&alignment});
+    r.call(v.graphic,"set_horizontalOverflow",{"UnityEngine.HorizontalWrapMode"},{&overflow});r.call(v.graphic,"set_verticalOverflow",{"UnityEngine.VerticalWrapMode"},{&overflow});
+    r.call(v.graphic,"set_raycastTarget",{"System.Boolean"},{&no});
+   }else{
+    v.graphic=addComponent(r,v.go,r.type("UnityEngine","SpriteRenderer"));r.call(v.graphic,"set_sprite",{"UnityEngine.Sprite"},{sprite});
+    r.call(v.graphic,"set_sortingLayerID",{"System.Int32"},{&sorting});
+    P material=r.call(nativeRenderer,"get_sharedMaterial");if(material)r.call(v.graphic,"set_sharedMaterial",{"UnityEngine.Material"},{material});
+   }
+   // Independent root: do not inherit the native long/thin line scale or
+   // alter the coordinate system used by its child notes.
+   found=storyVisuals.emplace(index,v).first;
+   log([NSString stringWithFormat:@"Storyboard line %d ready: %@",index,hasText?@"text":texture]);
+  }catch(const std::exception&e){try{if(r.alive(createdRoot))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{createdRoot});}catch(...){}storyRetry[index]=clock+2;if(storyReported.insert(index).second)log([NSString stringWithFormat:@"Storyboard line %d (%@): %s",index,texture?:@"text",e.what()]);return;}
+ }
+ auto&v=found->second;
+ P tr=r.call(line,"get_transform"),camera=r.stat(r.type("UnityEngine","Camera"),"get_main");
+ float width=2*r.unbox<float>(r.call(camera,"get_orthographicSize"))*std::min(16.f/9.f,r.unbox<float>(r.call(camera,"get_aspect")));
+ struct Q{float x,y,z,w;};V3 pos=r.unbox<V3>(r.call(tr,"get_position"));Q rot=r.unbox<Q>(r.call(tr,"get_rotation"));
+ r.call(v.tr,"set_position",{"UnityEngine.Vector3"},{&pos});r.call(v.tr,"set_rotation",{"UnityEngine.Quaternion"},{&rot});
+ float factor=v.text?width*.04f/48.f:100.f*width/1350.f;
+ V3 scale{factor*(float)trackValue(d[@"scaleXEvents"],now,1),factor*(float)trackValue(d[@"scaleYEvents"],now,1),1};
+ r.call(v.tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});
+ // Native line alpha can be zero on text lines; evaluate the saved chart track.
+ NSDictionary*alphaEvent=nil;for(NSDictionary*e in lineAlpha){if(scalar(e[@"startTime"])/64<=now)alphaEvent=e;else break;}
+ if(alphaEvent){double a=scalar(alphaEvent[@"startTime"])/64,b=scalar(alphaEvent[@"endTime"])/64,q=b>a?std::clamp((now-a)/(b-a),0.,1.):1;color.a=std::clamp((float)(scalar(alphaEvent[@"start"])+(scalar(alphaEvent[@"end"])-scalar(alphaEvent[@"start"]))*q),0.f,1.f);}
+ if(v.text){
+  NSDictionary*event=nil;for(NSDictionary*e in d[@"textEvents"]){if(now>=scalar(e[@"startTime"]))event=e;else break;}
+  NSString*value=@"";
+  if(event){NSString*a=[event[@"start"] description]?:@"",*b=[event[@"end"] description]?:@"";value=a;
+   if([a containsString:@"%P%"]||[b containsString:@"%P%"]){a=[a stringByReplacingOccurrencesOfString:@"%P%" withString:@""];b=[b stringByReplacingOccurrencesOfString:@"%P%" withString:@""];double q=std::clamp((now-scalar(event[@"startTime"]))/std::max(.001,scalar(event[@"endTime"])-scalar(event[@"startTime"])),0.,1.);value=[b substringToIndex:MIN(b.length,(NSUInteger)std::round(double(a.length)+(double(b.length)-double(a.length))*q))];}
+  }
+  if(![v.lastText isEqualToString:value]){r.text(v.graphic,value.UTF8String);v.lastText=value;}
+ }
+ r.call(v.graphic,"set_color",{"UnityEngine.Color"},{&color});
+ r.call(v.text?v.canvas:v.graphic,"set_sortingOrder",{"System.Int32"},{&order});
+ bool no=false;r.call(nativeRenderer,"set_enabled",{"System.Boolean"},{&no});
+}
+
 }
 void visuals(Runtime&r,P progress){
  if(!currentChart)return;P judge=r.get<P>(progress,"judgeControl"),lineList=r.get<P>(judge,"judgeLineControls"),info=r.get<P>(progress,"levelInformation");float now=r.get<float>(progress,"nowTime");NSArray*data=currentChart[@"judgeLineList"];int total=std::min<int>(r.count(lineList),(int)data.count);if(total<=0)return;
@@ -339,8 +489,7 @@ void visuals(Runtime&r,P progress){
   int order=base+(int)scalar(d[@"zOrder"])*4;
   r.call(renderer,"set_sortingOrder",{"System.Int32"},{&order});
   r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});
-  NSString*texture=d[@"Texture"];if(texture.length&&![texture isEqualToString:@"line.png"]&&!decorImage.count(i)){NSString*folder=[PMContentStore.shared asset:levelID];NSString*path=[[[folder stringByAppendingPathComponent:resourceSubdir]stringByAppendingPathComponent:texture]stringByStandardizingPath];if([path hasPrefix:[folder stringByAppendingString:@"/"]]&&[NSFileManager.defaultManager fileExistsAtPath:path]){P sprite=image(r,path);keep(r,sprite);auto t=textures.find(sprite);if(t!=textures.end()){visualRoots.push_back(t->second);textures.erase(t);}r.call(renderer,"set_sprite",{"UnityEngine.Sprite"},{sprite});decorImage[i]=r.gchandle_new(sprite,false);}}
-  NSArray*events=d[@"textEvents"];NSDictionary*textEvent=nil;for(NSDictionary*e in events)if(now>=scalar(e[@"startTime"]))textEvent=e;else break;if(textEvent){P mesh=target(r,decorText[i]);if(!r.alive(mesh)){P go=r.object_new(r.type("UnityEngine","GameObject"));keep(r,go);r.call(go,".ctor",{"System.String"},{r.string_new("PhiMod RPE Text")});P meshClass=r.type("UnityEngine","TextMesh");mesh=addComponent(r,go,meshClass);P childTr=r.call(go,"get_transform");bool no=false;r.call(childTr,"SetParent",{"UnityEngine.Transform","System.Boolean"},{tr,&no});float size=.18f;int fontSize=64,anchor=4;r.call(mesh,"set_characterSize",{"System.Single"},{&size});r.call(mesh,"set_fontSize",{"System.Int32"},{&fontSize});r.call(mesh,"set_anchor",{"UnityEngine.TextAnchor"},{&anchor});P label=r.get<P>(r.get<P>(progress,"scoreControl"),"comboText");P font=r.call(label,"get_font");if(font)r.call(mesh,"set_font",{"UnityEngine.Font"},{font});decorText[i]=r.gchandle_new(mesh,false);}NSString*a=[textEvent[@"start"] description],*b=[textEvent[@"end"] description];NSString*value=a;if([a containsString:@"%P%"]){NSUInteger n=MIN(a.length,(NSUInteger)(b.length*std::clamp((now-scalar(textEvent[@"startTime"]))/std::max(.001,scalar(textEvent[@"endTime"])-scalar(textEvent[@"startTime"])),0.,1.)));value=[b substringToIndex:MIN(n,b.length)];}r.text(mesh,value.UTF8String);r.call(mesh,"set_color",{"UnityEngine.Color"},{&color});}
+  updateStory(r,i,line,renderer,d,data[i][@"judgeLineDisappearEvents"],now,progress,color,order);
  }
  // Fake notes are independent SpriteRenderers: never native score/judgement
  // controllers. Only the local 8-second window is allocated.
@@ -393,6 +542,7 @@ void visuals(Runtime&r,P progress){
     sprites[0]=r.arrayAt(images,1);sprites[1]=r.arrayAt(images,0);sprites[2]=r.arrayAt(images,2);
    }else sprites[0]=r.get<P>(controller,"noteImage");
    for(int k=0;k<(type==3?3:1);++k)if(!r.alive(sprites[k]))throw std::runtime_error("Native serialized note sprite is not ready");
+   for(int k=0;k<(type==3?3:1);++k)sprites[k]=pmfeatures::noteSprite(r,type,k==0?1:k==1?0:2,sprites[k]);
    // CreateNote uses the prefab's actual scale, the user's noteScale and
    // Screen aspect compensation. A fixed .22 cannot reproduce that size.
    P parent=r.call(line,"get_transform"),prefabTransform=r.call(prefab,"get_transform");
@@ -558,7 +708,17 @@ void noteMoved(Runtime&r,P controlObject,bool hold){
  if(hold&&std::fabs(yControlValue)<0.0001f)alpha=0;
  for(const char*field:hold?std::vector<const char*>{"_holdHeadSpriteRenderer","_holdSpriteRenderer","_holdEndSpriteRenderer1"}:std::vector<const char*>{"_spriteRenderer"}){
   P renderer=r.get<P>(controlObject,field);if(!r.alive(renderer))continue;
-  Color color=r.unbox<Color>(r.call(renderer,"get_color"));color.a=std::min(color.a,alpha);r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});
+  Color color=r.unbox<Color>(r.call(renderer,"get_color"));
+  bool sourceGeometry=n[@"pmRawSpeed"]!=nil;
+  // Android: native Hold fading/visibility is based on its constant-speed
+  // geometry; do not let it flash a source-geometry Hold during its lifetime.
+  bool liveHold=hold&&sourceGeometry&&now<start+r.get<float>(note,"holdTime");
+  color.a=(now<=start||(liveHold&&!r.get<bool>(controlObject,"missed")))?alpha:std::min(color.a,alpha);
+  if(sourceGeometry&&(now<=start||liveHold)){
+   bool show=!(hold&&!strcmp(field,"_holdHeadSpriteRenderer")&&r.get<bool>(controlObject,"_holdHeadIsDestroyed"));
+   r.call(renderer,"set_enabled",{"System.Boolean"},{&show});
+  }
+  r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});
   int order=(int)scalar(d[@"zOrder"])*4+(hold?1:2);r.call(renderer,"set_sortingOrder",{"System.Int32"},{&order});
  }
 }
