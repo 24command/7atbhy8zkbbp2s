@@ -31,3 +31,14 @@ inline RpeHoldLayout rpeHoldLayout(const RpeGeometry& g,float spriteHeight,float
     float scale=side*std::max(.00001f,g.tail-g.head)/spriteHeight;
     return {side*g.head-spriteBottom*scale,scale};
 }
+
+// Android rpe_floor.h: source floor units must not be mixed with native
+// floorPositions, which the game may rebuild/quantize when loading a chart.
+struct RpeFloorSegment { double start,end,speed,floor; };
+inline double rpeFloor(const std::vector<RpeFloorSegment>& segments,double now,double fallback){
+ if(segments.empty())return fallback;
+ auto it=std::upper_bound(segments.begin(),segments.end(),now,
+  [](double t,const RpeFloorSegment& s){return t<s.start;});
+ if(it!=segments.begin())--it;
+ return it->floor+(now-it->start)*it->speed;
+}

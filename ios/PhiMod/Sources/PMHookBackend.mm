@@ -27,7 +27,7 @@ using pmbridge::P;
 using pmbridge::Runtime;
 namespace h=phimod::hooks;
 __attribute__((used)) static const char PMGameplayProtocol[16]="PMGameplay-v2";
-__attribute__((used)) static const char PMGameplayBuild[]="PMGameplay-contract-v2-68";
+__attribute__((used)) static const char PMGameplayBuild[]="PMGameplay-contract-v2-68-ios403";
 struct V3{float x,y,z;};
 struct V2{float x,y;};
 struct Color{float r,g,b,a;};

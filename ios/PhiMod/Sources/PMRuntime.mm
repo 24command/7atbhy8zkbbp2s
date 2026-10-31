@@ -28,7 +28,7 @@ NSDictionary *failure(const std::exception &e) {return @{ @"ok":@NO, @"message":
         Runtime r; r.open();
         const char *targets[]={"GameInformation","LevelControl","JudgeControl","Chapter","LevelRecord","MultiLanguageManager"};
         for (auto name:targets) r.klass(name);
-        return [NSString stringWithFormat:@"iOS 4.0.1 UUID matched; 6/6 types; IL2CPP ready. %@", [PMHookBackend status][@"message"]];
+        return [NSString stringWithFormat:@"iOS 4.0.3 UUID matched; 6/6 types; IL2CPP ready. %@", [PMHookBackend status][@"message"]];
     } catch (const std::exception &e) { return errorText(e); }
 }
 + (NSDictionary<NSString *,id> *)gameSnapshot {

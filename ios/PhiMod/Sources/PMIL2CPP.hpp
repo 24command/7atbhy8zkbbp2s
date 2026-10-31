@@ -95,8 +95,8 @@ struct Runtime {
         }
         if (!path || !header || header->magic != MH_MAGIC_64)
             throw std::runtime_error("UnityFramework is not loaded");
-        // Build gate: the supplied iOS 4.0.1 binary, not an Android offset table.
-        const uint8_t expected[16]={0x6e,0x18,0x1f,0x31,0x75,0x0a,0x30,0x44,0xa7,0x3a,0x14,0x98,0xdc,0x2d,0x56,0xd4};
+        // Build gate: the supplied iOS 4.0.3 binary, not an Android offset table.
+        const uint8_t expected[16]={0x70,0xf6,0x66,0xeb,0x6f,0x4e,0x32,0x5e,0x9e,0x8a,0x75,0xb5,0x68,0x08,0x5f,0x26};
         bool matched=false;
         auto cursor=reinterpret_cast<const uint8_t *>(header+1);
         const auto end=cursor+header->sizeofcmds;
@@ -108,7 +108,7 @@ struct Runtime {
                 matched=memcmp(reinterpret_cast<const uuid_command *>(cmd)->uuid,expected,16)==0;
             cursor+=cmd->cmdsize;
         }
-        if (!matched) throw std::runtime_error("Unsupported UnityFramework UUID (expected supplied iOS 4.0.1)");
+        if (!matched) throw std::runtime_error("Unsupported UnityFramework UUID (expected supplied iOS 4.0.3)");
         imageHeader=header;
         handle=dlopen(path,RTLD_LAZY|RTLD_NOLOAD);
         if (!handle) throw std::runtime_error("Cannot open loaded UnityFramework");
