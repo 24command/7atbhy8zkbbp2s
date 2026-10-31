@@ -59,7 +59,21 @@ bool isHighlight(Runtime&r,P sprite){if(!r.alive(sprite))return false;NSString*n
 void applyNote(Runtime&r,P c,bool isHold){if(!skinReady||!c)return;P note=r.get<P>(c,"noteInfor");if(!note)return;int type=r.get<int>(note,"type");if(!isHold){P old=r.get<P>(c,"noteImage");const char*base=type==1?"click":type==2?"drag":"flick";NSString*file=[NSString stringWithUTF8String:(skinFolder+"/"+base+".png").c_str()];if(isHighlight(r,old)){NSString*mh=[NSString stringWithUTF8String:(skinFolder+"/"+base+"_mh.png").c_str()];if([NSFileManager.defaultManager fileExistsAtPath:mh])file=mh;}P s=skinSprite(r,file,-1,old),renderer=r.get<P>(c,"_spriteRenderer");if(s&&r.alive(renderer)){r.call(renderer,"set_sprite",{"UnityEngine.Sprite"},{s});r.put(c,"noteImage",s);}return;}
  P body=r.get<P>(c,"_holdSpriteRenderer"),head=r.get<P>(c,"_holdHeadSpriteRenderer"),tail=r.get<P>(c,"_holdEndSpriteRenderer1");if(!r.alive(body))return;P old=r.call(body,"get_sprite");Bounds ob=r.unbox<Bounds>(r.call(old,"get_bounds"));V3 originalScale=r.unbox<V3>(r.call(r.call(c,"get_transform"),"get_localScale"));holdBases.emplace(c,std::make_pair(ob.extents.y*2.f,ob.center.y-ob.extents.y));NSString*path=[NSString stringWithUTF8String:(skinFolder+"/hold.png").c_str()];if(isHighlight(r,old)){NSString*mh=[NSString stringWithUTF8String:(skinFolder+"/hold_mh.png").c_str()];if([NSFileManager.defaultManager fileExistsAtPath:mh])path=mh;}P hs=skinSprite(r,path,0,old),bs=skinSprite(r,path,1,old),ts=skinSprite(r,path,2,old);if(r.alive(head)&&hs)r.call(head,"set_sprite",{"UnityEngine.Sprite"},{hs});if(bs)r.call(body,"set_sprite",{"UnityEngine.Sprite"},{bs});if(r.alive(tail)&&ts)r.call(tail,"set_sprite",{"UnityEngine.Sprite"},{ts});(void)originalScale;}
 void adjustHold(Runtime&r,P c){auto it=holdBases.find(c);if(it==holdBases.end())return;P body=r.get<P>(c,"_holdSpriteRenderer"),tr=r.call(c,"get_transform");if(!r.alive(body))return;P current=r.call(body,"get_sprite");if(!r.alive(current))return;Bounds b=r.unbox<Bounds>(r.call(current,"get_bounds"));float height=b.extents.y*2;if(height<=.0001f)return;V3 scale=r.unbox<V3>(r.call(tr,"get_localScale")),pos=r.unbox<V3>(r.call(tr,"get_localPosition"));float prev=scale.y;scale.y*=it->second.first/height;pos.y+=it->second.second*prev-(b.center.y-b.extents.y)*scale.y;r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&pos});for(const char*name:{"holdHead","holdEnd"}){P go=r.get<P>(c,name);if(!r.alive(go))continue;P child=r.call(go,"get_transform");V3 cs=r.unbox<V3>(r.call(child,"get_localScale"));cs.y=std::fabs(scale.x/std::max(.00001f,std::fabs(scale.y)));r.call(child,"set_localScale",{"UnityEngine.Vector3"},{&cs});}}
-std::string resourceFolder(NSString*identifier){NSString*folder=[PMContentStore.shared asset:identifier];for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"] isEqualToString:identifier]){NSString*sub=s[@"resourceRoot"] ?: @"";if(sub.length)folder=[folder stringByAppendingPathComponent:sub];break;}return folder.UTF8String;}
+NSString*resourceFolder(NSString*identifier){
+ // Official IDs have no local asset directory. Keep absence as nil rather
+ // than constructing std::string from a null UTF8String pointer.
+ if(!identifier.length)return nil;
+ NSString*folder=[PMContentStore.shared asset:identifier];
+ if(!folder.length)return nil;
+ NSDictionary*song=nil;
+ for(NSDictionary*entry in [PMContentStore.shared snapshot][@"songs"])if([entry[@"id"] isEqualToString:identifier]){song=entry;break;}
+ if(!song)return nil;
+ NSString*sub=[song[@"resourceRoot"] isKindOfClass:NSString.class]?song[@"resourceRoot"]:@"";
+ NSString*root=[folder stringByStandardizingPath];
+ if(sub.length){folder=[[root stringByAppendingPathComponent:sub]stringByStandardizingPath];if(![folder isEqualToString:root]&&![folder hasPrefix:[root stringByAppendingString:@"/"]])return nil;}
+ BOOL directory=NO;
+ return [NSFileManager.defaultManager fileExistsAtPath:folder isDirectory:&directory]&&directory?folder:nil;
+}
 std::string hexDecodePath(NSString*value){NSData*d=[[value stringByReplacingOccurrencesOfString:@" " withString:@""] dataUsingEncoding:NSASCIIStringEncoding];if(!d.length||d.length%2)return {};const unsigned char*p=static_cast<const unsigned char*>(d.bytes);std::string out;out.reserve(d.length/2);for(NSUInteger i=0;i<d.length;i+=2){unsigned hi=p[i]>='0'&&p[i]<='9'?p[i]-'0':p[i]>='a'&&p[i]<='f'?p[i]-'a'+10:p[i]>='A'&&p[i]<='F'?p[i]-'A'+10:99;unsigned lo=p[i+1]>='0'&&p[i+1]<='9'?p[i+1]-'0':p[i+1]>='a'&&p[i+1]<='f'?p[i+1]-'a'+10:p[i+1]>='A'&&p[i+1]<='F'?p[i+1]-'A'+10:99;if(hi>15||lo>15)return {};out.push_back((char)((hi<<4)|lo));}return out;}
 void destroyVideoObject(Runtime&r,uint32_t &handle,bool releaseTexture){
  if(!handle)return;
@@ -133,7 +147,8 @@ void prepareVideos(Runtime&r,P level){
  P info=r.get<P>(r.mainGame(),"levelStartInfo");
  NSString*identifier=info?r.string(r.get<P>(info,"songsId")):nil;
  if(!identifier.length)return;
- NSString*folder=[NSString stringWithUTF8String:resourceFolder(identifier).c_str()];
+ NSString*folder=resourceFolder(identifier);
+ if(!folder.length)return;
  prepareVideosFromEffects(r,level,folder);
 }
 double trackAt(const std::vector<TrackEvent>&a,double now,double fallback){
@@ -275,7 +290,7 @@ void updateLegacy(Runtime&r,P progress){
 } // anonymous namespace
 void levelBegin(Runtime&r,void*level){clearVideos(r);if(videoLevel){r.gchandle_free(videoLevel);videoLevel=0;}try{releaseRoots(r);loadSkin(r);}catch(const std::exception&e){logf("Skin runtime setup failed: %s",e.what());releaseRoots(r);}if(level)videoLevel=r.gchandle_new(level,false);prepareLegacy(r);}
 void levelEnd(Runtime&r){clearVideos(r);if(videoLevel){r.gchandle_free(videoLevel);videoLevel=0;}clearLegacy();releaseRoots(r);}
-void afterChart(Runtime&r,void*level){try{prepareVideos(r,level);}catch(const std::exception&e){logf("RPE video load failed: %s",e.what());}try{P info=r.get<P>(r.mainGame(),"levelStartInfo");NSString*identifier=info?r.string(r.get<P>(info,"songsId")):nil;if(identifier.length)inspectShaderExtensions([NSString stringWithUTF8String:resourceFolder(identifier).c_str()]);}catch(const std::exception&e){logf("RPE shader metadata scan failed: %s",e.what());}}
+void afterChart(Runtime&r,void*level){try{prepareVideos(r,level);}catch(const std::exception&e){logf("RPE video load failed: %s",e.what());}try{P info=r.get<P>(r.mainGame(),"levelStartInfo");NSString*identifier=info?r.string(r.get<P>(info,"songsId")):nil;NSString*folder=resourceFolder(identifier);if(folder.length)inspectShaderExtensions(folder);}catch(const std::exception&e){logf("RPE shader metadata scan failed: %s",e.what());}}
 void observe(int rating){if(legacyActive)legacyJudge=rating==0?2:rating==1?1:0;}
 void noteMoved(Runtime&r,void*control,bool hold){try{P c=control;applyNote(r,c,hold);if(hold)adjustHold(r,c);}catch(const std::exception&e){logf("Skin note update failed: %s",e.what());}}
 void tick(Runtime&r,void*progress){try{updateVideos(r,progress);updateLegacy(r,progress);}catch(const std::exception&e){logf("Feature update failed: %s",e.what());}}
