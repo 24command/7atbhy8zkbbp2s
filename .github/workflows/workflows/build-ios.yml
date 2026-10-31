@@ -30,6 +30,8 @@ jobs:
           "$RUNNER_TEMP/judge-tests/bin/python" ios/tests/test_resume_integrity.py
       - name: Test chart conversion and safe archives
         run: bash ios/tests/run_content_tests.sh
+      - name: Test iOS Metal shader presets
+        run: bash ios/tests/run_shader_tests.sh
       - name: Build arm64 framework
         run: bash ios/build_unsigned.sh "$RUNNER_TEMP/out"
       - name: Verify and archive
