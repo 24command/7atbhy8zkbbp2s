@@ -13,7 +13,7 @@ permissions:
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Test portable gameplay core
@@ -27,6 +27,9 @@ jobs:
         run: |
           "$RUNNER_TEMP/judge-tests/bin/python" ios/tests/test_gameplay_hooks.py
           "$RUNNER_TEMP/judge-tests/bin/python" ios/tests/test_source_contracts.py
+          "$RUNNER_TEMP/judge-tests/bin/python" ios/tests/test_resume_integrity.py
+      - name: Test chart conversion and safe archives
+        run: bash ios/tests/run_content_tests.sh
       - name: Build arm64 framework
         run: bash ios/build_unsigned.sh "$RUNNER_TEMP/out"
       - name: Verify and archive
@@ -38,10 +41,10 @@ jobs:
           import sys
           from pathlib import Path
           binary = Path(sys.argv[1]).read_bytes()
-          for marker in (b"PMJudgeHook-v1", b"PMGameplay-v2", b"PMGameplay-contract-v2-57"):
+          for marker in (b"PMJudgeHook-v1", b"PMGameplay-v2", b"PMGameplay-contract-v2-68-ios403"):
               assert marker in binary, f"Missing build marker: {marker!r}"
           assert b"PMGameplay-v1" not in binary, "Stale gameplay protocol"
-          print("PASS: framework judge/gameplay protocol v2, 57 hooks")
+          print("PASS: framework judge/gameplay protocol v2, 68 hooks")
           PY
           cd "$RUNNER_TEMP/out"
           ditto -c -k --keepParent PhiMod.framework PhiMod.framework.zip
