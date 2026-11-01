@@ -48,3 +48,12 @@ inline double rpeFloor(const std::vector<RpeFloorSegment>& segments,double now,d
 inline float rpeHoldCapPosition(float edge,float capCenter,float capExtent,float capScale,bool tail,bool compact){
  return edge+(compact?0.f:((tail?capExtent:-capExtent)-capCenter)*capScale);
 }
+
+// Android applyRpeGeometry / Phira now_transform: Hold does not use
+// posControl or incline perspective. Distances here are native world units.
+inline float rpeHorizontalPosition(float x,bool hold,float posControl,float inclineDegrees,float head,float worldWidth){
+ if(hold)return x;
+ if(!std::isfinite(worldWidth)||worldWidth<=0)return x*posControl;
+ float perspective=1-std::sin(inclineDegrees*0.017453292519943295f)*head*(2*(16.f/9.f)/worldWidth)*1.25f;
+ return x*posControl*perspective;
+}

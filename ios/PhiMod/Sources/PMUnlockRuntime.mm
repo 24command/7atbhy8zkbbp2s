@@ -251,15 +251,53 @@ uint32_t lockUIOwner=0;P lockUIItem=nullptr;int lockUISlot=-1;NSUInteger lockUIR
 bool lockUIManaged=false,lockUIBlocked=false;NSString*lockUIRequirement=nil;double lockUIEvaluate=0;
 void lockActive(Runtime&r,P object,bool active){if(r.alive(object)&&r.unbox<bool>(r.call(object,"get_activeSelf"))!=active)r.call(object,"SetActive",{"System.Boolean"},{&active});}
 void lockComponent(Runtime&r,P component,bool active){if(r.alive(component))lockActive(r,r.call(component,"get_gameObject"),active);}
-uint32_t lockTipRoot=0;bool lockTipFit=false;int lockTipMin=0,lockTipMax=0,lockTipFont=0,lockTipWrap=0;
-void restoreLockTip(Runtime&r){if(!lockTipRoot)return;P tip=target(r,lockTipRoot);if(r.alive(tip)){r.call(tip,"set_resizeTextForBestFit",{"System.Boolean"},{&lockTipFit});r.call(tip,"set_resizeTextMinSize",{"System.Int32"},{&lockTipMin});r.call(tip,"set_resizeTextMaxSize",{"System.Int32"},{&lockTipMax});r.call(tip,"set_fontSize",{"System.Int32"},{&lockTipFont});r.call(tip,"set_horizontalOverflow",{"UnityEngine.HorizontalWrapMode"},{&lockTipWrap});}r.gchandle_free(lockTipRoot);lockTipRoot=0;}
+struct TipSize{float x,y;};struct TipColor{float r,g,b,a;};
+uint32_t lockTipRoot=0;bool lockTipFit=false,lockTipEnabled=true;int lockTipMin=0,lockTipMax=0,lockTipFont=0,lockTipWrap=0,lockTipVertical=0;TipSize lockTipSize{};TipColor lockTipColor{};
+void restoreLockTip(Runtime&r){
+ if(!lockTipRoot)return;P tip=target(r,lockTipRoot);
+ if(r.alive(tip)){
+  r.call(tip,"set_resizeTextForBestFit",{"System.Boolean"},{&lockTipFit});
+  r.call(tip,"set_resizeTextMinSize",{"System.Int32"},{&lockTipMin});r.call(tip,"set_resizeTextMaxSize",{"System.Int32"},{&lockTipMax});
+  r.call(tip,"set_fontSize",{"System.Int32"},{&lockTipFont});r.call(tip,"set_horizontalOverflow",{"UnityEngine.HorizontalWrapMode"},{&lockTipWrap});
+  r.call(tip,"set_verticalOverflow",{"UnityEngine.VerticalWrapMode"},{&lockTipVertical});
+  r.call(tip,"set_enabled",{"System.Boolean"},{&lockTipEnabled});r.call(tip,"set_color",{"UnityEngine.Color"},{&lockTipColor});
+  P rect=r.call(tip,"get_rectTransform");r.call(rect,"set_sizeDelta",{"UnityEngine.Vector2"},{&lockTipSize});
+ }
+ r.gchandle_free(lockTipRoot);lockTipRoot=0;
+}
 void fitLockTip(Runtime&r,P tip,bool blocked){
+ static NSString*measuredText=nil;static float measuredWidth=-1,measuredHeight=-1;static int fittedFont=24;
  if(!blocked){restoreLockTip(r);return;}
- if(target(r,lockTipRoot)==tip)return;restoreLockTip(r);
- lockTipFit=r.unbox<bool>(r.call(tip,"get_resizeTextForBestFit"));lockTipMin=r.unbox<int>(r.call(tip,"get_resizeTextMinSize"));lockTipMax=r.unbox<int>(r.call(tip,"get_resizeTextMaxSize"));lockTipFont=r.unbox<int>(r.call(tip,"get_fontSize"));lockTipWrap=r.unbox<int>(r.call(tip,"get_horizontalOverflow"));lockTipRoot=r.gchandle_new(tip,false);
- // Song requirements are one readable line; never shrink to fit multiple rows.
- bool fit=false;int font=std::max(28,lockTipFont),overflow=1;
- r.call(tip,"set_resizeTextForBestFit",{"System.Boolean"},{&fit});r.call(tip,"set_fontSize",{"System.Int32"},{&font});r.call(tip,"set_horizontalOverflow",{"UnityEngine.HorizontalWrapMode"},{&overflow});
+ if(target(r,lockTipRoot)!=tip){
+  measuredText=nil;measuredWidth=measuredHeight=-1;
+  restoreLockTip(r);
+  lockTipFit=r.unbox<bool>(r.call(tip,"get_resizeTextForBestFit"));lockTipMin=r.unbox<int>(r.call(tip,"get_resizeTextMinSize"));lockTipMax=r.unbox<int>(r.call(tip,"get_resizeTextMaxSize"));
+  lockTipFont=r.unbox<int>(r.call(tip,"get_fontSize"));lockTipWrap=r.unbox<int>(r.call(tip,"get_horizontalOverflow"));lockTipVertical=r.unbox<int>(r.call(tip,"get_verticalOverflow"));
+  lockTipEnabled=r.unbox<bool>(r.call(tip,"get_enabled"));lockTipColor=r.unbox<TipColor>(r.call(tip,"get_color"));
+  lockTipSize=r.unbox<TipSize>(r.call(r.call(tip,"get_rectTransform"),"get_sizeDelta"));lockTipRoot=r.gchandle_new(tip,false);
+  logf("Song unlock single-line label configured: nativeFont=%d vertical=%d",lockTipFont,lockTipVertical);
+ }
+ // Do not let a larger single line be entirely truncated by the old short box.
+ // Reassert only changed properties after native selector updates.
+ bool fit=false,yes=true;int font=24,overflow=1;
+ if(r.unbox<bool>(r.call(tip,"get_resizeTextForBestFit")))r.call(tip,"set_resizeTextForBestFit",{"System.Boolean"},{&fit});
+ if(r.unbox<int>(r.call(tip,"get_horizontalOverflow"))!=overflow)r.call(tip,"set_horizontalOverflow",{"UnityEngine.HorizontalWrapMode"},{&overflow});
+ if(r.unbox<int>(r.call(tip,"get_verticalOverflow"))!=overflow)r.call(tip,"set_verticalOverflow",{"UnityEngine.VerticalWrapMode"},{&overflow});
+ if(!r.unbox<bool>(r.call(tip,"get_enabled")))r.call(tip,"set_enabled",{"System.Boolean"},{&yes});
+ TipColor color=r.unbox<TipColor>(r.call(tip,"get_color"));if(color.a<1){color.a=1;r.call(tip,"set_color",{"UnityEngine.Color"},{&color});}
+ P rect=r.call(tip,"get_rectTransform");struct Rect{float x,y,w,h;};Rect bounds=r.unbox<Rect>(r.call(rect,"get_rect"));
+ // The old multiline minimum was 12: use twice that size, not the
+ // potentially much larger native font. Keep one line inside the original box.
+ NSString*text=r.string(r.call(tip,"get_text"));
+ if(![measuredText isEqualToString:text]||std::fabs(bounds.w-measuredWidth)>.5f||std::fabs(bounds.h-measuredHeight)>.5f){
+  r.call(tip,"set_fontSize",{"System.Int32"},{&font});
+  float width=r.unbox<float>(r.call(tip,"get_preferredWidth")),height=r.unbox<float>(r.call(tip,"get_preferredHeight"));
+  float availableW=std::max(1.f,bounds.w-8.f),availableH=std::max(1.f,bounds.h-4.f);
+  float ratio=std::min(1.f,std::min(width>0?availableW/width:1.f,height>0?availableH/height:1.f));
+  fittedFont=std::max(1,int(std::floor(font*ratio)));
+  measuredText=text;measuredWidth=bounds.w;measuredHeight=bounds.h;
+ }
+ if(r.unbox<int>(r.call(tip,"get_fontSize"))!=fittedFont)r.call(tip,"set_fontSize",{"System.Int32"},{&fittedFont});
 }
 void resetLockUI(Runtime&r){restoreLockTip(r);if(lockUIOwner)r.gchandle_free(lockUIOwner);lockUIOwner=0;lockUIItem=nullptr;lockUISlot=-1;lockUIManaged=false;lockUIRequirement=nil;lockUIEvaluate=0;}
 void songLockUI(Runtime&r,P selector,double now){
@@ -291,9 +329,10 @@ void songLockUI(Runtime&r,P selector,double now){
  if(!r.alive(mask)&&blocked){P prefab=r.get<P>(selector,"lockMaskPrefab"),parent=r.get<P>(item,"coverRect");if(r.alive(prefab)&&r.alive(parent)){bool world=false;mask=r.stat(r.type("UnityEngine","Object"),"Instantiate",{"UnityEngine.Object","UnityEngine.Transform","System.Boolean"},{prefab,parent,&world});r.put(item,"lockMask",mask);}}
  lockActive(r,mask,blocked);lockActive(r,r.get<P>(selector,"locked"),blocked);
  for(const char*field:{"difficulty","level","score","acc","ratingDisplayController"})lockComponent(r,r.get<P>(selector,field),!blocked);
- P tip=r.get<P>(selector,"unlockTip");if(r.alive(tip)){fitLockTip(r,tip,blocked);
+ P tip=r.get<P>(selector,"unlockTip");if(r.alive(tip)){
   P parent=r.call(r.call(tip,"get_transform"),"get_parent");lockComponent(r,parent,blocked);lockComponent(r,tip,blocked);
   NSString*text=blocked?lockUIRequirement:@"";if(![r.string(r.call(tip,"get_text"))isEqualToString:text])r.call(tip,"set_text",{"System.String"},{r.managedString(text?:@"")});
+  fitLockTip(r,tip,blocked);
  }
  P button=r.get<P>(selector,"startButton");if(r.alive(button)&&r.unbox<bool>(r.call(button,"get_interactable"))!=playable)r.call(button,"set_interactable",{"System.Boolean"},{&playable});
  for(const char*field:{"selectorItemUpside","selectorItemDownside"}){P row=r.get<P>(item,field);if(r.alive(row)){lockActive(r,r.get<P>(row,"locked"),blocked);lockComponent(r,r.get<P>(row,"difficulty"),!blocked);}}

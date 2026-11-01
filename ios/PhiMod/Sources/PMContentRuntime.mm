@@ -56,6 +56,7 @@ void restoreHoldHitFX(Runtime&r){
  }
  holdHitFX.clear();
 }
+std::set<int>uiControlLines;
 std::set<int>inertLineVisuals;bool rpeIntroRetired=false;std::set<int>reportedLineAlphaCorrections;
 std::map<P,int>lineBaseOrder;std::vector<int>storyOrders;int storyHoldOrder=1028,storyNoteOrder=1030;
 // Fake notes that already failed to build; never retried in the same chart.
@@ -181,7 +182,7 @@ P audio(Runtime&r,NSString*path){
  }catch(...){r.gchandle_free(clipRoot);throw;}
 }
 NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=[[key stringByReplacingOccurrencesOfString:id withString:@""]lowercaseString];*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":[lower containsString:@"blur"]?@"blur":@"image";return id;}
-void clearVisuals(Runtime&r){restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();extrasBoundChart=nullptr;noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
+void clearVisuals(Runtime&r){restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();extrasBoundChart=nullptr;noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();uiControlLines.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
 void applyCachedChapterCover(Runtime&r,P card,const char*codeField,const char*loaderField){
  NSString*code=r.string(r.get<P>(card,codeField));if(!code.length)return;auto found=assets.find(code.UTF8String);if(found==assets.end())return;P sprite=target(r,found->second);if(!r.alive(sprite))return;
  P loader=r.get<P>(card,loaderField);if(!r.alive(loader))return;bool changed=false;
@@ -482,10 +483,15 @@ void afterChart(Runtime&r,P level){if(!currentChart)return;
  // Match Android's zOrder/index ranking instead of treating zOrder as a
  // native sortingOrder offset (negative values otherwise fall behind BG).
  NSArray*sourceLines=currentChart[@"judgeLineList"];std::vector<int>ordered;
- inertLineVisuals.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();
+ inertLineVisuals.clear();uiControlLines.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();
  for(NSUInteger i=0;i<sourceLines.count;++i){
   ordered.push_back((int)i);NSDictionary*source=sourceLines[i],*decor=source[@"pmDecor"];
   NSString*texture=decor[@"Texture"];NSArray*alpha=source[@"judgeLineDisappearEvents"];
+  NSString*attachment=[decor[@"attachUI"]isKindOfClass:NSString.class]?[decor[@"attachUI"]lowercaseString]:@"";
+  if([@[@"pause",@"combonumber",@"combo",@"score",@"bar",@"name",@"level"]containsObject:attachment]){
+   uiControlLines.insert((int)i);
+   log([NSString stringWithFormat:@"Content UI control line excluded from chart rendering: line=%lu attachUI=%@",(unsigned long)i,attachment]);
+  }
   // Keep every native line and its index: invisible lines can still be parents
   // or note lanes. Only skip redundant MOD sprite/scale/color work for empty,
   // permanently transparent standard-line visuals (no storyboard/text content).
@@ -566,6 +572,14 @@ float sourceLineAlpha(NSArray*events,double now,double bpm){
 }
 double trackValue(NSArray*a,double now,double fallback,int channel=-1){NSDictionary*last=eventAt(a,now);return last?visualEvent(last,channel).value(now):fallback;}
 
+float notePerspectiveWidth(Runtime&r,NSDictionary*decor,float now){
+ if(![decor[@"inclineEvents"]count]||std::fabs(trackValue(decor[@"inclineEvents"],now,0))<1e-6)return 0;
+ // Cache within a Unity frame, including real and fake notes, without scene scans.
+ static int cachedFrame=-1;static float width=0;
+ int frame=r.unbox<int>(r.stat(r.type("UnityEngine","Time"),"get_frameCount"));
+ if(frame!=cachedFrame){cachedFrame=frame;width=0;P camera=r.stat(r.type("UnityEngine","Camera"),"get_main");if(r.alive(camera))width=2*r.unbox<float>(r.call(camera,"get_orthographicSize"))*std::min(16.f/9.f,r.unbox<float>(r.call(camera,"get_aspect")));}
+ return width;
+}
 double control(NSDictionary*d,NSString*key,double distance){
  NSArray*points=d[key];if(!points.count)return 1;
  auto found=controlCache.find(points);
@@ -712,6 +726,13 @@ void visuals(Runtime&r,P progress){
  if(total<=0)return;
  for(int i=0;i<total;++i){
   P line=r.at(lineList,i),renderer=r.get<P>(line,"_judgeLineSpriteRenderer");if(!r.alive(renderer))continue;
+  // attachUI lines carry HUD animation data, not a drawable line/texture.
+  // Keep the controller, transforms and indices; suppress only its visual.
+  if(uiControlLines.count(i)){
+   bool no=false;if(r.unbox<bool>(r.call(renderer,"get_enabled")))r.call(renderer,"set_enabled",{"System.Boolean"},{&no});
+   auto visual=storyVisuals.find(i);if(visual!=storyVisuals.end()&&visual->second.visible){r.call(visual->second.go,"SetActive",{"System.Boolean"},{&no});visual->second.visible=false;}
+   continue;
+  }
   if(inertLineVisuals.count(i)){if(r.unbox<bool>(r.call(renderer,"get_enabled"))){bool no=false;r.call(renderer,"set_enabled",{"System.Boolean"},{&no});}continue;}
   P tr=r.call(line,"get_transform");NSDictionary*d=data[i][@"pmDecor"];if(!d)continue;
   V3 scale=r.unbox<V3>(r.call(tr,"get_localScale"));if(!lineScales.count(line))lineScales[line]=scale;scale=lineScales[line];scale.x*=trackValue(d[@"scaleXEvents"],now,1);scale.y*=trackValue(d[@"scaleYEvents"],now,1);r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});
@@ -857,7 +878,7 @@ void visuals(Runtime&r,P progress){
  NSDictionary*decor=data[f.line][@"pmDecor"];
  double distance=(scalar(f.note[@"floorPosition"])-currentFloor)*rpeFloorToDistance+scalar(f.note[@"pmYOffset"]);
  auto geometry=rpeGeometry(scalar(f.note[@"floorPosition"])-currentFloor,scalar(f.note[@"pmEndFloor"],scalar(f.note[@"floorPosition"]))-currentFloor,0,scalar(f.note[@"pmRawSpeed"],1),scalar(f.note[@"pmYOffset"]),control(decor,@"yControl",distance),worldSpeed,isHold&&now>=start);
- V3 position{(float)(scalar(f.note[@"positionX"])*control(decor,@"posControl",distance)),f.below?-geometry.head:geometry.head,0};
+ V3 position{rpeHorizontalPosition(scalar(f.note[@"positionX"]),isHold,control(decor,@"posControl",distance),trackValue(decor[@"inclineEvents"],now,0),geometry.head,isHold?0:notePerspectiveWidth(r,decor,now)),f.below?-geometry.head:geometry.head,0};
  P tr=visual.transform;
  float sizeX=scalar(f.note[@"pmSize"],1)*control(decor,@"sizeControl",distance);
  if(!std::isfinite(sizeX))sizeX=1;
@@ -945,7 +966,7 @@ void noteMoved(Runtime&r,P controlObject,bool hold){
  float rawSpeed=scalar(n[@"pmRawSpeed"],1);
  float yControl=control(d,@"yControl",distance);
  float yOffset=scalar(n[@"pmYOffset"],0);
- position.x=r.get<float>(note,"positionX")*control(d,@"posControl",distance);
+ position.x=r.get<float>(note,"positionX");
  if(hold){
   // Android applyRpeGeometry: both endpoints use the same source integral.
   // Once started, pin the head to the line and shorten the remaining body.
@@ -973,6 +994,7 @@ void noteMoved(Runtime&r,P controlObject,bool hold){
  }else{
   auto geometry=rpeGeometry(delta,scalar(n[@"pmEndFloor"],scalar(n[@"floorPosition"]))-currentFloor,0,rawSpeed,yOffset,yControl,speed,false);
   position.y=below?-geometry.head:geometry.head;
+  position.x=rpeHorizontalPosition(position.x,false,control(d,@"posControl",distance),trackValue(d[@"inclineEvents"],now,0),geometry.head,notePerspectiveWidth(r,d,now));
  }
  position.z=0;
  r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&position});
