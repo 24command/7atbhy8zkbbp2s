@@ -23,8 +23,11 @@ namespace { PMUnlockProgress*progress=nil; Runtime*runtime=nullptr; NSMutableSet
 void logf(const char*fmt,...){char b[768];va_list a;va_start(a,fmt);vsnprintf(b,sizeof(b),fmt,a);va_end(a);PMDiagnosticsWrite(b);}
 P target(Runtime&r,uint32_t h){return h?r.gchandle_get_target(h):nullptr;}
 NSString*slotName(int slot){return @[@"EZ",@"HD",@"IN",@"AT"][std::clamp(slot,0,3)];}
-NSDictionary*entity(NSString*id){NSDictionary*db=[PMContentStore.shared snapshot];for(NSDictionary*s in db[@"songs"])if([s[@"id"] isEqualToString:id])return s;for(NSDictionary*c in db[@"chapters"])if([c[@"id"] isEqualToString:id])return c;return nil;}
-NSDictionary*songEntity(NSString*id,int slot){NSDictionary*db=[PMContentStore.shared snapshot];NSString*selected=db[@"chartSelections"][[NSString stringWithFormat:@"%@@%d",id,slot]];NSDictionary*fallback=nil;for(NSDictionary*s in db[@"songs"]){if(![s[@"id"] isEqualToString:id]&&![s[@"groupId"] isEqualToString:id])continue;if(![[s[@"level"] uppercaseString] isEqualToString:slotName(slot)])continue;if([s[@"id"] isEqualToString:selected])return s;if(!fallback)fallback=s;}return fallback;}
+// snapshot() serializes the entire library. Reuse it for read-only unlock
+// queries until an import/edit commits a new revision.
+NSDictionary*unlockLibrary(){static NSDictionary*db=nil;static NSUInteger revision=NSUIntegerMax;NSUInteger current=PMContentStore.shared.revision;if(!db||revision!=current){db=[PMContentStore.shared snapshot];revision=current;}return db;}
+NSDictionary*entity(NSString*id){NSDictionary*db=unlockLibrary();for(NSDictionary*s in db[@"songs"])if([s[@"id"] isEqualToString:id])return s;for(NSDictionary*c in db[@"chapters"])if([c[@"id"] isEqualToString:id])return c;return nil;}
+NSDictionary*songEntity(NSString*id,int slot){NSDictionary*db=unlockLibrary();NSString*selected=db[@"chartSelections"][[NSString stringWithFormat:@"%@@%d",id,slot]];NSDictionary*fallback=nil;for(NSDictionary*s in db[@"songs"]){if(![s[@"id"] isEqualToString:id]&&![s[@"groupId"] isEqualToString:id])continue;if(![[s[@"level"] uppercaseString] isEqualToString:slotName(slot)])continue;if([s[@"id"] isEqualToString:selected])return s;if(!fallback)fallback=s;}return fallback;}
 NSDictionary*ruleFor(NSString*id){return PMNormalizeUnlockRule(entity(id)[@"unlock"]);}
 P record(Runtime&r,NSString*id,int slot){try{return r.call(r.mainGame(),"GetSongRecord",{"System.String","System.String"},{r.managedString(id),r.managedString(slotName(slot))});}catch(...){return nullptr;}}
 double rksValue(Runtime&r){try{P gi=r.mainGame();P boxed=r.call(gi,"get_RankingScore");return r.unbox<float>(boxed);}catch(...){return -1;}}
@@ -33,7 +36,7 @@ bool recordPass(Runtime&r,NSDictionary*c){
  int slot=c[@"slot"]?[c[@"slot"] intValue]:-1;
  if([type isEqualToString:@"rks"]){double value=rksValue(r);return std::isfinite(value)&&value+1e-6>=[c[@"value"] doubleValue];}
  if(!ref.length)return false;
- NSDictionary*db=[PMContentStore.shared snapshot];
+ NSDictionary*db=unlockLibrary();
  if([type isEqualToString:@"chapter"]){
   NSArray*members=entity(ref)[@"songs"];
   if(!members){for(NSDictionary*chapter in pmcontent::cachedOfficialSnapshot()[@"chapters"])if([chapter[@"chapterCode"] isEqualToString:ref]){NSMutableArray*ids=[NSMutableArray new];for(NSDictionary*song in chapter[@"songInfo"][@"songs"])if([song[@"songsId"] isKindOfClass:NSString.class])[ids addObject:song[@"songsId"]];members=ids;break;}}
@@ -77,8 +80,8 @@ void unlockSong(Runtime&r,P value,NSString*id,int slot){
  if(!value)return;
  bool mainline=PMSettingBool("mainlineUnlock")&&pmcontent::isMainlineSong(id);
  if(!mainline&&!(entity(id)&&opened(r,id)))return;
- P unlocks=r.get<P>(value,"unlockInfo"),difficulty=r.get<P>(value,"difficulty");int n=r.count(unlocks);
- for(int i=0;i<n;++i){if(entity(id)&&i!=slot)continue;if(mainline&&(!difficulty||i>=int(r.array_length(difficulty))||r.unbox<float>(r.arrayAt(difficulty,i))<=0))continue;P u=r.at(unlocks,i);r.put(u,"unlockType",-1);clearList(r,r.get<P>(u,"unlockInfo"));}
+ P unlocks=r.get<P>(value,"unlockInfo"),difficulty=r.get<P>(value,"difficulty");int n=unlocks?int(r.array_length(unlocks)):0;
+ for(int i=0;i<n;++i){if(entity(id)&&i!=slot)continue;if(mainline&&(!difficulty||i>=int(r.array_length(difficulty))||r.unbox<float>(r.arrayAt(difficulty,i))<=0))continue;P u=r.arrayAt(unlocks,i);r.put(u,"unlockType",-1);clearList(r,r.get<P>(u,"unlockInfo"));}
 }
 void continueChain(NSString*id){
  if(![newlyOpened containsObject:id]||!runtime)return;
@@ -109,7 +112,7 @@ void pumpAnimations(){
 }
 void enqueueReveals(Runtime&r){
  if(!pending)pending=[NSMutableArray new];
- NSDictionary*db=[PMContentStore.shared snapshot];NSMutableArray*subjects=[db[@"songs"] mutableCopy];[subjects addObjectsFromArray:db[@"chapters"]];
+ NSDictionary*db=unlockLibrary();NSMutableArray*subjects=[db[@"songs"] mutableCopy];[subjects addObjectsFromArray:db[@"chapters"]];
  for(NSDictionary*subject in subjects){NSString*id=subject[@"id"];NSDictionary*rule=subject[@"unlock"];
   if(![rule[@"enabled"] boolValue]||PMUnlockValidationError(rule)||[rule[@"playTiming"] intValue]==1||!opened(r,id)||[progress isSeen:id rule:rule])continue;
   NSDictionary*event=@{@"id":id,@"signature":PMUnlockSignature(rule)};if(![pending containsObject:event])[pending addObject:event];
@@ -199,6 +202,33 @@ bool mainlineApplyMapCover(Runtime&r,void*value){
 void attach(Runtime&r){runtime=&r;}
 void songInfo(Runtime&r,void*song,int slot,void*value){if(!runtime||!song)return;try{NSString*id=r.string(r.get<P>((P)song,"songsId"));NSDictionary*custom=songEntity(id,slot);if(custom)id=custom[@"id"];if(id.length&&entity(id))opened(r,id);}catch(const std::exception&e){logf("Unlock song info failed: %s",e.what());}(void)slot;(void)value;}
 void itemInfo(Runtime&r,void*item,int slot,void*value){if(!runtime||!item)return;try{P info=r.get<P>((P)item,"songInfo");NSString*id=info?r.string(r.get<P>(info,"songsId")):nil;NSDictionary*selected=songEntity(id,slot);if(selected)id=selected[@"id"];unlockSong(r,info,id,slot);NSDictionary*custom=entity(id);if(custom){bool open=opened(r,id);BOOL hidden=[custom[@"hidden"] boolValue]&&!open;BOOL secret=[custom[@"secret"] boolValue]&&!open&&!hidden;r.put((P)item,"<Unlocked>k__BackingField",open);r.put((P)item,"visible",!hidden);r.put((P)item,"<InfoHidden>k__BackingField",secret);}else if(PMSettingBool("mainlineUnlock")&&pmcontent::isMainlineSong(id)){P difficulty=r.get<P>(info,"difficulty");bool any=false;for(uintptr_t i=0;difficulty&&i<r.array_length(difficulty);++i)if(r.unbox<float>(r.arrayAt(difficulty,(int)i))>0)any=true;r.put((P)item,"<Unlocked>k__BackingField",any);r.put((P)item,"unlockType",any?-1:0);r.put((P)item,"unlockInfo",r.managedString(@""));r.put((P)item,"visible",true);r.put((P)item,"<InfoHidden>k__BackingField",false);}if(id.length&&entity(id))opened(r,id);}catch(const std::exception&e){logf("Unlock item info failed: %s",e.what());}}
+NSString*requirementName(NSString*ref,bool chapter){
+ NSDictionary*db=unlockLibrary();
+ for(NSDictionary*entry in db[chapter?@"chapters":@"songs"])if([entry[@"id"] isEqualToString:ref]||(!chapter&&[entry[@"groupId"] isEqualToString:ref]))return entry[chapter?@"name":@"title"]?:ref;
+ NSDictionary*official=pmcontent::cachedOfficialSnapshot();
+ if(chapter){for(NSDictionary*entry in official[@"chapters"])if([entry[@"chapterCode"] isEqualToString:ref])return entry[@"songInfo"][@"title"]?:ref;}
+ else for(NSString*k in @[@"mainSongs",@"extraSongs",@"sideStorySongs",@"otherSongs"])for(NSDictionary*entry in official[@"songBase"][k])if([entry[@"songsId"] isEqualToString:ref])return entry[@"songsName"]?:ref;
+ return ref?:@"?";
+}
+NSString*chapterRequirements(NSDictionary*rule){
+ NSString*invalid=PMUnlockValidationError(rule);if(invalid)return invalid;
+ NSMutableArray*rows=[NSMutableArray new];
+ [rows addObject:[rule[@"mode"] isEqualToString:@"any"]?@"\u89e3\u9501\u8981\u6c42\uff08\u6ee1\u8db3\u4efb\u4e00\u9879\uff09":@"\u89e3\u9501\u8981\u6c42\uff08\u5168\u90e8\u6ee1\u8db3\uff09"];
+ for(NSDictionary*c in rule[@"conditions"]){
+  NSString*type=c[@"type"];double value=[c[@"value"] doubleValue];
+  if([type isEqualToString:@"rks"]){[rows addObject:[NSString stringWithFormat:@"RKS \u2265 %g",value]];continue;}
+  int slot=c[@"slot"]?[c[@"slot"] intValue]:-1;
+  NSString*difficulty=slot<0?@"\u4efb\u610f\u96be\u5ea6":slotName(slot);
+  NSString*name=requirementName(c[@"ref"],[type isEqualToString:@"chapter"]),*condition=nil;
+  if([type isEqualToString:@"score"])condition=[NSString stringWithFormat:@"\u5206\u6570 \u2265 %.0f",value];
+  else if([type isEqualToString:@"acc"])condition=[NSString stringWithFormat:@"ACC \u2265 %g%%",value];
+  else if([type isEqualToString:@"fc"])condition=@"Full Combo";
+  else if([type isEqualToString:@"phi"])condition=@"Phi (1000000)";
+  else condition=@"\u7ae0\u8282\u5185\u6bcf\u9996\u6b4c\u5206\u6570 \u2265 700000";
+  [rows addObject:[NSString stringWithFormat:@"%@ [%@] %@",name,difficulty,condition]];
+ }
+ return [rows componentsJoinedByString:@"\n"];
+}
 void chapterReady(Runtime&r,void*selector){
  try{P cards=r.get<P>((P)selector,"_chapterInfos");for(uintptr_t i=0;cards&&i<r.array_length(cards);++i){
   P card=r.arrayAt(cards,(int)i);NSString*id=r.string(r.get<P>(card,"chapterCode"));NSDictionary*custom=entity(id);
@@ -206,14 +236,74 @@ void chapterReady(Runtime&r,void*selector){
   bool open=custom?opened(r,id):true;
   P locked=r.get<P>(card,"locked"),play=r.get<P>(card,"play");
   if(r.alive(locked)){bool lock=!open;r.call(locked,"SetActive",{"System.Boolean"},{&lock});}
+  if(custom){P tip=r.get<P>(card,"unlockTip");if(r.alive(tip)){
+   NSString*requirements=open?@"":chapterRequirements(ruleFor(id));
+   // Use the game's central lock label, not a separate overlay.
+   r.call(tip,"set_text",{"System.String"},{r.managedString(requirements)});
+   bool show=!open;P labelObject=r.call(tip,"get_gameObject");r.call(labelObject,"SetActive",{"System.Boolean"},{&show});
+  }}
   if(custom&&![(NSArray*)custom[@"songs"] count])open=false;
   if(r.alive(play))r.call(play,"set_interactable",{"System.Boolean"},{&open});
  }enqueueReveals(r);}catch(const std::exception&e){logf("Chapter unlock evaluation failed: %s",e.what());}
 }
+namespace {
+uint32_t lockUIOwner=0;P lockUIItem=nullptr;int lockUISlot=-1;NSUInteger lockUIRevision=0;
+bool lockUIManaged=false,lockUIBlocked=false;NSString*lockUIRequirement=nil;double lockUIEvaluate=0;
+void lockActive(Runtime&r,P object,bool active){if(r.alive(object)&&r.unbox<bool>(r.call(object,"get_activeSelf"))!=active)r.call(object,"SetActive",{"System.Boolean"},{&active});}
+void lockComponent(Runtime&r,P component,bool active){if(r.alive(component))lockActive(r,r.call(component,"get_gameObject"),active);}
+uint32_t lockTipRoot=0;bool lockTipFit=false;int lockTipMin=0,lockTipMax=0;
+void restoreLockTip(Runtime&r){if(!lockTipRoot)return;P tip=target(r,lockTipRoot);if(r.alive(tip)){r.call(tip,"set_resizeTextForBestFit",{"System.Boolean"},{&lockTipFit});r.call(tip,"set_resizeTextMinSize",{"System.Int32"},{&lockTipMin});r.call(tip,"set_resizeTextMaxSize",{"System.Int32"},{&lockTipMax});}r.gchandle_free(lockTipRoot);lockTipRoot=0;}
+void fitLockTip(Runtime&r,P tip,bool blocked){
+ if(!blocked){restoreLockTip(r);return;}
+ if(target(r,lockTipRoot)==tip)return;restoreLockTip(r);
+ lockTipFit=r.unbox<bool>(r.call(tip,"get_resizeTextForBestFit"));lockTipMin=r.unbox<int>(r.call(tip,"get_resizeTextMinSize"));lockTipMax=r.unbox<int>(r.call(tip,"get_resizeTextMaxSize"));lockTipRoot=r.gchandle_new(tip,false);
+ bool fit=true;int minimum=12,maximum=std::max(12,r.unbox<int>(r.call(tip,"get_fontSize")));
+ r.call(tip,"set_resizeTextForBestFit",{"System.Boolean"},{&fit});r.call(tip,"set_resizeTextMinSize",{"System.Int32"},{&minimum});r.call(tip,"set_resizeTextMaxSize",{"System.Int32"},{&maximum});
+}
+void resetLockUI(Runtime&r){restoreLockTip(r);if(lockUIOwner)r.gchandle_free(lockUIOwner);lockUIOwner=0;lockUIItem=nullptr;lockUISlot=-1;lockUIManaged=false;lockUIRequirement=nil;lockUIEvaluate=0;}
+void songLockUI(Runtime&r,P selector,double now){
+ P items=r.call(selector,"get_SongItems");int index=r.get<int>(selector,"nowSong"),slot=r.get<int>(selector,"nowLevel");
+ if(index<0||index>=r.count(items)||slot<0||slot>3)return;
+ P item=r.at(items,index);NSUInteger revision=PMContentStore.shared.revision;
+ bool changed=target(r,lockUIOwner)!=selector||lockUIItem!=item||lockUISlot!=slot||lockUIRevision!=revision;
+ if(changed||now-lockUIEvaluate>=1){
+  P song=r.get<P>(item,"songInfo");NSString*group=r.string(r.get<P>(song,"songsId"));NSDictionary*subject=songEntity(group,slot);
+  bool wasManaged=lockUIManaged;
+  lockUIManaged=subject!=nil;lockUIBlocked=false;lockUIRequirement=nil;
+  if(subject){NSString*sid=subject[@"id"],*chapter=subject[@"targetChapter"];bool songOpen=opened(r,sid),chapterOpen=!entity(chapter)||opened(r,chapter);
+   lockUIBlocked=!songOpen||!chapterOpen;
+   if(lockUIBlocked){NSMutableArray*tips=[NSMutableArray new];if(!songOpen)[tips addObject:chapterRequirements(ruleFor(sid))];if(!chapterOpen)[tips addObject:chapterRequirements(ruleFor(chapter))];lockUIRequirement=[tips componentsJoinedByString:@"\n\n"];}
+   r.put(item,"<Unlocked>k__BackingField",!lockUIBlocked);
+   r.put(item,"unlockInfo",r.managedString(lockUIRequirement?:@""));
+  }else if(wasManaged){restoreLockTip(r);
+   // Native Update has already selected the new official song. Restore only
+   // the extra visibility overrides, retaining its own lock/button decision.
+   P locked=r.get<P>(selector,"locked");bool visible=!r.alive(locked)||!r.unbox<bool>(r.call(locked,"get_activeSelf"));
+   for(const char*field:{"difficulty","level","score","acc","ratingDisplayController"})lockComponent(r,r.get<P>(selector,field),visible);
+  }
+  if(target(r,lockUIOwner)!=selector){if(lockUIOwner)r.gchandle_free(lockUIOwner);lockUIOwner=r.gchandle_new(selector,false);}
+  lockUIItem=item;lockUISlot=slot;lockUIRevision=revision;lockUIEvaluate=now;
+ }
+ if(!lockUIManaged)return;
+ bool blocked=lockUIBlocked,playable=!blocked;
+ P mask=r.get<P>(item,"lockMask");
+ if(!r.alive(mask)&&blocked){P prefab=r.get<P>(selector,"lockMaskPrefab"),parent=r.get<P>(item,"coverRect");if(r.alive(prefab)&&r.alive(parent)){bool world=false;mask=r.stat(r.type("UnityEngine","Object"),"Instantiate",{"UnityEngine.Object","UnityEngine.Transform","System.Boolean"},{prefab,parent,&world});r.put(item,"lockMask",mask);}}
+ lockActive(r,mask,blocked);lockActive(r,r.get<P>(selector,"locked"),blocked);
+ for(const char*field:{"difficulty","level","score","acc","ratingDisplayController"})lockComponent(r,r.get<P>(selector,field),!blocked);
+ P tip=r.get<P>(selector,"unlockTip");if(r.alive(tip)){fitLockTip(r,tip,blocked);
+  P parent=r.call(r.call(tip,"get_transform"),"get_parent");lockComponent(r,parent,blocked);lockComponent(r,tip,blocked);
+  NSString*text=blocked?lockUIRequirement:@"";if(![r.string(r.call(tip,"get_text"))isEqualToString:text])r.call(tip,"set_text",{"System.String"},{r.managedString(text?:@"")});
+ }
+ P button=r.get<P>(selector,"startButton");if(r.alive(button)&&r.unbox<bool>(r.call(button,"get_interactable"))!=playable)r.call(button,"set_interactable",{"System.Boolean"},{&playable});
+ for(const char*field:{"selectorItemUpside","selectorItemDownside"}){P row=r.get<P>(item,field);if(r.alive(row)){lockActive(r,r.get<P>(row,"locked"),blocked);lockComponent(r,r.get<P>(row,"difficulty"),!blocked);}}
+}
+}
 void tick(Runtime&r,void*selector){
  if(!selector||r.get<bool>((P)selector,"exit")){menuActive=false;return;}
- double now=NSDate.timeIntervalSinceReferenceDate;if(now-lastScan<1)return;lastScan=now;
- enqueueReveals(r);
+ double now=NSDate.timeIntervalSinceReferenceDate;
+ try{songLockUI(r,(P)selector,now);}catch(const std::exception&e){if(now-lastScan>=1)logf("Song unlock UI failed: %s",e.what());}
+ if(now-lastScan<1)return;lastScan=now;enqueueReveals(r);
 }
-void clear(Runtime&r){menuActive=false;[menuTimer invalidate];menuTimer=nil;PMCancelUnlockMedia();[pending removeAllObjects];lastScan=0;(void)r;}
+
+void clear(Runtime&r){resetLockUI(r);menuActive=false;[menuTimer invalidate];menuTimer=nil;PMCancelUnlockMedia();[pending removeAllObjects];lastScan=0;(void)r;}
 }

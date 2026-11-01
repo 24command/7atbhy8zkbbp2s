@@ -340,7 +340,24 @@ bool noteJudge(P self,P mi,h::Index index,bool hold){
 }
 bool onClick(P s,P m){return noteJudge(s,m,h::click,false);}
 bool onDrag(P s,P m){return noteJudge(s,m,h::drag,false);}
-bool onHold(P s,P m){return noteJudge(s,m,h::hold,true);}
+bool onHold(P s,P m){
+ auto&r=R();P note=nullptr;float duration=0;bool adjusted=false;
+ try{
+  note=r.get<P>(s,"noteInfor");
+  if(pmcontent::shortSourceHold(r,note)){
+   duration=r.get<float>(note,"holdTime");
+   // 4.0.3 Judge finishes at realTime + holdTime - 0.22.
+   // For a short source Hold, cancel that early-tail allowance only during
+   // Judge; restore before the next NoteMove/preview/registration frame.
+   registerOne(note);
+   r.put(note,"holdTime",duration+.22f);adjusted=true;
+  }
+ }catch(const std::exception&e){diagf("Short Hold scope setup: %s",e.what());}
+ bool result=false;
+ try{result=noteJudge(s,m,h::hold,true);}catch(...){if(adjusted)r.put(note,"holdTime",duration);throw;}
+ if(adjusted)r.put(note,"holdTime",duration);
+ return result;
+}
 bool onFlick(P s,P m){return noteJudge(s,m,h::flick,false);}
 bool readAccuracy(P self,float &outScore,int &outTotal){
  try{
@@ -519,6 +536,7 @@ void onHoldMove(P self,P mi){
  // Set them BEFORE the original, as in Android; sample the hole afterwards.
  if(applying())try{pmmodes::holdMove(R(),self);}catch(const std::exception&e){fault(e);}
  pmfeatures::beforeNoteMove(R(),self,true);
+ try{pmcontent::prepareHoldHitFX(R(),self);}catch(const std::exception&e){diagf("Hold hit FX sorting failed: %s",e.what());}
  orig<VoidFn>(h::holdMove)(self,mi);
  try{pmcontent::noteMoved(R(),self,true);}catch(const std::exception&e){diagf("Hold visual failed: %s",e.what());}
  pmfeatures::noteMoved(R(),self,true);
@@ -526,8 +544,9 @@ void onHoldMove(P self,P mi){
 }
 template<h::Index i>void onNoteMove(P self,P mi){pmfeatures::beforeNoteMove(R(),self,false);orig<VoidFn>(i)(self,mi);pmfeatures::noteMoved(R(),self,false);try{pmcontent::noteMoved(R(),self,false);}catch(const std::exception&e){diagf("RPE note visual/skin failed: %s",e.what());}if(applying())try{pmmodes::moved(R(),self);}catch(const std::exception&e){fault(e);}}
 void onNormalStart(P self,P mi){
- try{if(pmunlock::beforeStart(R(),self,^{orig<VoidFn>(h::normalStart)(self,mi);}))return;}
+ try{if(pmunlock::beforeStart(R(),self,^{try{pmcontent::selectorLoadingEnd(R(),true);}catch(const std::exception&e){diagf("Selector loading resume: %s",e.what());}orig<VoidFn>(h::normalStart)(self,mi);}))return;}
  catch(const std::exception&e){diagf("Unlock start gate failed: %s",e.what());return;}
+ try{pmcontent::selectorLoadingEnd(R(),true);}catch(const std::exception&e){diagf("Selector loading start: %s",e.what());}
  orig<VoidFn>(h::normalStart)(self,mi);
 }
 using MainlineCheckFn=void(*)(P,P,int*,P*,bool*,P*,P);
@@ -569,8 +588,8 @@ void onMainlineApplyMapCover(P self,P mi){
  try{pmunlock::mainlineApplyMapCover(R(),self);}catch(const std::exception&e){diagf("Mainline Chapter9 map cover failed: %s",e.what());}
 }
 
-void onSelector(P self,P mi){orig<VoidFn>(h::selector)(self,mi);try{pmscene::selectorFrame(R(),self);pmcontent::selectorFrame(R(),self);pmunlock::tick(R(),self);}catch(const std::exception&e){lastError=e.what();}}
-void onSelectorOff(P self,P mi){try{pmscene::selectorOff(R());pmunlock::clear(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::selectorOff)(self,mi);}
+void onSelector(P self,P mi){try{pmcontent::selectorLoadingBegin(R(),self);}catch(const std::exception&e){diagf("Selector loading begin: %s",e.what());}orig<VoidFn>(h::selector)(self,mi);try{pmscene::selectorFrame(R(),self);pmcontent::selectorFrame(R(),self);pmunlock::tick(R(),self);pmcontent::selectorLoadingFrame(R(),self);}catch(const std::exception&e){lastError=e.what();}}
+void onSelectorOff(P self,P mi){try{pmcontent::selectorLoadingEnd(R(),false);pmscene::selectorOff(R());pmunlock::clear(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::selectorOff)(self,mi);}
 void onSetting(P self,P mi){orig<VoidFn>(h::setting)(self,mi);try{pmunlock::clear(R());pmscene::settingsFrame(R(),self);}catch(const std::exception&e){lastError=e.what();}}
 void onSettingTab(P self,int index,P mi){try{pmscene::settingsLeave(R());}catch(const std::exception&e){lastError=e.what();}orig<void(*)(P,int,P)>(h::settingTab)(self,index,mi);}
 void onSettingBack(P self,P mi){try{pmscene::settingsLeave(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::settingBack)(self,mi);}

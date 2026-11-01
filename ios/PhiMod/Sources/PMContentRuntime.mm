@@ -10,6 +10,7 @@
 #include "../Core/PMRPECore.hpp"
 #include "../Core/PMRPEGeometry.hpp"
 #include "../Core/PMChartCore.hpp"
+#include <algorithm>
 #include <map>
 #include <set>
 #include <chrono>
@@ -22,6 +23,12 @@ int hiddenChapterCards=0;uint32_t chapterSelectorRoot=0;
 NSDictionary*officialCache=nil;
 NSDictionary*baseline=nil;NSArray*originalChapters=nil;NSDictionary*currentChart=nil;NSString*resourceSubdir=@"";
 std::map<P,uint32_t>textures;std::map<std::string,uint32_t>assets;std::map<P,std::string>refs;std::map<std::string,int>users;
+struct DeferredSelectorAsset {uint32_t root;std::string identifier;bool music;};
+std::map<P,DeferredSelectorAsset>selectorAssets;
+uint32_t loadingSelector=0;bool completingSelectorAsset=false;
+std::set<std::string>selectorSongIDs,selectedAssetIDs;
+NSUInteger selectorLibraryRevision=0;int loadingSong=-1,loadingSlot=-1;
+float loadingPosition=0;double selectionChangedAt=0;bool selectorDragging=true;
 std::map<std::string,std::map<int,NSDictionary*>>variants;std::map<P,NSDictionary*>extras;std::map<P,V3>noteScales,lineScales;std::map<int,uint32_t>decorText,decorImage;
 struct StoryVisual {P go=nullptr,tr=nullptr,graphic=nullptr,canvas=nullptr;bool text=false,visible=true;NSString*lastText=nil;};
 std::map<int,StoryVisual>storyVisuals;std::map<int,double>storyRetry;std::set<int>storyReported;
@@ -35,7 +42,20 @@ std::map<NSArray*,std::vector<ControlPoint>>controlCache;
 std::vector<Fake>fakeNotes;std::map<int,std::vector<phimod::RpeFloorSegment>>sourceFloors;std::map<size_t,std::pair<uint32_t,uint32_t>>fakeHoldEnds;std::map<size_t,uint32_t>fakeRenderers;std::map<size_t,V3>fakeScales;std::map<size_t,double>fakeRetryAt;std::set<size_t>failedFakes;std::vector<uint32_t>visualRoots;
 // Engine-provided baseline sortingOrder per judge line, so pmDecor.zOrder=0
 // never sinks a custom-chart line behind the background.
-std::map<P,int>lineBaseOrder;
+// Effect prefabs are shared. Restore them when leaving the custom chart.
+struct HitFXRenderer {uint32_t root;int layer,order;};
+struct HitFXPrefab {std::vector<HitFXRenderer> renderers;int appliedLayer=0,appliedFloor=-1;};
+std::map<P,HitFXPrefab>holdHitFX;
+void restoreHoldHitFX(Runtime&r){
+ for(auto&entry:holdHitFX)for(auto&saved:entry.second.renderers){
+  P renderer=r.gchandle_get_target(saved.root);
+  try{if(r.alive(renderer)){r.call(renderer,"set_sortingLayerID",{"System.Int32"},{&saved.layer});r.call(renderer,"set_sortingOrder",{"System.Int32"},{&saved.order});}}catch(const std::exception&e){PMDiagnosticsWrite([NSString stringWithFormat:@"Hold hit FX restore failed: %s",e.what()].UTF8String);}
+  r.gchandle_free(saved.root);
+ }
+ holdHitFX.clear();
+}
+std::set<int>inertLineVisuals;bool rpeIntroRetired=false;
+std::map<P,int>lineBaseOrder;std::vector<int>storyOrders;int storyHoldOrder=1028,storyNoteOrder=1030;
 // Fake notes that already failed to build; never retried in the same chart.
 void log(NSString*s){PMDiagnosticsWrite(s.UTF8String);}
 P target(Runtime&r,uint32_t h){return h?r.gchandle_get_target(h):nullptr;}
@@ -158,8 +178,8 @@ P audio(Runtime&r,NSString*path){
   r.gchandle_free(clipRoot);return clip;
  }catch(...){r.gchandle_free(clipRoot);throw;}
 }
-NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=key.lowercaseString;*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":[lower containsString:@"blur"]?@"blur":@"image";return id;}
-void clearVisuals(Runtime&r){for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();failedFakes.clear();currentChart=nil;}
+NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=[[key stringByReplacingOccurrencesOfString:id withString:@""]lowercaseString];*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":[lower containsString:@"blur"]?@"blur":@"image";return id;}
+void clearVisuals(Runtime&r){restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();rpeIntroRetired=false;storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
 void applyCachedChapterCover(Runtime&r,P card,const char*codeField,const char*loaderField){
  NSString*code=r.string(r.get<P>(card,codeField));if(!code.length)return;auto found=assets.find(code.UTF8String);if(found==assets.end())return;P sprite=target(r,found->second);if(!r.alive(sprite))return;
  P loader=r.get<P>(card,loaderField);if(!r.alive(loader))return;bool changed=false;
@@ -171,7 +191,7 @@ void syncChapterCoverFallbacks(Runtime&r){P selector=chapterSelectorRoot?r.gchan
 }
 // Match Android prepareChapterCards: clone before hiding the active template,
 // then publish the ordered ChapterInfo array before native Start wires buttons.
-void chapterPrepare(Runtime&r,P self){
+void chapterPrepare(Runtime&r,P self){selectorLoadingEnd(r,false);
  if(playing)throw std::runtime_error("Chapter prepare during gameplay");
  capture(r);if(!baseline)throw std::runtime_error("Chapter library is not ready");hiddenChapterCards=0;
  if(applied!=PMContentStore.shared.revision||appliedMainline!=PMSettingBool("mainlineUnlock"))apply(r);
@@ -261,6 +281,13 @@ void chapterReady(Runtime&r,P self){
  log(@"Content ChapterSelector.Start completed");
 }
 void attach(Runtime&r){runtime=&r;}
+bool shortSourceHold(Runtime&r,P note){
+ auto it=extras.find(note);if(!currentChart||it==extras.end())return false;
+ NSDictionary*source=it->second;
+ if([source[@"type"] intValue]!=3||[source[@"pmFake"] boolValue]||!source[@"pmDuration"]||r.get<int>(note,"type")!=3)return false;
+ float duration=r.get<float>(note,"holdTime");
+ return std::isfinite(duration)&&duration>0&&duration<.22f;
+}
 bool customLevel(){return levelID.length>0||lastCustom;}
 void avatarPulse(Runtime&r){
  struct Saved{uint32_t loader;NSString*code;};static std::vector<Saved>saved;
@@ -318,13 +345,115 @@ NSDictionary*command(NSString*action,NSString*identifier,int slot){
  }catch(const std::exception&e){pendingSong=nil;log([NSString stringWithFormat:@"Content command failed: %s",e.what()]);return @{ @"ok":@NO,@"message":[NSString stringWithUTF8String:e.what()]};}
  }@catch(NSException*e){pendingSong=nil;log([NSString stringWithFormat:@"Content command exception: %@ %@",e.name,e.reason]);return @{ @"ok":@NO,@"message":e.reason ?: e.name};}
 }
-void selectorFrame(Runtime&r,P selector){if(!pendingSong.length||r.get<bool>(selector,"exit")||r.get<bool>(selector,"isMoving"))return;P items=r.call(selector,"get_SongItems");int n=r.count(items);for(int i=0;i<n;++i){P item=r.at(items,i),song=r.get<P>(item,"songInfo");if(![r.string(r.get<P>(song,"songsId")) isEqualToString:pendingSong])continue;r.put(selector,"nowSong",i);r.put(selector,"nowLevel",pendingSlot);int level=pendingSlot;r.call(selector,"SetLevel",{"System.Int32"},{&level});pendingSong=nil;r.call(selector,"NormalStart");return;}}
-void levelBegin(Runtime&r){playing=true;if(chapterSelectorRoot){r.gchandle_free(chapterSelectorRoot);chapterSelectorRoot=0;}P info=r.get<P>(r.mainGame(),"levelStartInfo");NSString*id=info?r.string(r.get<P>(info,"songsId")):@"";levelID=[PMContentStore.shared asset:id]?id:nil;lastCustom=levelID.length>0;}
+// Only the selected song's expensive image/music requests are completed after
+// settling. Blur requests continue through the original synchronous path.
+namespace {
+double selectorNow(){return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();}
+void observeSelector(Runtime&r,P selector){
+ int index=r.get<int>(selector,"nowSong"),slot=r.get<int>(selector,"nowLevel");float position=r.get<float>(selector,"nowSongSelectorValue");
+ bool moving=r.get<bool>(selector,"isMoving")||r.get<bool>(selector,"isJumping")||r.get<bool>(selector,"fingerOnSongList")||r.unbox<int>(r.stat(r.type("UnityEngine","Input"),"get_touchCount"))>0;
+ bool changed=index!=loadingSong||slot!=loadingSlot||std::fabs(position-loadingPosition)>.001f;
+ if(changed||moving)selectionChangedAt=selectorNow();
+ selectorDragging=moving;loadingPosition=position;loadingSong=index;loadingSlot=slot;
+ selectedAssetIDs.clear();P items=r.call(selector,"get_SongItems");if(index<0||index>=r.count(items))return;
+ P item=r.at(items,index),song=r.get<P>(item,"songInfo");NSString*group=r.string(r.get<P>(song,"songsId"));
+ if(changed&&selectorSongIDs.count(group.UTF8String?:"")){P cover=r.get<P>(item,"cover");NSString*blur=r.string(r.get<P>(item,"coverBlurAssetCode"));
+  if(blur.length&&r.alive(cover)&&!r.get<bool>(cover,"loadedImage")&&!r.get<bool>(cover,"loadedLowResImage")){
+   r.call(cover,"CheckInitialized");r.call(cover,"SetLowResImage",{"System.String"},{r.managedString(blur)});
+  }
+ }
+ if(group.length)selectedAssetIDs.insert(group.UTF8String);
+ auto found=variants.find(group.UTF8String?:"");if(found!=variants.end()){auto member=found->second.find(slot);if(member!=found->second.end()){NSString*id=member->second[@"id"];if(id.length)selectedAssetIDs.insert(id.UTF8String);}}
+ for(const char*field:{"coverAssetCode"}){NSString*kind=nil,*id=keyID(r.string(r.get<P>(item,field)),&kind);if(id.length)selectedAssetIDs.insert(id.UTF8String);}
+ P preview=r.get<P>(item,"previewClipPlayer");if(r.alive(preview)){NSString*kind=nil,*id=keyID(r.string(r.get<P>(preview,"clipCode")),&kind);if(id.length)selectedAssetIDs.insert(id.UTF8String);}
+}
+void completeSelectorAsset(Runtime&r,P asset){
+ auto found=selectorAssets.find(asset);if(found==selectorAssets.end())return;
+ uint32_t root=found->second.root;bool music=found->second.music;double began=selectorNow();selectorAssets.erase(found);
+ int references=r.get<int>(asset,"refCount");
+ completingSelectorAsset=true;
+ try{if(references>0){assetConstructor(r,asset,r.get<P>(asset,"key"));r.put(asset,"refCount",references);}}
+ catch(...){completingSelectorAsset=false;r.gchandle_free(root);throw;}
+ completingSelectorAsset=false;r.gchandle_free(root);
+ log([NSString stringWithFormat:@"Content selected %@ request completed in %.1f ms",music?@"audio":@"cover",(selectorNow()-began)*1000]);
+}
+}
+void selectorLoadingBegin(Runtime&r,P selector){
+ if(playing||r.get<bool>(selector,"exit"))return;
+ if(target(r,loadingSelector)!=selector){selectorLoadingEnd(r,false);loadingSelector=r.gchandle_new(selector,false);selectionChangedAt=selectorNow();loadingSong=-1;selectorLibraryRevision=NSUIntegerMax;}
+ NSUInteger revision=PMContentStore.shared.revision;
+ if(selectorLibraryRevision!=revision){selectorSongIDs.clear();for(NSDictionary*song in [PMContentStore.shared snapshot][@"songs"]){for(NSString*field in @[@"id",@"groupId"]){NSString*id=song[field];if(id.length)selectorSongIDs.insert(id.UTF8String);}}selectorLibraryRevision=revision;}
+}
+void selectorLoadingFrame(Runtime&r,P selector){
+ if(target(r,loadingSelector)!=selector||r.get<bool>(selector,"exit"))return;
+ observeSelector(r,selector);
+ if(selectorDragging||selectorNow()-selectionChangedAt<.30)return;
+ // At most one expensive upload/decode per frame; cover before preview audio.
+ for(bool music:{false,true})for(auto&entry:selectorAssets)if(entry.second.music==music&&selectedAssetIDs.count(entry.second.identifier)){
+  P asset=entry.first;completeSelectorAsset(r,asset);return;
+ }
+}
+void selectorLoadingEnd(Runtime&r,bool finishSelected){
+ if(finishSelected&&r.alive(target(r,loadingSelector)))observeSelector(r,target(r,loadingSelector));
+ if(loadingSelector)r.gchandle_free(loadingSelector);loadingSelector=0;
+ std::vector<P>remaining;for(auto&entry:selectorAssets)remaining.push_back(entry.first);
+ for(P asset:remaining){auto found=selectorAssets.find(asset);if(found==selectorAssets.end())continue;
+  if(finishSelected&&selectedAssetIDs.count(found->second.identifier)){completeSelectorAsset(r,asset);continue;}
+  // Consumers awaiting a cancelled scene request must not wait forever. Remove
+  // it from AssetStore too, so returning to this song creates a fresh request.
+  r.put(asset,"<IsDone>k__BackingField",true);r.put(asset,"<IsFailed>k__BackingField",true);assetRelease(r,asset,true);
+ }
+ selectorSongIDs.clear();selectedAssetIDs.clear();loadingSong=-1;loadingSlot=-1;selectorDragging=true;
+}
+// Native difficulty bars assume a continuous EZ..AT prefix. Custom groups may be sparse.
+void selectorFrame(Runtime&r,P selector){
+ static P lastSelector=nullptr,lastItem=nullptr;static int lastLevel=-1,lastMask=0;
+ if(r.get<bool>(selector,"exit")||r.get<bool>(selector,"isMoving")){lastItem=nullptr;return;}
+ P items=r.call(selector,"get_SongItems");int n=r.count(items),index=r.get<int>(selector,"nowSong");
+ bool launch=false;
+ if(pendingSong.length){for(int i=0;i<n;++i){P item=r.at(items,i),song=r.get<P>(item,"songInfo");if([r.string(r.get<P>(song,"songsId"))isEqualToString:pendingSong]){index=i;r.put(selector,"nowSong",i);r.put(selector,"nowLevel",pendingSlot);launch=true;break;}}}
+ if(index<0||index>=n)return;
+ P item=r.at(items,index),song=r.get<P>(item,"songInfo");NSString*identifier=r.string(r.get<P>(song,"songsId"));
+ auto group=variants.find(identifier.UTF8String?:"");
+ if([identifier hasPrefix:@"pm_"]&&group!=variants.end()&&!group->second.empty()){
+  int mask=0,extent=0;for(auto&entry:group->second)if(entry.first>=0&&entry.first<4){mask|=1<<entry.first;extent=std::max(extent,entry.first+1);}
+  if(mask){
+   int level=r.get<int>(selector,"nowLevel"),selected=level;
+   if(level<0||level>=4||!(mask&(1<<level))){selected=-1;for(int i=std::min(level,3);i>=0;--i)if(mask&(1<<i)){selected=i;break;}if(selected<0)for(int i=0;i<4;++i)if(mask&(1<<i)){selected=i;break;}}
+   // Preserve original slot indices: AT must remain slot 3 for assets, records and rules.
+   r.put(item,"<PlayableLevelCount>k__BackingField",extent);r.put(selector,"levelNum",extent);
+   if(lastSelector!=selector||lastItem!=item||lastLevel!=selected||lastMask!=mask||selected!=level||launch){
+    r.put(selector,"nowLevel",selected);r.call(selector,"SetLevel",{"System.Int32"},{&selected});
+    P bar=r.get<P>(selector,"levelBarController");
+    if(bar){r.call(bar,"UpdateInfoImmediately",{"SongSelectorItem"},{item});P infos=r.get<P>(bar,"levelInfos");
+     for(int i=0;infos&&i<4&&uintptr_t(i)<r.array_length(infos);++i){P info=r.arrayAt(infos,i);if(!info)continue;
+      // Match Android: lower slots retain their positions; absent charts display '-'.
+      bool visible=i<3||(mask&(1<<i));r.call(info,"SetActive",{"System.Boolean"},{&visible});
+      if(!(mask&(1<<i))){NSString*label=@[@"EZ",@"HD",@"IN",@"AT"][i];r.call(info,"HideInfo",{"System.String"},{r.managedString(label)});}
+     }
+    }
+    lastSelector=selector;lastItem=item;lastLevel=selected;lastMask=mask;
+   }
+  }
+ }else{lastItem=nullptr;if(launch){int level=pendingSlot;r.call(selector,"SetLevel",{"System.Int32"},{&level});}}
+ if(launch){pendingSong=nil;r.call(selector,"NormalStart");}
+}
+
+void levelBegin(Runtime&r){selectorLoadingEnd(r,true);playing=true;if(chapterSelectorRoot){r.gchandle_free(chapterSelectorRoot);chapterSelectorRoot=0;}P info=r.get<P>(r.mainGame(),"levelStartInfo");NSString*id=info?r.string(r.get<P>(info,"songsId")):@"";levelID=[PMContentStore.shared asset:id]?id:nil;lastCustom=levelID.length>0;}
 void levelEnd(Runtime&r){playing=false;levelID=nil;lastCustom=false;pendingSong=nil;if(chapterSelectorRoot){r.gchandle_free(chapterSelectorRoot);chapterSelectorRoot=0;}clearVisuals(r);}
-bool assetConstructor(Runtime&r,P self,P key){NSString*kind=nil,*identifier=keyID(r.string(key),&kind);if(!identifier)return false;r.put(self,"key",key);r.put(self,"refCount",1);try{std::string cacheKey=r.string(key).UTF8String;P obj=nullptr;auto found=assets.find(cacheKey);if(found!=assets.end())obj=target(r,found->second);if(!r.alive(obj)){NSString*folder=[PMContentStore.shared asset:identifier];if([kind isEqualToString:@"chart"]){NSString*json=[NSString stringWithContentsOfFile:[folder stringByAppendingPathComponent:@"chart-native.json"] encoding:NSUTF8StringEncoding error:nil];if(!json)throw std::runtime_error("Custom chart not found");log([NSString stringWithFormat:@"Content chart text ready: chars=%lu",(unsigned long)json.length]);obj=r.object_new(r.type("UnityEngine","TextAsset"));uint32_t h=r.gchandle_new(obj,false);try{r.call(obj,".ctor",{"System.String"},{r.managedString(json)});}catch(...){r.gchandle_free(h);throw;}r.gchandle_free(h);}else if([kind isEqualToString:@"music"]){NSString*m4a=[folder stringByAppendingPathComponent:@"music.m4a"];NSString*caf=[folder stringByAppendingPathComponent:@"music.caf"];obj=audio(r,[NSFileManager.defaultManager fileExistsAtPath:m4a]?m4a:caf);}else obj=image(r,[identifier isEqualToString:@"pm_avatar"]?[[PMContentStore.shared asset:identifier]stringByAppendingPathComponent:@"image.png"]:pmunlock::coverPath(r,identifier),[kind isEqualToString:@"blur"]);assets[cacheKey]=r.gchandle_new(obj,false);}refs[self]=cacheKey;users[cacheKey]++;r.put(self,"obj",obj);r.put(self,"<IsDone>k__BackingField",true);r.put(self,"<IsFailed>k__BackingField",false);if([kind isEqualToString:@"image"])try{syncChapterCoverFallbacks(r);}catch(const std::exception&e){log([NSString stringWithFormat:@"Content chapter cover fallback failed: %s",e.what()]);}log([@"Content asset loaded: " stringByAppendingString:r.string(key)]);}catch(const std::exception&e){r.put<P>(self,"obj",nullptr);r.put(self,"<IsDone>k__BackingField",true);r.put(self,"<IsFailed>k__BackingField",true);log([NSString stringWithFormat:@"Content asset failed: %@ (%s)",r.string(key),e.what()]);}return true;}
+bool assetConstructor(Runtime&r,P self,P key){NSString*kind=nil,*identifier=keyID(r.string(key),&kind);if(!identifier)return false;r.put(self,"key",key);r.put(self,"refCount",1);
+ if(loadingSelector&&!completingSelectorAsset&&!playing&&selectorSongIDs.count(identifier.UTF8String)&&([kind isEqualToString:@"image"]||[kind isEqualToString:@"music"])){
+  auto cached=assets.find(r.string(key).UTF8String);
+  if(cached==assets.end()||!r.alive(target(r,cached->second))){
+   r.put<P>(self,"obj",nullptr);r.put(self,"<IsDone>k__BackingField",false);r.put(self,"<IsFailed>k__BackingField",false);
+   selectorAssets[self]={r.gchandle_new(self,false),identifier.UTF8String,[kind isEqualToString:@"music"]!=NO};return true;
+  }
+ }
+ try{std::string cacheKey=r.string(key).UTF8String;P obj=nullptr;auto found=assets.find(cacheKey);if(found!=assets.end())obj=target(r,found->second);if(!r.alive(obj)){NSString*folder=[PMContentStore.shared asset:identifier];if([kind isEqualToString:@"chart"]){NSString*json=[NSString stringWithContentsOfFile:[folder stringByAppendingPathComponent:@"chart-native.json"] encoding:NSUTF8StringEncoding error:nil];if(!json)throw std::runtime_error("Custom chart not found");log([NSString stringWithFormat:@"Content chart text ready: chars=%lu",(unsigned long)json.length]);obj=r.object_new(r.type("UnityEngine","TextAsset"));uint32_t h=r.gchandle_new(obj,false);try{r.call(obj,".ctor",{"System.String"},{r.managedString(json)});}catch(...){r.gchandle_free(h);throw;}r.gchandle_free(h);}else if([kind isEqualToString:@"music"]){NSString*m4a=[folder stringByAppendingPathComponent:@"music.m4a"];NSString*caf=[folder stringByAppendingPathComponent:@"music.caf"];obj=audio(r,[NSFileManager.defaultManager fileExistsAtPath:m4a]?m4a:caf);}else obj=image(r,[identifier isEqualToString:@"pm_avatar"]?[[PMContentStore.shared asset:identifier]stringByAppendingPathComponent:@"image.png"]:pmunlock::coverPath(r,identifier),[kind isEqualToString:@"blur"]);assets[cacheKey]=r.gchandle_new(obj,false);}refs[self]=cacheKey;users[cacheKey]++;r.put(self,"obj",obj);r.put(self,"<IsDone>k__BackingField",true);r.put(self,"<IsFailed>k__BackingField",false);if([kind isEqualToString:@"image"])try{syncChapterCoverFallbacks(r);}catch(const std::exception&e){log([NSString stringWithFormat:@"Content chapter cover fallback failed: %s",e.what()]);}log([@"Content asset loaded: " stringByAppendingString:r.string(key)]);}catch(const std::exception&e){r.put<P>(self,"obj",nullptr);r.put(self,"<IsDone>k__BackingField",true);r.put(self,"<IsFailed>k__BackingField",true);log([NSString stringWithFormat:@"Content asset failed: %@ (%s)",r.string(key),e.what()]);}return true;}
 bool assetRelease(Runtime&r,P self,bool force){
  NSString*kind=nil;P key=r.get<P>(self,"key");if(!keyID(r.string(key),&kind))return false;
  int n=r.get<int>(self,"refCount");if(!force&&n>1){r.put(self,"refCount",n-1);return true;}
+ auto pending=selectorAssets.find(self);if(pending!=selectorAssets.end()){r.gchandle_free(pending->second.root);selectorAssets.erase(pending);}
  auto it=refs.find(self);
  if(it!=refs.end()){
   auto k=it->second;refs.erase(it);
@@ -341,7 +470,27 @@ bool assetRelease(Runtime&r,P self,bool force){
 }
 void levelInfo(Runtime&r,P song,int slot,P info){NSString*id=r.string(r.get<P>(song,"songsId"));NSDictionary*custom=songFor(id,slot);if(!custom||!info)return;NSString*identifier=custom[@"id"];for(const auto&entry:std::vector<std::pair<const char*,NSString*>>{{"songsId",identifier},{"songsName",custom[@"title"] ?: @""},{"composer",custom[@"composer"] ?: @""},{"charter",custom[@"charter"] ?: @""},{"illustrator",custom[@"illustrator"] ?: @""},{"songsDifficulty",[custom[@"difficulty"] description]}})r.put(info,entry.first,r.managedString(entry.second));for(auto pair:std::vector<std::pair<const char*,const char*>>{{"musicAddressableKey","music"},{"chartAddressableKey","chart"},{"illustrationKey","image"}}){NSString*k=[NSString stringWithFormat:@"PM/%@/%s@%lu",identifier,pair.second,(unsigned long)PMContentStore.shared.revision];r.put(info,pair.first,r.managedString(k));}}
 void beforeChart(Runtime&r,P level){if(!levelID.length)return;NSString*path=[[PMContentStore.shared asset:levelID]stringByAppendingPathComponent:@"chart.json"];NSData*d=[NSData dataWithContentsOfFile:path];currentChart=d?[NSJSONSerialization JSONObjectWithData:d options:0 error:nil]:nil;if(!currentChart)throw std::runtime_error("Custom visual chart missing");resourceSubdir=@"";for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"]isEqualToString:levelID])resourceSubdir=s[@"resourceRoot"] ?: @"";}
-void afterChart(Runtime&r,P level){if(!currentChart)return;sourceFloors.clear();int sourceIndex=0;
+void afterChart(Runtime&r,P level){if(!currentChart)return;
+ // Match Android's zOrder/index ranking instead of treating zOrder as a
+ // native sortingOrder offset (negative values otherwise fall behind BG).
+ NSArray*sourceLines=currentChart[@"judgeLineList"];std::vector<int>ordered;
+ inertLineVisuals.clear();rpeIntroRetired=false;
+ for(NSUInteger i=0;i<sourceLines.count;++i){
+  ordered.push_back((int)i);NSDictionary*source=sourceLines[i],*decor=source[@"pmDecor"];
+  NSString*texture=decor[@"Texture"];NSArray*alpha=source[@"judgeLineDisappearEvents"];
+  // Keep every native line and its index: invisible lines can still be parents
+  // or note lanes. Only skip redundant MOD sprite/scale/color work for empty,
+  // permanently transparent standard-line visuals (no storyboard/text content).
+  bool inert=decor&&![source[@"notesAbove"]count]&&![source[@"notesBelow"]count]&&![decor[@"textEvents"]count]&&![decor[@"scaleXEvents"]count]&&![decor[@"scaleYEvents"]count]&&![decor[@"colorEvents"]count]&&(!texture.length||[texture isEqualToString:@"line.png"])&&alpha.count;
+  if(inert)for(NSDictionary*event in alpha){double a=[event[@"start"]doubleValue],b=[event[@"end"]doubleValue];if(!std::isfinite(a)||!std::isfinite(b)||a>0||b>0){inert=false;break;}}
+  if(inert)inertLineVisuals.insert((int)i);
+ }
+ log([NSString stringWithFormat:@"Content line visuals: total=%lu inert=%lu (native indices preserved)",(unsigned long)sourceLines.count,(unsigned long)inertLineVisuals.size()]);
+ std::stable_sort(ordered.begin(),ordered.end(),[&](int a,int b){return [sourceLines[a][@"pmDecor"][@"zOrder"] integerValue]<[sourceLines[b][@"pmDecor"][@"zOrder"] integerValue];});
+ storyOrders.resize(ordered.size());
+ for(size_t rank=0;rank<ordered.size();++rank)storyOrders[ordered[rank]]=3+int(rank)*2;
+ storyHoldOrder=std::max(1028,5+int(ordered.size())*2);storyNoteOrder=storyHoldOrder+2;
+sourceFloors.clear();int sourceIndex=0;
  for(NSDictionary*sourceLine in currentChart[@"judgeLineList"]){
   double secondsPerTick=60.0/(32.0*[sourceLine[@"bpm"] doubleValue]);
   auto&track=sourceFloors[sourceIndex++];
@@ -518,19 +667,24 @@ void updateStory(Runtime&r,int index,P line,P nativeRenderer,NSDictionary*d,NSAr
 }
 void visuals(Runtime&r,P progress){
  storyFrameCamera=nullptr;storyFrameWidth=0;
- if(!currentChart)return;P judge=r.get<P>(progress,"judgeControl"),lineList=r.get<P>(judge,"judgeLineControls"),info=r.get<P>(progress,"levelInformation");float now=r.get<float>(progress,"nowTime");NSArray*data=currentChart[@"judgeLineList"];int total=std::min<int>(r.count(lineList),(int)data.count);if(total<=0)return;
+ if(!currentChart)return;P judge=r.get<P>(progress,"judgeControl"),lineList=r.get<P>(judge,"judgeLineControls"),info=r.get<P>(progress,"levelInformation");float now=r.get<float>(progress,"nowTime");NSArray*data=currentChart[@"judgeLineList"];int total=std::min<int>(r.count(lineList),(int)data.count);
+ // Android also retires the stock cut-in line for RPE charts once playback is
+ // prepared. It is not one of the chart's judgeLineControls and can otherwise
+ // remain as an unrelated horizontal line at the center of the screen.
+ if([currentChart[@"pmFormat"]isEqualToString:@"RPE"]&&now>=0&&r.get<bool>(progress,"_playPrepared")){
+  P intro=r.get<P>(info,"judgeLineOfCutIn");
+  if(r.alive(intro)){if(r.unbox<bool>(r.call(intro,"get_activeSelf"))){bool no=false;r.call(intro,"SetActive",{"System.Boolean"},{&no});}if(!rpeIntroRetired){rpeIntroRetired=true;log(@"Content RPE intro judge line retired after playback start");}}
+ }
+ if(total<=0)return;
  for(int i=0;i<total;++i){
-  P line=r.at(lineList,i),tr=r.call(line,"get_transform"),renderer=r.get<P>(line,"_judgeLineSpriteRenderer");if(!r.alive(renderer))continue;NSDictionary*d=data[i][@"pmDecor"];if(!d)continue;
+  P line=r.at(lineList,i),renderer=r.get<P>(line,"_judgeLineSpriteRenderer");if(!r.alive(renderer))continue;
+  if(inertLineVisuals.count(i)){if(r.unbox<bool>(r.call(renderer,"get_enabled"))){bool no=false;r.call(renderer,"set_enabled",{"System.Boolean"},{&no});}continue;}
+  P tr=r.call(line,"get_transform");NSDictionary*d=data[i][@"pmDecor"];if(!d)continue;
   V3 scale=r.unbox<V3>(r.call(tr,"get_localScale"));if(!lineScales.count(line))lineScales[line]=scale;scale=lineScales[line];scale.x*=trackValue(d[@"scaleXEvents"],now,1);scale.y*=trackValue(d[@"scaleYEvents"],now,1);r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});
   NSString*textureName=[d[@"Texture"] isKindOfClass:NSString.class]?d[@"Texture"]:nil;
   bool story=[d[@"textEvents"] count]>0||(textureName.length&&![textureName isEqualToString:@"line.png"]);
   Color color=story?Color{1,1,1,1}:r.unbox<Color>(r.call(renderer,"get_color"));NSArray*colors=d[@"colorEvents"];if(colors.count){color.r=trackValue(colors,now,1,0);color.g=trackValue(colors,now,1,1);color.b=trackValue(colors,now,1,2);}
-  // Keep the engine's judge-line sortingOrder as a baseline. pmDecor.zOrder
-  // defaults to 0; writing sortingOrder=0 moves every custom-chart judge line
-  // to the background layer, where it is hidden behind the chart background.
-  auto found=lineBaseOrder.find(line);
-  int base=found==lineBaseOrder.end()?(lineBaseOrder[line]=r.unbox<int>(r.call(renderer,"get_sortingOrder"))):found->second;
-  int order=base+(int)scalar(d[@"zOrder"])*4;
+  int order=i<(int)storyOrders.size()?storyOrders[i]:3+i*2;
   r.call(renderer,"set_sortingOrder",{"System.Int32"},{&order});
   r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});
   updateStory(r,i,line,renderer,d,data[i][@"judgeLineDisappearEvents"],now,progress,color,order);
@@ -604,7 +758,7 @@ void visuals(Runtime&r,P progress){
    P sourceRenderer=r.component(prefab,r.type("UnityEngine","SpriteRenderer"));
    int layer=r.unbox<int>(r.call(prefab,"get_layer"));
    int sortingLayer=sourceRenderer?r.unbox<int>(r.call(sourceRenderer,"get_sortingLayerID")):0;
-   int order=(int)scalar(data[f.line][@"pmDecor"][@"zOrder"])*4+(type==3?1:2);
+   int order=type==3?storyHoldOrder:storyNoteOrder;
    auto makeRenderer=[&](P sprite,P owner,const char*name){
     P obj=r.object_new(r.type("UnityEngine","GameObject"));keep(r,obj);created.push_back(obj);
     r.call(obj,".ctor",{"System.String"},{r.string_new(name)});
@@ -697,6 +851,38 @@ void visuals(Runtime&r,P progress){
 
 }
 }
+// Prepare before native NoteMove instantiates Perfect/Good effects. Clones inherit
+// renderer sorting, avoiding a global Instantiate hook or a per-frame scene scan.
+void prepareHoldHitFX(Runtime&r,P controlObject){
+ if(!currentChart)return;
+ P body=r.get<P>(controlObject,"_holdSpriteRenderer");if(!r.alive(body))return;
+ int layer=r.unbox<int>(r.call(body,"get_sortingLayerID"));
+ int floor=std::max(storyNoteOrder,storyHoldOrder)+1;
+ for(const char*field:{"perfect","good"}){
+  P prefab=r.get<P>(controlObject,field);if(!prefab)continue;
+  auto found=holdHitFX.find(prefab);
+  if(found==holdHitFX.end()){
+   if(!r.alive(prefab))continue;
+   P renderers=r.children(prefab,r.type("UnityEngine","Renderer"));
+   if(!renderers||!r.array_length(renderers))continue;
+   auto&state=holdHitFX[prefab];
+   for(uintptr_t i=0;i<r.array_length(renderers);++i){P renderer=r.arrayAt(renderers,int(i));
+    int originalLayer=r.unbox<int>(r.call(renderer,"get_sortingLayerID")),originalOrder=r.unbox<int>(r.call(renderer,"get_sortingOrder"));
+    state.renderers.push_back({r.gchandle_new(renderer,false),originalLayer,originalOrder});
+   }
+   found=holdHitFX.find(prefab);
+  }
+  auto&state=found->second;
+  if(state.renderers.empty()||(state.appliedLayer==layer&&state.appliedFloor==floor))continue;
+  int lowest=state.renderers.front().order;for(auto&saved:state.renderers)lowest=std::min(lowest,saved.order);
+  int shift=std::max(0,floor-lowest);
+  for(auto&saved:state.renderers){P renderer=r.gchandle_get_target(saved.root);int order=saved.order+shift;
+   r.call(renderer,"set_sortingLayerID",{"System.Int32"},{&layer});r.call(renderer,"set_sortingOrder",{"System.Int32"},{&order});
+  }
+  state.appliedLayer=layer;state.appliedFloor=floor;
+  log([NSString stringWithFormat:@"Hold hit FX sorting prepared: %s renderers=%lu floor=%d layer=%d",field,(unsigned long)state.renderers.size(),floor,layer]);
+ }
+}
 void noteMoved(Runtime&r,P controlObject,bool hold){
  P note=r.get<P>(controlObject,"noteInfor");auto it=extras.find(note);if(it==extras.end())return;
  NSDictionary*n=it->second;int index=r.get<int>(note,"judgeLineIndex")/2;NSArray*lines=currentChart[@"judgeLineList"];
@@ -763,7 +949,7 @@ void noteMoved(Runtime&r,P controlObject,bool hold){
    r.call(renderer,"set_enabled",{"System.Boolean"},{&show});
   }
   r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});
-  int order=(int)scalar(d[@"zOrder"])*4+(hold?1:2);r.call(renderer,"set_sortingOrder",{"System.Int32"},{&order});
+  int order=hold?storyHoldOrder:storyNoteOrder;r.call(renderer,"set_sortingOrder",{"System.Int32"},{&order});
  }
 }
 void ranking(Runtime&r,P self,P mi,void(*original)(P,P)){if(!baseline){original(self,mi);return;}P previous=r.get<P>(self,"song");uint32_t oldRoot=r.gchandle_new(previous,false);P official=decode(r,baseline,"SongBase");uint32_t newRoot=r.gchandle_new(official,false);try{r.put(self,"song",official);original(self,mi);r.put(self,"song",previous);}catch(...){try{r.put(self,"song",previous);}catch(...){}r.gchandle_free(oldRoot);r.gchandle_free(newRoot);throw;}r.gchandle_free(oldRoot);r.gchandle_free(newRoot);}

@@ -2,6 +2,39 @@
 #import "PMContentStore.h"
 #import "PMUnlockRules.h"
 #include "PMContentRuntime.hpp"
+@interface PMUnlockReferencePicker:UITableViewController<UISearchResultsUpdating>
+@property(nonatomic,strong) NSArray<NSDictionary*>*choices;
+@property(nonatomic,strong) NSArray<NSDictionary*>*filtered;
+@property(nonatomic,strong) UISearchController*search;
+@property(nonatomic,copy) void(^selected)(NSDictionary*);
+@end
+@implementation PMUnlockReferencePicker
+- (void)viewDidLoad{
+ [super viewDidLoad];self.filtered=self.choices;
+ self.search=[[UISearchController alloc]initWithSearchResultsController:nil];self.search.searchResultsUpdater=self;self.search.obscuresBackgroundDuringPresentation=NO;
+ self.search.searchBar.placeholder=@"\u641c\u7d22\u66f2\u540d / \u7ae0\u8282\u540d / ID";
+ self.navigationItem.searchController=self.search;self.navigationItem.hidesSearchBarWhenScrolling=NO;self.definesPresentationContext=YES;
+ self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc]initWithBarButtonSystemItem:UIBarButtonSystemItemCancel target:self action:@selector(cancel)];
+}
+- (void)cancel{[self dismissViewControllerAnimated:YES completion:nil];}
+- (void)updateSearchResultsForSearchController:(UISearchController*)search{
+ NSString*q=[search.searchBar.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+ self.filtered=q.length?[self.choices filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary*entry,NSDictionary*bindings){
+  for(NSString*key in @[@"title",@"id"]){NSString*text=entry[key];if([text rangeOfString:q options:NSCaseInsensitiveSearch|NSDiacriticInsensitiveSearch].location!=NSNotFound)return YES;}return NO;
+ }]]:self.choices;[self.tableView reloadData];
+ UILabel*empty=[[UILabel alloc]initWithFrame:self.tableView.bounds];empty.text=@"\u6ca1\u6709\u5339\u914d\u7ed3\u679c";empty.textAlignment=NSTextAlignmentCenter;self.tableView.backgroundView=self.filtered.count?nil:empty;
+}
+- (NSInteger)tableView:(UITableView*)table numberOfRowsInSection:(NSInteger)section{return self.filtered.count;}
+- (UITableViewCell*)tableView:(UITableView*)table cellForRowAtIndexPath:(NSIndexPath*)index{
+ UITableViewCell*cell=[table dequeueReusableCellWithIdentifier:@"reference"];
+ if(!cell)cell=[[UITableViewCell alloc]initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"reference"];
+ NSDictionary*entry=self.filtered[index.row];cell.textLabel.text=entry[@"title"];cell.detailTextLabel.text=entry[@"id"];cell.textLabel.numberOfLines=2;return cell;
+}
+- (void)tableView:(UITableView*)table didSelectRowAtIndexPath:(NSIndexPath*)index{
+ NSDictionary*entry=self.filtered[index.row];void(^completion)(NSDictionary*)=self.selected;self.selected=nil;
+ [self dismissViewControllerAnimated:YES completion:^{if(completion)completion(entry);}];
+}
+@end
 @interface PMUnlockEditor : UITableViewController
 @property(nonatomic,copy) NSString*identifier;
 @property(nonatomic,strong) NSMutableDictionary*rule;
@@ -47,8 +80,11 @@
  if(chapter){for(NSDictionary*e in official[@"chapters"])[choices addObject:@{@"id":e[@"chapterCode"],@"title":e[@"songInfo"][@"title"]?:e[@"chapterCode"]}];}
  else for(NSString*k in @[@"mainSongs",@"extraSongs",@"sideStorySongs",@"otherSongs"])for(NSDictionary*e in official[@"songBase"][k])[choices addObject:@{@"id":e[@"songsId"],@"title":e[@"songsName"]?:e[@"songsId"]}];
  if(!choices.count){[self message:@"No available dependencies. Import songs/chapters first."];return;}
- UIAlertController*a=[UIAlertController alertControllerWithTitle:chapter?@"\u9009\u62e9\u7ae0\u8282":@"\u9009\u62e9\u6b4c\u66f2" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
- for(NSDictionary*e in choices)[a addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ (%@)",e[@"title"],e[@"id"]] style:UIAlertActionStyleDefault handler:^(UIAlertAction*x){c[@"ref"]=e[@"id"];[self threshold:c index:index];}]];[self presentMenu:a];
+ PMUnlockReferencePicker*picker=[[PMUnlockReferencePicker alloc]initWithStyle:UITableViewStylePlain];picker.choices=choices;
+ picker.title=chapter?@"\u9009\u62e9\u7ae0\u8282":@"\u9009\u62e9\u6b4c\u66f2";
+ __weak PMUnlockEditor*weak=self;
+ picker.selected=^(NSDictionary*entry){c[@"ref"]=entry[@"id"];[weak threshold:c index:index];};
+ UINavigationController*nav=[[UINavigationController alloc]initWithRootViewController:picker];nav.modalPresentationStyle=UIModalPresentationFormSheet;[self presentViewController:nav animated:YES completion:nil];
 }
 - (void)threshold:(NSMutableDictionary*)c index:(NSInteger)index{
  BOOL value=[@[@"score",@"acc",@"rks"] containsObject:c[@"type"]];BOOL slot=![c[@"type"] isEqual:@"rks"];

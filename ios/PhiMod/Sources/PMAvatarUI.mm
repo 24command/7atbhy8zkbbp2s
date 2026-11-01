@@ -18,7 +18,17 @@
    BOOL ok=png&&[PMContentStore.shared replaceImageData:png identifier:@"pm_avatar" error:&error];
    if(ok){NSUserDefaults*d=NSUserDefaults.standardUserDefaults;[d setBool:YES forKey:@"phimod.avatar.enabled"];[d setObject:NSUUID.UUID.UUIDString forKey:@"phimod.avatar.revision"];PMDiagnosticsWrite("Custom avatar saved and selected");}
    UIAlertController*a=[UIAlertController alertControllerWithTitle:@"Avatar" message:ok?@"\u5934\u50cf\u5df2\u4fdd\u5b58\uff0c\u8fd4\u56de\u9009\u66f2\u6216\u7edf\u8ba1\u9875\u5373\u53ef\u67e5\u770b\u3002":(error.localizedDescription?:@"Avatar save failed") preferredStyle:UIAlertControllerStyleAlert];[a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[presenter presentViewController:a animated:YES completion:nil];
-  }];[presenter presentViewController:crop animated:YES completion:nil];
+  }];
+  // Crop actions live in navigationItem; a bare modal has no navigation bar.
+  UINavigationController*navigation=[[UINavigationController alloc]initWithRootViewController:crop];
+  navigation.modalPresentationStyle=UIModalPresentationFullScreen;
+  [navigation setNavigationBarHidden:NO animated:NO];
+  navigation.navigationBar.tintColor=UIColor.whiteColor;
+  UINavigationBarAppearance*appearance=[UINavigationBarAppearance new];[appearance configureWithOpaqueBackground];
+  appearance.backgroundColor=[UIColor colorWithRed:.025 green:.035 blue:.05 alpha:1];
+  appearance.titleTextAttributes=@{NSForegroundColorAttributeName:UIColor.whiteColor};
+  navigation.navigationBar.standardAppearance=appearance;navigation.navigationBar.scrollEdgeAppearance=appearance;navigation.navigationBar.compactAppearance=appearance;
+  [presenter presentViewController:navigation animated:YES completion:nil];
  }];
 }
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController*)picker{[picker dismissViewControllerAnimated:YES completion:nil];}
