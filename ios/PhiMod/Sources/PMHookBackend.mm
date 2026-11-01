@@ -518,11 +518,13 @@ void onHoldMove(P self,P mi){
  // Native NoteMove reads missed/timeOfJudge to fade and emit Hold effects.
  // Set them BEFORE the original, as in Android; sample the hole afterwards.
  if(applying())try{pmmodes::holdMove(R(),self);}catch(const std::exception&e){fault(e);}
+ pmfeatures::beforeNoteMove(R(),self,true);
  orig<VoidFn>(h::holdMove)(self,mi);
- try{pmcontent::noteMoved(R(),self,true);pmfeatures::noteMoved(R(),self,true);}catch(const std::exception&e){diagf("Hold visual/skin failed: %s",e.what());}
+ try{pmcontent::noteMoved(R(),self,true);}catch(const std::exception&e){diagf("Hold visual failed: %s",e.what());}
+ pmfeatures::noteMoved(R(),self,true);
  if(applying())try{pmmodes::moved(R(),self,true);}catch(const std::exception&e){fault(e);}
 }
-template<h::Index i>void onNoteMove(P self,P mi){orig<VoidFn>(i)(self,mi);try{pmcontent::noteMoved(R(),self,false);pmfeatures::noteMoved(R(),self,false);}catch(const std::exception&e){diagf("RPE note visual/skin failed: %s",e.what());}if(applying())try{pmmodes::moved(R(),self);}catch(const std::exception&e){fault(e);}}
+template<h::Index i>void onNoteMove(P self,P mi){pmfeatures::beforeNoteMove(R(),self,false);orig<VoidFn>(i)(self,mi);pmfeatures::noteMoved(R(),self,false);try{pmcontent::noteMoved(R(),self,false);}catch(const std::exception&e){diagf("RPE note visual/skin failed: %s",e.what());}if(applying())try{pmmodes::moved(R(),self);}catch(const std::exception&e){fault(e);}}
 void onNormalStart(P self,P mi){
  try{if(pmunlock::beforeStart(R(),self,^{orig<VoidFn>(h::normalStart)(self,mi);}))return;}
  catch(const std::exception&e){diagf("Unlock start gate failed: %s",e.what());return;}

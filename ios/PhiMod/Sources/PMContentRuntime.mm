@@ -23,9 +23,9 @@ NSDictionary*officialCache=nil;
 NSDictionary*baseline=nil;NSArray*originalChapters=nil;NSDictionary*currentChart=nil;NSString*resourceSubdir=@"";
 std::map<P,uint32_t>textures;std::map<std::string,uint32_t>assets;std::map<P,std::string>refs;std::map<std::string,int>users;
 std::map<std::string,std::map<int,NSDictionary*>>variants;std::map<P,NSDictionary*>extras;std::map<P,V3>noteScales,lineScales;std::map<int,uint32_t>decorText,decorImage;
-struct StoryVisual {P go=nullptr,tr=nullptr,graphic=nullptr,canvas=nullptr;bool text=false;NSString*lastText=nil;};
+struct StoryVisual {P go=nullptr,tr=nullptr,graphic=nullptr,canvas=nullptr;bool text=false,visible=true;NSString*lastText=nil;};
 std::map<int,StoryVisual>storyVisuals;std::map<int,double>storyRetry;std::set<int>storyReported;
-NSArray*storyFiles=nil;bool storyIndexed=false;
+NSArray*storyFiles=nil;bool storyIndexed=false;P storyFrameCamera=nullptr;float storyFrameWidth=0;std::map<std::string,P>storySprites;P storyMaterial=nullptr;
 struct Fake{NSDictionary*note;int line;bool below;double start,end;};
 struct FakeVisualCache{P transform=nullptr;P capTransforms[2]{};Bounds bounds{};bool shown=false;bool capShown[2]{false,false};bool colorSet=false,scaleSet=false;Color color{};V3 scale{};};
 std::map<size_t,FakeVisualCache>fakeVisualCache;
@@ -159,7 +159,7 @@ P audio(Runtime&r,NSString*path){
  }catch(...){r.gchandle_free(clipRoot);throw;}
 }
 NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=key.lowercaseString;*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":[lower containsString:@"blur"]?@"blur":@"image";return id;}
-void clearVisuals(Runtime&r){for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();failedFakes.clear();currentChart=nil;}
+void clearVisuals(Runtime&r){for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();failedFakes.clear();currentChart=nil;}
 void applyCachedChapterCover(Runtime&r,P card,const char*codeField,const char*loaderField){
  NSString*code=r.string(r.get<P>(card,codeField));if(!code.length)return;auto found=assets.find(code.UTF8String);if(found==assets.end())return;P sprite=target(r,found->second);if(!r.alive(sprite))return;
  P loader=r.get<P>(card,loaderField);if(!r.alive(loader))return;bool changed=false;
@@ -354,7 +354,13 @@ void beforeInformation(Runtime&r,P level){
 namespace {
 double scalar(id value,double fallback=0){return [value respondsToSelector:@selector(doubleValue)]?[value doubleValue]:fallback;}
 phimod::rpe::Event visualEvent(NSDictionary*v,int channel=-1){phimod::rpe::Event e;e.s=scalar(v[@"startTime"]);e.e=scalar(v[@"endTime"]);id a=v[@"start"],b=v[@"end"];if(channel>=0){a=[a isKindOfClass:NSArray.class]&&[a count]>channel?a[channel]:@255;b=[b isKindOfClass:NSArray.class]&&[b count]>channel?b[channel]:@255;}e.a=scalar(a);e.b=scalar(b);if(channel>=0){e.a/=255;e.b/=255;}e.easing=(int)scalar(v[@"easingType"],1);e.left=scalar(v[@"easingLeft"],0);e.right=scalar(v[@"easingRight"],1);NSArray*p=v[@"bezierPoints"];if([v[@"bezier"] boolValue]&&p.count==4){e.bezier=true;for(int i=0;i<4;++i)e.points[i]=scalar(p[i]);}return e;}
-double trackValue(NSArray*a,double now,double fallback,int channel=-1){NSDictionary*last=nil;for(NSDictionary*v in a){if(scalar(v[@"startTime"])<=now)last=v;else break;}return last?visualEvent(last,channel).value(now):fallback;}
+NSDictionary*eventAt(NSArray*events,double time,double units=1){
+ NSUInteger lo=0,hi=events.count;
+ while(lo<hi){NSUInteger mid=lo+(hi-lo)/2;if(scalar(events[mid][@"startTime"])*units<=time)lo=mid+1;else hi=mid;}
+ return lo?events[lo-1]:nil;
+}
+double trackValue(NSArray*a,double now,double fallback,int channel=-1){NSDictionary*last=eventAt(a,now);return last?visualEvent(last,channel).value(now):fallback;}
+
 double control(NSDictionary*d,NSString*key,double distance){
  NSArray*points=d[key];if(!points.count)return 1;
  auto found=controlCache.find(points);
@@ -404,15 +410,26 @@ void updateStory(Runtime&r,int index,P line,P nativeRenderer,NSDictionary*d,NSAr
  bool hasText=[d[@"textEvents"] count]>0;
  NSString*texture=[d[@"Texture"] isKindOfClass:NSString.class]?d[@"Texture"]:nil;
  if(!hasText&&(!texture.length||[texture isEqualToString:@"line.png"]))return;
+ // Converted charts store native alpha times in ticks (120 BPM => 64/s).
+ NSDictionary*alphaEvent=eventAt(lineAlpha,now,1./64.);
+ color.a=0;
+ if(alphaEvent){double a=scalar(alphaEvent[@"startTime"])/64,b=scalar(alphaEvent[@"endTime"])/64,q=b>a?std::clamp((now-a)/(b-a),0.,1.):1;color.a=std::clamp((float)(scalar(alphaEvent[@"start"])+(scalar(alphaEvent[@"end"])-scalar(alphaEvent[@"start"]))*q),0.f,1.f);}
  auto found=storyVisuals.find(index);
+ bool hideNative=false;r.call(nativeRenderer,"set_enabled",{"System.Boolean"},{&hideNative});
+ if(color.a<=0){
+  if(found!=storyVisuals.end()&&found->second.visible){bool no=false;r.call(found->second.go,"SetActive",{"System.Boolean"},{&no});found->second.visible=false;}
+  return;
+ }
+
+ if(!storyFrameCamera){storyFrameCamera=r.stat(r.type("UnityEngine","Camera"),"get_main");if(!r.alive(storyFrameCamera))return;storyFrameWidth=2*r.unbox<float>(r.call(storyFrameCamera,"get_orthographicSize"))*std::min(16.f/9.f,r.unbox<float>(r.call(storyFrameCamera,"get_aspect")));}
  if(found==storyVisuals.end()){
   double clock=NSDate.timeIntervalSinceReferenceDate;
   auto retry=storyRetry.find(index);if(retry!=storyRetry.end()&&clock<retry->second)return;
   P createdRoot=nullptr;
   try{
-   P camera=r.stat(r.type("UnityEngine","Camera"),"get_main");
+   P camera=storyFrameCamera;
    if(!r.alive(camera))throw std::runtime_error("Storyboard camera not ready");
-   float width=2*r.unbox<float>(r.call(camera,"get_orthographicSize"))*std::min(16.f/9.f,r.unbox<float>(r.call(camera,"get_aspect")));
+   float width=storyFrameWidth;
    if(!std::isfinite(width)||width<=0)throw std::runtime_error("Invalid storyboard viewport");
    StoryVisual v;v.text=hasText;
    P sprite=nullptr;
@@ -420,8 +437,10 @@ void updateStory(Runtime&r,int index,P line,P nativeRenderer,NSDictionary*d,NSAr
     NSString*path=storyTexturePath(texture);
     if(!path)throw std::runtime_error("Storyboard texture missing or ambiguous");
     NSArray*a=d[@"anchor"];V2 anchor{.5,.5};if([a isKindOfClass:NSArray.class]&&a.count==2){anchor.x=scalar(a[0],.5);anchor.y=scalar(a[1],.5);}
-    sprite=image(r,path,false,true,anchor);keep(r,sprite);
-    auto t=textures.find(sprite);if(t!=textures.end()){visualRoots.push_back(t->second);textures.erase(t);}
+    NSString*key=[NSString stringWithFormat:@"%@|%.9g|%.9g",path,anchor.x,anchor.y];
+    auto cached=storySprites.find(key.UTF8String);
+    if(cached!=storySprites.end())sprite=cached->second;
+    else{sprite=image(r,path,false,true,anchor);keep(r,sprite);auto t=textures.find(sprite);if(t!=textures.end()){visualRoots.push_back(t->second);textures.erase(t);}storySprites[key.UTF8String]=sprite;}
    }
    v.go=r.object_new(r.type("UnityEngine","GameObject"));keep(r,v.go);createdRoot=v.go;
    r.call(v.go,".ctor",{"System.String"},{r.string_new(hasText?"PhiMod Story Text":"PhiMod Story Image")});
@@ -442,7 +461,13 @@ void updateStory(Runtime&r,int index,P line,P nativeRenderer,NSDictionary*d,NSAr
    }else{
     v.graphic=addComponent(r,v.go,r.type("UnityEngine","SpriteRenderer"));r.call(v.graphic,"set_sprite",{"UnityEngine.Sprite"},{sprite});
     r.call(v.graphic,"set_sortingLayerID",{"System.Int32"},{&sorting});
-    P material=r.call(nativeRenderer,"get_sharedMaterial");if(material)r.call(v.graphic,"set_sharedMaterial",{"UnityEngine.Material"},{material});
+    // Native judge-line materials may mask/replace the sampled texture.
+    // Use a dedicated, shared Sprite material for full-color storyboard art.
+    if(!storyMaterial){P shader=r.stat(r.type("UnityEngine","Shader"),"Find",{"System.String"},{r.string_new("Sprites/Default")});
+     if(!r.alive(shader))throw std::runtime_error("Sprites/Default shader unavailable");
+     P material=r.object_new(r.type("UnityEngine","Material"));keep(r,material);r.call(material,".ctor",{"UnityEngine.Shader"},{shader});storyMaterial=material;
+    }
+    r.call(v.graphic,"set_sharedMaterial",{"UnityEngine.Material"},{storyMaterial});
    }
    // Independent root: do not inherit the native long/thin line scale or
    // alter the coordinate system used by its child notes.
@@ -451,18 +476,15 @@ void updateStory(Runtime&r,int index,P line,P nativeRenderer,NSDictionary*d,NSAr
   }catch(const std::exception&e){try{if(r.alive(createdRoot))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{createdRoot});}catch(...){}storyRetry[index]=clock+2;if(storyReported.insert(index).second)log([NSString stringWithFormat:@"Storyboard line %d (%@): %s",index,texture?:@"text",e.what()]);return;}
  }
  auto&v=found->second;
- P tr=r.call(line,"get_transform"),camera=r.stat(r.type("UnityEngine","Camera"),"get_main");
- float width=2*r.unbox<float>(r.call(camera,"get_orthographicSize"))*std::min(16.f/9.f,r.unbox<float>(r.call(camera,"get_aspect")));
+ if(!v.visible){bool yes=true;r.call(v.go,"SetActive",{"System.Boolean"},{&yes});v.visible=true;}
+ P tr=r.call(line,"get_transform");float width=storyFrameWidth;
  struct Q{float x,y,z,w;};V3 pos=r.unbox<V3>(r.call(tr,"get_position"));Q rot=r.unbox<Q>(r.call(tr,"get_rotation"));
  r.call(v.tr,"set_position",{"UnityEngine.Vector3"},{&pos});r.call(v.tr,"set_rotation",{"UnityEngine.Quaternion"},{&rot});
  float factor=v.text?width*.04f/48.f:100.f*width/1350.f;
  V3 scale{factor*(float)trackValue(d[@"scaleXEvents"],now,1),factor*(float)trackValue(d[@"scaleYEvents"],now,1),1};
  r.call(v.tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});
- // Native line alpha can be zero on text lines; evaluate the saved chart track.
- NSDictionary*alphaEvent=nil;for(NSDictionary*e in lineAlpha){if(scalar(e[@"startTime"])/64<=now)alphaEvent=e;else break;}
- if(alphaEvent){double a=scalar(alphaEvent[@"startTime"])/64,b=scalar(alphaEvent[@"endTime"])/64,q=b>a?std::clamp((now-a)/(b-a),0.,1.):1;color.a=std::clamp((float)(scalar(alphaEvent[@"start"])+(scalar(alphaEvent[@"end"])-scalar(alphaEvent[@"start"]))*q),0.f,1.f);}
  if(v.text){
-  NSDictionary*event=nil;for(NSDictionary*e in d[@"textEvents"]){if(now>=scalar(e[@"startTime"]))event=e;else break;}
+  NSDictionary*event=eventAt(d[@"textEvents"],now);
   NSString*value=@"";
   if(event){NSString*a=[event[@"start"] description]?:@"",*b=[event[@"end"] description]?:@"";value=a;
    if([a containsString:@"%P%"]||[b containsString:@"%P%"]){a=[a stringByReplacingOccurrencesOfString:@"%P%" withString:@""];b=[b stringByReplacingOccurrencesOfString:@"%P%" withString:@""];double q=std::clamp((now-scalar(event[@"startTime"]))/std::max(.001,scalar(event[@"endTime"])-scalar(event[@"startTime"])),0.,1.);value=[b substringToIndex:MIN(b.length,(NSUInteger)std::round(double(a.length)+(double(b.length)-double(a.length))*q))];}
@@ -476,11 +498,14 @@ void updateStory(Runtime&r,int index,P line,P nativeRenderer,NSDictionary*d,NSAr
 
 }
 void visuals(Runtime&r,P progress){
+ storyFrameCamera=nullptr;storyFrameWidth=0;
  if(!currentChart)return;P judge=r.get<P>(progress,"judgeControl"),lineList=r.get<P>(judge,"judgeLineControls"),info=r.get<P>(progress,"levelInformation");float now=r.get<float>(progress,"nowTime");NSArray*data=currentChart[@"judgeLineList"];int total=std::min<int>(r.count(lineList),(int)data.count);if(total<=0)return;
  for(int i=0;i<total;++i){
   P line=r.at(lineList,i),tr=r.call(line,"get_transform"),renderer=r.get<P>(line,"_judgeLineSpriteRenderer");if(!r.alive(renderer))continue;NSDictionary*d=data[i][@"pmDecor"];if(!d)continue;
   V3 scale=r.unbox<V3>(r.call(tr,"get_localScale"));if(!lineScales.count(line))lineScales[line]=scale;scale=lineScales[line];scale.x*=trackValue(d[@"scaleXEvents"],now,1);scale.y*=trackValue(d[@"scaleYEvents"],now,1);r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});
-  Color color=r.unbox<Color>(r.call(renderer,"get_color"));NSArray*colors=d[@"colorEvents"];if(colors.count){color.r=trackValue(colors,now,1,0);color.g=trackValue(colors,now,1,1);color.b=trackValue(colors,now,1,2);}
+  NSString*textureName=[d[@"Texture"] isKindOfClass:NSString.class]?d[@"Texture"]:nil;
+  bool story=[d[@"textEvents"] count]>0||(textureName.length&&![textureName isEqualToString:@"line.png"]);
+  Color color=story?Color{1,1,1,1}:r.unbox<Color>(r.call(renderer,"get_color"));NSArray*colors=d[@"colorEvents"];if(colors.count){color.r=trackValue(colors,now,1,0);color.g=trackValue(colors,now,1,1);color.b=trackValue(colors,now,1,2);}
   // Keep the engine's judge-line sortingOrder as a baseline. pmDecor.zOrder
   // defaults to 0; writing sortingOrder=0 moves every custom-chart judge line
   // to the background layer, where it is hidden behind the chart background.
