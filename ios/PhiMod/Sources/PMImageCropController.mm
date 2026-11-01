@@ -15,7 +15,8 @@
 
 @implementation PMImageCropController
 - (instancetype)initWithImage:(UIImage *)image aspect:(CGFloat)aspect completion:(PMImageCropCompletion)completion {
- if((self=[super initWithNibName:nil bundle:nil])){_aspect=isfinite(aspect)&&aspect>.1?aspect:(16.0/9.0);_completion=[completion copy];if(image.CGImage){CGSize px=CGSizeMake(CGImageGetWidth(image.CGImage),CGImageGetHeight(image.CGImage));UIGraphicsImageRendererFormat*f=[UIGraphicsImageRendererFormat defaultFormat];f.scale=1;UIGraphicsImageRenderer*r=[[UIGraphicsImageRenderer alloc]initWithSize:px format:f];_sourceImage=[r imageWithActions:^(UIGraphicsImageRendererContext*c){[image drawInRect:CGRectMake(0,0,px.width,px.height)];}];}else _sourceImage=image;}
+ if((self=[super initWithNibName:nil bundle:nil])){_aspect=isfinite(aspect)&&aspect>.1?aspect:(16.0/9.0);_completion=[completion copy];if(image.CGImage){CGSize px=CGSizeMake(CGImageGetWidth(image.CGImage),CGImageGetHeight(image.CGImage));// UIImage draws orientation-corrected pixels; quarter turns swap the output dimensions.
+BOOL quarterTurn=image.imageOrientation==UIImageOrientationLeft||image.imageOrientation==UIImageOrientationRight||image.imageOrientation==UIImageOrientationLeftMirrored||image.imageOrientation==UIImageOrientationRightMirrored;if(quarterTurn)px=CGSizeMake(px.height,px.width);UIGraphicsImageRendererFormat*f=[UIGraphicsImageRendererFormat defaultFormat];f.scale=1;UIGraphicsImageRenderer*r=[[UIGraphicsImageRenderer alloc]initWithSize:px format:f];_sourceImage=[r imageWithActions:^(UIGraphicsImageRendererContext*c){[image drawInRect:CGRectMake(0,0,px.width,px.height)];}];}else _sourceImage=image;}
  return self;
 }
 - (void)viewDidLoad {

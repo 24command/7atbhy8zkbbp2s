@@ -251,14 +251,15 @@ uint32_t lockUIOwner=0;P lockUIItem=nullptr;int lockUISlot=-1;NSUInteger lockUIR
 bool lockUIManaged=false,lockUIBlocked=false;NSString*lockUIRequirement=nil;double lockUIEvaluate=0;
 void lockActive(Runtime&r,P object,bool active){if(r.alive(object)&&r.unbox<bool>(r.call(object,"get_activeSelf"))!=active)r.call(object,"SetActive",{"System.Boolean"},{&active});}
 void lockComponent(Runtime&r,P component,bool active){if(r.alive(component))lockActive(r,r.call(component,"get_gameObject"),active);}
-uint32_t lockTipRoot=0;bool lockTipFit=false;int lockTipMin=0,lockTipMax=0;
-void restoreLockTip(Runtime&r){if(!lockTipRoot)return;P tip=target(r,lockTipRoot);if(r.alive(tip)){r.call(tip,"set_resizeTextForBestFit",{"System.Boolean"},{&lockTipFit});r.call(tip,"set_resizeTextMinSize",{"System.Int32"},{&lockTipMin});r.call(tip,"set_resizeTextMaxSize",{"System.Int32"},{&lockTipMax});}r.gchandle_free(lockTipRoot);lockTipRoot=0;}
+uint32_t lockTipRoot=0;bool lockTipFit=false;int lockTipMin=0,lockTipMax=0,lockTipFont=0,lockTipWrap=0;
+void restoreLockTip(Runtime&r){if(!lockTipRoot)return;P tip=target(r,lockTipRoot);if(r.alive(tip)){r.call(tip,"set_resizeTextForBestFit",{"System.Boolean"},{&lockTipFit});r.call(tip,"set_resizeTextMinSize",{"System.Int32"},{&lockTipMin});r.call(tip,"set_resizeTextMaxSize",{"System.Int32"},{&lockTipMax});r.call(tip,"set_fontSize",{"System.Int32"},{&lockTipFont});r.call(tip,"set_horizontalOverflow",{"UnityEngine.HorizontalWrapMode"},{&lockTipWrap});}r.gchandle_free(lockTipRoot);lockTipRoot=0;}
 void fitLockTip(Runtime&r,P tip,bool blocked){
  if(!blocked){restoreLockTip(r);return;}
  if(target(r,lockTipRoot)==tip)return;restoreLockTip(r);
- lockTipFit=r.unbox<bool>(r.call(tip,"get_resizeTextForBestFit"));lockTipMin=r.unbox<int>(r.call(tip,"get_resizeTextMinSize"));lockTipMax=r.unbox<int>(r.call(tip,"get_resizeTextMaxSize"));lockTipRoot=r.gchandle_new(tip,false);
- bool fit=true;int minimum=12,maximum=std::max(12,r.unbox<int>(r.call(tip,"get_fontSize")));
- r.call(tip,"set_resizeTextForBestFit",{"System.Boolean"},{&fit});r.call(tip,"set_resizeTextMinSize",{"System.Int32"},{&minimum});r.call(tip,"set_resizeTextMaxSize",{"System.Int32"},{&maximum});
+ lockTipFit=r.unbox<bool>(r.call(tip,"get_resizeTextForBestFit"));lockTipMin=r.unbox<int>(r.call(tip,"get_resizeTextMinSize"));lockTipMax=r.unbox<int>(r.call(tip,"get_resizeTextMaxSize"));lockTipFont=r.unbox<int>(r.call(tip,"get_fontSize"));lockTipWrap=r.unbox<int>(r.call(tip,"get_horizontalOverflow"));lockTipRoot=r.gchandle_new(tip,false);
+ // Song requirements are one readable line; never shrink to fit multiple rows.
+ bool fit=false;int font=std::max(28,lockTipFont),overflow=1;
+ r.call(tip,"set_resizeTextForBestFit",{"System.Boolean"},{&fit});r.call(tip,"set_fontSize",{"System.Int32"},{&font});r.call(tip,"set_horizontalOverflow",{"UnityEngine.HorizontalWrapMode"},{&overflow});
 }
 void resetLockUI(Runtime&r){restoreLockTip(r);if(lockUIOwner)r.gchandle_free(lockUIOwner);lockUIOwner=0;lockUIItem=nullptr;lockUISlot=-1;lockUIManaged=false;lockUIRequirement=nil;lockUIEvaluate=0;}
 void songLockUI(Runtime&r,P selector,double now){
@@ -272,7 +273,7 @@ void songLockUI(Runtime&r,P selector,double now){
   lockUIManaged=subject!=nil;lockUIBlocked=false;lockUIRequirement=nil;
   if(subject){NSString*sid=subject[@"id"],*chapter=subject[@"targetChapter"];bool songOpen=opened(r,sid),chapterOpen=!entity(chapter)||opened(r,chapter);
    lockUIBlocked=!songOpen||!chapterOpen;
-   if(lockUIBlocked){NSMutableArray*tips=[NSMutableArray new];if(!songOpen)[tips addObject:chapterRequirements(ruleFor(sid))];if(!chapterOpen)[tips addObject:chapterRequirements(ruleFor(chapter))];lockUIRequirement=[tips componentsJoinedByString:@"\n\n"];}
+   if(lockUIBlocked){NSMutableArray*tips=[NSMutableArray new];if(!songOpen)[tips addObject:chapterRequirements(ruleFor(sid))];if(!chapterOpen)[tips addObject:chapterRequirements(ruleFor(chapter))];NSMutableArray*singleLine=[NSMutableArray new];for(NSString*tip in tips){NSArray*rows=[tip componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];NSMutableArray*parts=[NSMutableArray new];for(NSString*row in rows){NSString*part=[row stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];if(part.length)[parts addObject:part];}if(parts.count>1){NSString*heading=parts.firstObject;[parts removeObjectAtIndex:0];[singleLine addObject:[NSString stringWithFormat:@"%@：%@",heading,[parts componentsJoinedByString:@"；"]]];}else if(parts.count)[singleLine addObject:parts.firstObject];}lockUIRequirement=[singleLine componentsJoinedByString:@"；"];}
    r.put(item,"<Unlocked>k__BackingField",!lockUIBlocked);
    r.put(item,"unlockInfo",r.managedString(lockUIRequirement?:@""));
   }else if(wasManaged){restoreLockTip(r);

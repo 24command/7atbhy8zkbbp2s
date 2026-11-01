@@ -1,4 +1,7 @@
 #include "PMRuntimeFeatures.hpp"
+#include "PMContentRuntime.hpp"
+#include "../Core/PMRPEGeometry.hpp"
+#include <array>
 #include "../Core/PMLegacyCore.hpp"
 #import "PMSettings.h"
 #import "PMContentStore.h"
@@ -34,9 +37,12 @@ namespace {
 std::string skinFolder;
 std::map<std::string,NSString*>skinFiles;std::set<int>skinAppliedTypes;std::set<std::string>skinErrors;
 std::map<std::string,uint32_t> skinTextures,skinSprites;
-std::map<std::string,double>skinAtlasYScale;
+std::map<std::string,double>skinAtlasYScale,skinSourceWidths;
+std::map<std::string,float>skinNormalWorldWidths;
 std::vector<uint32_t> roots;
 std::map<P,std::pair<float,float>> holdBases;
+std::map<P,std::array<P,3>> holdOriginalParts;
+bool skinHoldCompact=false;
 int skinHead=50,skinTail=50,skinHeadMH=50,skinTailMH=50,skinCols=5,skinRows=6;
 std::set<int>skinBoundTypes;bool skinReady=false;std::map<P,P>skinBoundNotes;std::map<P,bool>skinHighlights;std::map<P,P>skinOriginals;std::map<P,uint32_t>skinOriginalRoots;
 struct TrackEvent { double s=0,e=0,a=0,b=0; };
@@ -61,6 +67,7 @@ P loadTexture(Runtime&r,NSString*path){
  NSDictionary*properties=CFBridgingRelease(CGImageSourceCopyPropertiesAtIndex(source,0,NULL));
  double sourceW=[properties[(NSString*)kCGImagePropertyPixelWidth] doubleValue],sourceH=[properties[(NSString*)kCGImagePropertyPixelHeight] doubleValue];
  if(!std::isfinite(sourceW)||!std::isfinite(sourceH)||sourceW<=0||sourceH<=0){CFRelease(source);throw std::runtime_error("Invalid skin image dimensions");}
+ skinSourceWidths[path.UTF8String]=sourceW;
  double atlasScale=1;
  if(sourceW>4096||sourceH>4096){
   NSDictionary*options=@{(NSString*)kCGImageSourceCreateThumbnailFromImageAlways:@YES,(NSString*)kCGImageSourceThumbnailMaxPixelSize:@4096,(NSString*)kCGImageSourceShouldCacheImmediately:@YES};
@@ -77,15 +84,51 @@ P loadTexture(Runtime&r,NSString*path){
  if(source)CFRelease(source);
  P a=managedBytes(r,d);uint32_t ah=r.gchandle_new(a,false);try{P t=r.object_new(r.type("UnityEngine","Texture2D"));if(!t)throw std::runtime_error("skin Texture2D allocation failed");uint32_t th=r.gchandle_new(t,false);try{int w=2,h=2,fmt=4;bool mip=false;r.call(t,".ctor",{"System.Int32","System.Int32","UnityEngine.TextureFormat","System.Boolean"},{&w,&h,&fmt,&mip});bool unreadable=true;bool ok=r.unbox<bool>(r.stat(r.type("UnityEngine","ImageConversion"),"LoadImage",{"UnityEngine.Texture2D","System.Byte[]","System.Boolean"},{t,a,&unreadable}));if(!ok)throw std::runtime_error("skin ImageConversion failed");int flags=32;r.call(t,"set_hideFlags",{"UnityEngine.HideFlags"},{&flags});skinTextures[path.UTF8String]=th;skinAtlasYScale[path.UTF8String]=atlasScale;roots.push_back(th);r.gchandle_free(ah);return t;}catch(...){r.gchandle_free(th);throw;}}catch(...){r.gchandle_free(ah);throw;}}
 P skinSprite(Runtime&r,NSString*file,int part,P original=nullptr){NSString*key=[NSString stringWithFormat:@"%@/%d/%p",file,part,original];auto hit=skinSprites.find(key.UTF8String);if(hit!=skinSprites.end())return target(r,hit->second);auto th=skinTextures.find(file.UTF8String);P texture=th==skinTextures.end()?nullptr:target(r,th->second);if(!r.alive(texture))throw std::runtime_error("Skin texture native object was unloaded");int w=r.unbox<int>(r.call(texture,"get_width")),h=r.unbox<int>(r.call(texture,"get_height"));Rect rect{0,0,(float)w,(float)h};V2 pivot{.5f,.5f};float ppu=100.f,worldWidth=1.5f;if(original){try{Rect old=r.unbox<Rect>(r.call(original,"get_rect"));float oldPpu=r.unbox<float>(r.call(original,"get_pixelsPerUnit"));worldWidth=oldPpu>0?old.w/oldPpu:1.5f;pivot=r.unbox<V2>(r.call(original,"get_pivot"));pivot={old.w>0?pivot.x/old.w:.5f,old.h>0?pivot.y/old.h:.5f};}catch(...){}}
- if(part>=100){int frame=part-100,cols=std::max(1,skinCols),rows=std::max(1,skinRows);float fw=float(w)/cols,fh=float(h)/rows;rect={float(frame%cols)*fw,float(h-(frame/cols+1)*fh),fw,fh};worldWidth=1.5f;}else if(part>=0){bool mh=[file.lastPathComponent.lowercaseString containsString:@"_mh"];float atlasScale=skinAtlasYScale.count(file.UTF8String)?float(skinAtlasYScale.at(file.UTF8String)):1.f;float head=std::clamp(float(mh?skinHeadMH:skinHead)*atlasScale,0.f,float(h)-.001f),tail=std::clamp(float(mh?skinTailMH:skinTail)*atlasScale,0.f,float(h)-head-.001f);if(part==0)rect={0,0,(float)w,head};else if(part==1)rect={0,head,(float)w,float(h)-head-tail};else rect={0,float(h)-tail,(float)w,tail};worldWidth=1.5f;}if(rect.w<=0||rect.h<=0)return nullptr;ppu=rect.w/std::max(.001f,worldWidth);P s=r.stat(r.type("UnityEngine","Sprite"),"Create",{"UnityEngine.Texture2D","UnityEngine.Rect","UnityEngine.Vector2","System.Single"},{texture,&rect,&pivot,&ppu});if(!s)return nullptr;int flags=32;r.call(s,"set_hideFlags",{"UnityEngine.HideFlags"},{&flags});uint32_t sh=r.gchandle_new(s,false);skinSprites[key.UTF8String]=sh;roots.push_back(sh);return s;}
+ if(part>=100){int frame=part-100,cols=std::max(1,skinCols),rows=std::max(1,skinRows);float fw=float(w)/cols,fh=float(h)/rows;rect={float(frame%cols)*fw,float(h-(frame/cols+1)*fh),fw,fh};worldWidth=1.5f;}else if(part>=0){bool mh=[file.lastPathComponent.lowercaseString containsString:@"_mh"];float atlasScale=skinAtlasYScale.count(file.UTF8String)?float(skinAtlasYScale.at(file.UTF8String)):1.f;float head=std::clamp(float(mh?skinHeadMH:skinHead)*atlasScale,0.f,float(h)-.001f),tail=std::clamp(float(mh?skinTailMH:skinTail)*atlasScale,0.f,float(h)-head-.001f);if(part==0)rect={0,0,(float)w,head};else if(part==1)rect={0,head,(float)w,float(h)-head-tail};else rect={0,float(h)-tail,(float)w,tail};}if(rect.w<=0||rect.h<=0)return nullptr;
+ if(part<100){
+  NSString*name=file.lastPathComponent.lowercaseString;bool mh=[name hasSuffix:@"_mh.png"];
+  NSString*normalName=mh?[[name substringToIndex:name.length-7]stringByAppendingString:@".png"]:name;
+  std::string widthKey=std::string(normalName.UTF8String)+"/"+std::to_string(part);
+  if(!mh)skinNormalWorldWidths.emplace(widthKey,worldWidth);
+  else{
+   auto normal=skinFiles.find(normalName.UTF8String);auto baseWidth=skinNormalWorldWidths.find(widthKey);
+   if(normal!=skinFiles.end()&&baseWidth!=skinNormalWorldWidths.end()){
+    auto normalPixels=skinSourceWidths.find(normal->second.UTF8String),highlightPixels=skinSourceWidths.find(file.UTF8String);
+    if(normalPixels!=skinSourceWidths.end()&&highlightPixels!=skinSourceWidths.end()&&normalPixels->second>0)
+     worldWidth=baseWidth->second*float(highlightPixels->second/normalPixels->second);
+   }
+  }
+ }
+ ppu=rect.w/std::max(.001f,worldWidth);P s=r.stat(r.type("UnityEngine","Sprite"),"Create",{"UnityEngine.Texture2D","UnityEngine.Rect","UnityEngine.Vector2","System.Single"},{texture,&rect,&pivot,&ppu});if(!s)return nullptr;int flags=32;r.call(s,"set_hideFlags",{"UnityEngine.HideFlags"},{&flags});uint32_t sh=r.gchandle_new(s,false);skinSprites[key.UTF8String]=sh;roots.push_back(sh);return s;}
 void clearLegacy(){legacyActive=false;legacyStep=-1;legacyJudge=-1;legacyFace.clear();}
-void releaseRoots(Runtime&r){for(auto h:roots){P p=target(r,h);try{if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});}catch(...){}r.gchandle_free(h);}roots.clear();skinTextures.clear();skinSprites.clear();skinAtlasYScale.clear();holdBases.clear();skinBoundTypes.clear();skinBoundNotes.clear();skinHighlights.clear();skinOriginals.clear();for(auto&item:skinOriginalRoots)r.gchandle_free(item.second);skinOriginalRoots.clear();skinFolder.clear();skinFiles.clear();skinAppliedTypes.clear();skinErrors.clear();skinReady=false;}
-void loadSkin(Runtime&r){releaseRoots(r);if(!PMSettingBool("skinEnabled"))return;NSString*docs=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;NSString*root=[docs stringByAppendingPathComponent:@"PhiMod/resources"];NSString*active=[NSString stringWithContentsOfFile:[root stringByAppendingPathComponent:@"active.txt"] encoding:NSUTF8StringEncoding error:nil];active=[active stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];if(!active.length)throw std::runtime_error("No selected resource pack (active.txt missing)");NSString*folder=[[root stringByAppendingPathComponent:active]stringByStandardizingPath];if(![folder hasPrefix:[root stringByAppendingString:@"/"]]||![NSFileManager.defaultManager fileExistsAtPath:folder])throw std::runtime_error("Selected resource pack directory is missing");NSString*required[]={findFile(folder,@"click.png"),findFile(folder,@"drag.png"),findFile(folder,@"flick.png"),findFile(folder,@"hold.png")};for(NSString*p:required)if(!p)throw std::runtime_error("Active skin lacks a required note texture");skinFolder=folder.UTF8String;auto meta=yaml(findFile(folder,@"info.yml") ?: findFile(folder,@"info.yaml"));auto num=[&](const char*k,int d){auto it=meta.find(k);if(it==meta.end())return d;try{return std::clamp(std::stoi(it->second),0,4096);}catch(...){return d;}};auto hold=pairValue(meta,"holdAtlas",50,50),holdMH=pairValue(meta,"holdAtlasMH",hold.first,hold.second),fxAtlas=pairValue(meta,"hitFx",5,6);skinTail=hold.first;skinHead=hold.second;skinTailMH=holdMH.first;skinHeadMH=holdMH.second;skinCols=std::clamp(fxAtlas.first,1,32);skinRows=std::clamp(fxAtlas.second,1,32);for(int i=0;i<4;++i){NSString*p=required[i];skinFiles[std::vector<std::string>{"click.png","drag.png","flick.png","hold.png"}[i]]=p;loadTexture(r,p);}for(NSString*base in @[@"click.png",@"drag.png",@"flick.png",@"hold.png"]){NSString*mh=[base.stringByDeletingPathExtension stringByAppendingString:@"_mh.png"];NSString*p=findFile(folder,mh);if(p){skinFiles[mh.UTF8String]=p;loadTexture(r,p);}}NSString*fxFile=findFile(folder,@"hit_fx.png");if(fxFile)loadTexture(r,fxFile);skinReady=true;logf("Skin runtime prepared files=%lu",(unsigned long)skinTextures.size());}
+void releaseRoots(Runtime&r){for(auto h:roots){P p=target(r,h);try{if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});}catch(...){}r.gchandle_free(h);}roots.clear();skinTextures.clear();skinSprites.clear();skinAtlasYScale.clear();skinSourceWidths.clear();skinNormalWorldWidths.clear();holdBases.clear();holdOriginalParts.clear();skinBoundTypes.clear();skinBoundNotes.clear();skinHighlights.clear();skinOriginals.clear();for(auto&item:skinOriginalRoots)r.gchandle_free(item.second);skinOriginalRoots.clear();skinFolder.clear();skinFiles.clear();skinAppliedTypes.clear();skinErrors.clear();skinReady=false;}
+void loadSkin(Runtime&r){releaseRoots(r);if(!PMSettingBool("skinEnabled"))return;NSString*docs=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;NSString*root=[docs stringByAppendingPathComponent:@"PhiMod/resources"];NSString*active=[NSString stringWithContentsOfFile:[root stringByAppendingPathComponent:@"active.txt"] encoding:NSUTF8StringEncoding error:nil];active=[active stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];if(!active.length)throw std::runtime_error("No selected resource pack (active.txt missing)");NSString*folder=[[root stringByAppendingPathComponent:active]stringByStandardizingPath];if(![folder hasPrefix:[root stringByAppendingString:@"/"]]||![NSFileManager.defaultManager fileExistsAtPath:folder])throw std::runtime_error("Selected resource pack directory is missing");NSString*required[]={findFile(folder,@"click.png"),findFile(folder,@"drag.png"),findFile(folder,@"flick.png"),findFile(folder,@"hold.png")};for(NSString*p:required)if(!p)throw std::runtime_error("Active skin lacks a required note texture");skinFolder=folder.UTF8String;auto meta=yaml(findFile(folder,@"info.yml") ?: findFile(folder,@"info.yaml"));auto num=[&](const char*k,int d){auto it=meta.find(k);if(it==meta.end())return d;try{return std::clamp(std::stoi(it->second),0,4096);}catch(...){return d;}};auto compact=meta.find("holdCompact");skinHoldCompact=compact!=meta.end()&&std::regex_search(compact->second,std::regex("^\\s*(true|True|TRUE|1)(\\s|#|$)"));auto hold=pairValue(meta,"holdAtlas",50,50),holdMH=pairValue(meta,"holdAtlasMH",hold.first,hold.second),fxAtlas=pairValue(meta,"hitFx",5,6);skinTail=hold.first;skinHead=hold.second;skinTailMH=holdMH.first;skinHeadMH=holdMH.second;skinCols=std::clamp(fxAtlas.first,1,32);skinRows=std::clamp(fxAtlas.second,1,32);for(int i=0;i<4;++i){NSString*p=required[i];skinFiles[std::vector<std::string>{"click.png","drag.png","flick.png","hold.png"}[i]]=p;loadTexture(r,p);}for(NSString*base in @[@"click.png",@"drag.png",@"flick.png",@"hold.png"]){NSString*mh=[base.stringByDeletingPathExtension stringByAppendingString:@"_mh.png"];NSString*p=findFile(folder,mh);if(p){skinFiles[mh.UTF8String]=p;loadTexture(r,p);}}NSString*fxFile=findFile(folder,@"hit_fx.png");if(fxFile)loadTexture(r,fxFile);skinReady=true;logf("Skin runtime prepared files=%lu",(unsigned long)skinTextures.size());}
 NSString*skinPath(const char*name){return [NSString stringWithUTF8String:(skinFolder+"/"+name).c_str()];}
 bool isHighlight(Runtime&r,P sprite){if(!r.alive(sprite))return false;NSString*n=r.string(r.call(sprite,"get_name"));NSString*l=n.lowercaseString;return [l containsString:@"hl"]||[l containsString:@"highlight"]||[l containsString:@"_mh"];}
 void applyNote(Runtime&r,P c,bool isHold){if(!skinReady||!c)return;P note=r.get<P>(c,"noteInfor");if(!note)return;int type=r.get<int>(note,"type");if(!isHold){P old=r.get<P>(c,"noteImage");const char*base=type==1?"click":type==2?"drag":"flick";NSString*file=skinFiles[std::string(base)+".png"];if(skinHighlights.count(c)?skinHighlights[c]:isHighlight(r,old)){NSString*mh=skinFiles[std::string(base)+"_mh.png"];if(mh)file=mh;}P s=skinSprite(r,file,-1,skinOriginals.count(c)?skinOriginals[c]:old),renderer=r.get<P>(c,"_spriteRenderer");if(s&&r.alive(renderer)){r.call(renderer,"set_sprite",{"UnityEngine.Sprite"},{s});r.put(c,"noteImage",s);if(r.call(renderer,"get_sprite")!=s)throw std::runtime_error("Note skin sprite readback mismatch");if(skinAppliedTypes.insert(type).second)logf("Skin applied and verified type=%d",type);}return;}
- P body=r.get<P>(c,"_holdSpriteRenderer"),head=r.get<P>(c,"_holdHeadSpriteRenderer"),tail=r.get<P>(c,"_holdEndSpriteRenderer1");if(!r.alive(body))return;P old=r.call(body,"get_sprite");Bounds ob=r.unbox<Bounds>(r.call(skinOriginals.count(c)?skinOriginals[c]:old,"get_bounds"));V3 originalScale=r.unbox<V3>(r.call(r.call(c,"get_transform"),"get_localScale"));holdBases.emplace(c,std::make_pair(ob.extents.y*2.f,ob.center.y-ob.extents.y));NSString*path=skinFiles["hold.png"];if(skinHighlights.count(c)?skinHighlights[c]:isHighlight(r,old)){NSString*mh=skinFiles["hold_mh.png"];if(mh)path=mh;}P original=skinOriginals.count(c)?skinOriginals[c]:old;P hs=skinSprite(r,path,0,original),bs=skinSprite(r,path,1,original),ts=skinSprite(r,path,2,original);if(r.alive(head)&&hs)r.call(head,"set_sprite",{"UnityEngine.Sprite"},{hs});if(bs)r.call(body,"set_sprite",{"UnityEngine.Sprite"},{bs});if(r.alive(tail)&&ts)r.call(tail,"set_sprite",{"UnityEngine.Sprite"},{ts});if(bs&&skinAppliedTypes.insert(3).second)logf("Skin applied and verified type=3");(void)originalScale;}
-void adjustHold(Runtime&r,P c){auto it=holdBases.find(c);if(it==holdBases.end())return;P body=r.get<P>(c,"_holdSpriteRenderer"),tr=r.call(c,"get_transform");if(!r.alive(body))return;P current=r.call(body,"get_sprite");if(!r.alive(current))return;Bounds b=r.unbox<Bounds>(r.call(current,"get_bounds"));float height=b.extents.y*2;if(height<=.0001f)return;V3 scale=r.unbox<V3>(r.call(tr,"get_localScale")),pos=r.unbox<V3>(r.call(tr,"get_localPosition"));float prev=scale.y;scale.y*=it->second.first/height;pos.y+=it->second.second*prev-(b.center.y-b.extents.y)*scale.y;r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&pos});for(const char*name:{"holdHead","holdEnd"}){P go=r.get<P>(c,name);if(!r.alive(go))continue;P child=r.call(go,"get_transform");V3 cs=r.unbox<V3>(r.call(child,"get_localScale"));cs.y=std::fabs(scale.x/std::max(.00001f,std::fabs(scale.y)));r.call(child,"set_localScale",{"UnityEngine.Vector3"},{&cs});}}
+ P body=r.get<P>(c,"_holdSpriteRenderer"),head=r.get<P>(c,"_holdHeadSpriteRenderer"),tail=r.get<P>(c,"_holdEndSpriteRenderer1");if(!r.alive(body))return;P old=r.call(body,"get_sprite");Bounds ob=r.unbox<Bounds>(r.call(skinOriginals.count(c)?skinOriginals[c]:old,"get_bounds"));V3 originalScale=r.unbox<V3>(r.call(r.call(c,"get_transform"),"get_localScale"));holdBases.emplace(c,std::make_pair(ob.extents.y*2.f,ob.center.y-ob.extents.y));NSString*path=skinFiles["hold.png"];if(skinHighlights.count(c)?skinHighlights[c]:isHighlight(r,old)){NSString*mh=skinFiles["hold_mh.png"];if(mh)path=mh;}P original=skinOriginals.count(c)?skinOriginals[c]:old;auto parts=holdOriginalParts.find(c);P hs=skinSprite(r,path,0,parts!=holdOriginalParts.end()?parts->second[0]:original),bs=skinSprite(r,path,1,original),ts=skinSprite(r,path,2,parts!=holdOriginalParts.end()?parts->second[2]:original);if(r.alive(head)&&hs)r.call(head,"set_sprite",{"UnityEngine.Sprite"},{hs});if(bs)r.call(body,"set_sprite",{"UnityEngine.Sprite"},{bs});if(r.alive(tail)&&ts)r.call(tail,"set_sprite",{"UnityEngine.Sprite"},{ts});int drawMode=0;for(P renderer:{head,body,tail})if(r.alive(renderer))r.call(renderer,"set_drawMode",{"UnityEngine.SpriteDrawMode"},{&drawMode});if(bs&&skinAppliedTypes.insert(3).second)logf("Skin applied and verified type=3 (native widths, per-part pivots, source-aware geometry)");(void)originalScale;}
+void adjustHold(Runtime&r,P c){
+ auto it=holdBases.find(c);if(it==holdBases.end())return;
+ P body=r.get<P>(c,"_holdSpriteRenderer"),tr=r.call(c,"get_transform");if(!r.alive(body))return;
+ P current=r.call(body,"get_sprite");if(!r.alive(current))return;
+ Bounds b=r.unbox<Bounds>(r.call(current,"get_bounds"));float height=b.extents.y*2;if(height<=.0001f)return;
+ V3 scale=r.unbox<V3>(r.call(tr,"get_localScale")),pos=r.unbox<V3>(r.call(tr,"get_localPosition"));
+ // RPE endpoints already used the replacement sprite bounds in noteMoved.
+ // Only native constant-speed geometry needs old-height/new-height conversion.
+ if(!pmcontent::sourceHoldGeometry(r,c)){
+  float prev=scale.y;scale.y*=it->second.first/height;
+  pos.y+=it->second.second*prev-(b.center.y-b.extents.y)*scale.y;
+  r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&pos});
+ }
+ for(int i=0;i<2;++i){P go=r.get<P>(c,i?"holdEnd":"holdHead");if(!r.alive(go))continue;
+  P child=r.call(go,"get_transform");V3 cs=r.unbox<V3>(r.call(child,"get_localScale"));
+  cs.y=std::fabs(scale.x/std::max(.00001f,std::fabs(scale.y)));r.call(child,"set_localScale",{"UnityEngine.Vector3"},{&cs});
+  if(i||!r.get<bool>(c,"_holdHeadIsDestroyed")){V3 cp=r.unbox<V3>(r.call(child,"get_localPosition"));cp.y=b.center.y+(i?b.extents.y:-b.extents.y);
+   P cap=r.get<P>(c,i?"_holdEndSpriteRenderer1":"_holdHeadSpriteRenderer");P sprite=r.alive(cap)?r.call(cap,"get_sprite"):nullptr;
+   if(r.alive(sprite)){Bounds cb=r.unbox<Bounds>(r.call(sprite,"get_bounds"));cp.y=rpeHoldCapPosition(cp.y,cb.center.y,cb.extents.y,cs.y,i!=0,skinHoldCompact);}
+   r.call(child,"set_localPosition",{"UnityEngine.Vector3"},{&cp});}
+ }
+}
 NSString*resourceFolder(NSString*identifier){
  // Official IDs have no local asset directory. Keep absence as nil rather
  // than constructing std::string from a null UTF8String pointer.
@@ -302,13 +345,29 @@ void beforeNoteMove(Runtime&r,void*control,bool hold){
   skinOriginals[c]=original;if(!skinOriginalRoots.count(original))skinOriginalRoots[original]=r.gchandle_new(original,false);
   // Keep original sprite alive while replacement caching uses its identity.
   // Do not add to roots: originals belong to the game, not our Destroy list.
+  // Read the untouched normal prefab, not the highlighted instance sprite.
+  if(!skinNormalWorldWidths.count(std::string(base)+".png/"+(hold?"2":"-1"))){
+  P line=r.get<P>(c,"judgeLine");P prefab=r.get<P>(line,hold?"Hold":type==2?"Drag":type==4?"Flick":"Click");
+  P templateControl=r.component(prefab,r.klass(hold?"HoldControl":type==2?"DragControl":type==4?"FlickControl":"ClickControl"));
+  P normalImages=hold?r.get<P>(templateControl,"noteImages"):nullptr;
+  for(int part=hold?0:-1;part<(hold?3:0);++part){
+   std::string widthKey=std::string(base)+".png/"+std::to_string(part);
+   if(skinNormalWorldWidths.count(widthKey))continue;
+   P sprite=hold?r.arrayAt(normalImages,part):r.get<P>(templateControl,"noteImage");
+   Rect rect=r.unbox<Rect>(r.call(sprite,"get_rect"));float ppu=r.unbox<float>(r.call(sprite,"get_pixelsPerUnit"));
+   if(ppu>0&&rect.w>0)skinNormalWorldWidths[widthKey]=rect.w/ppu;
+  }
+  }
   NSString*path=skinFiles[std::string(base)+".png"];
   NSString*mh=skinFiles[std::string(base)+"_mh.png"];if(highlight&&mh)path=mh;
   if(hold){
+   std::array<P,3>parts{};
+   for(int i=0;i<3;++i){parts[i]=r.arrayAt(images,i);if(!r.alive(parts[i]))throw std::runtime_error("Hold original part missing");if(!skinOriginalRoots.count(parts[i]))skinOriginalRoots[parts[i]]=r.gchandle_new(parts[i],false);}
+   holdOriginalParts[c]=parts;
    P replacement=r.array_new(r.type("UnityEngine","Sprite"),3);if(!replacement)throw std::runtime_error("Hold skin array allocation failed");
    uint32_t handle=r.gchandle_new(replacement,false);
    try{
-    for(int i=0;i<3;++i){P sprite=skinSprite(r,path,i,original);if(!sprite)throw std::runtime_error("Hold atlas has an empty region");r.invokeOn(r.resolve(r.type("System","Array"),"SetValue",{"System.Object","System.Int32"}),replacement,{sprite,&i});}
+    for(int i=0;i<3;++i){P sprite=skinSprite(r,path,i,parts[i]);if(!sprite)throw std::runtime_error("Hold atlas has an empty region");r.invokeOn(r.resolve(r.type("System","Array"),"SetValue",{"System.Object","System.Int32"}),replacement,{sprite,&i});}
     r.put(c,"noteImages",replacement);
    }catch(...){r.gchandle_free(handle);throw;}r.gchandle_free(handle);
   }else{P sprite=skinSprite(r,path,-1,original);if(!sprite)throw std::runtime_error("Note skin sprite unavailable");r.put(c,"noteImage",sprite);}

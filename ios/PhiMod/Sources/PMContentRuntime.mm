@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <map>
 #include <set>
+#include <tuple>
 #include <chrono>
 namespace pmcontent {
 using pmbridge::P;using pmbridge::Runtime;
@@ -29,6 +30,7 @@ uint32_t loadingSelector=0;bool completingSelectorAsset=false;
 std::set<std::string>selectorSongIDs,selectedAssetIDs;
 NSUInteger selectorLibraryRevision=0;int loadingSong=-1,loadingSlot=-1;
 float loadingPosition=0;double selectionChangedAt=0;bool selectorDragging=true;
+P extrasBoundChart=nullptr;
 std::map<std::string,std::map<int,NSDictionary*>>variants;std::map<P,NSDictionary*>extras;std::map<P,V3>noteScales,lineScales;std::map<int,uint32_t>decorText,decorImage;
 struct StoryVisual {P go=nullptr,tr=nullptr,graphic=nullptr,canvas=nullptr;bool text=false,visible=true;NSString*lastText=nil;};
 std::map<int,StoryVisual>storyVisuals;std::map<int,double>storyRetry;std::set<int>storyReported;
@@ -54,7 +56,7 @@ void restoreHoldHitFX(Runtime&r){
  }
  holdHitFX.clear();
 }
-std::set<int>inertLineVisuals;bool rpeIntroRetired=false;
+std::set<int>inertLineVisuals;bool rpeIntroRetired=false;std::set<int>reportedLineAlphaCorrections;
 std::map<P,int>lineBaseOrder;std::vector<int>storyOrders;int storyHoldOrder=1028,storyNoteOrder=1030;
 // Fake notes that already failed to build; never retried in the same chart.
 void log(NSString*s){PMDiagnosticsWrite(s.UTF8String);}
@@ -179,7 +181,7 @@ P audio(Runtime&r,NSString*path){
  }catch(...){r.gchandle_free(clipRoot);throw;}
 }
 NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=[[key stringByReplacingOccurrencesOfString:id withString:@""]lowercaseString];*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":[lower containsString:@"blur"]?@"blur":@"image";return id;}
-void clearVisuals(Runtime&r){restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();rpeIntroRetired=false;storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
+void clearVisuals(Runtime&r){restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();extrasBoundChart=nullptr;noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
 void applyCachedChapterCover(Runtime&r,P card,const char*codeField,const char*loaderField){
  NSString*code=r.string(r.get<P>(card,codeField));if(!code.length)return;auto found=assets.find(code.UTF8String);if(found==assets.end())return;P sprite=target(r,found->second);if(!r.alive(sprite))return;
  P loader=r.get<P>(card,loaderField);if(!r.alive(loader))return;bool changed=false;
@@ -281,6 +283,10 @@ void chapterReady(Runtime&r,P self){
  log(@"Content ChapterSelector.Start completed");
 }
 void attach(Runtime&r){runtime=&r;}
+bool sourceHoldGeometry(Runtime&r,P control){
+ P note=r.get<P>(control,"noteInfor");auto found=extras.find(note);
+ return found!=extras.end()&&found->second[@"pmRawSpeed"]!=nil;
+}
 bool shortSourceHold(Runtime&r,P note){
  auto it=extras.find(note);if(!currentChart||it==extras.end())return false;
  NSDictionary*source=it->second;
@@ -290,11 +296,11 @@ bool shortSourceHold(Runtime&r,P note){
 }
 bool customLevel(){return levelID.length>0||lastCustom;}
 void avatarPulse(Runtime&r){
- struct Saved{uint32_t loader;NSString*code;};static std::vector<Saved>saved;
+ struct Saved{uint32_t loader;NSString*code;bool preserveAspect;};static std::vector<Saved>saved;
  static double next=0;double now=NSDate.timeIntervalSinceReferenceDate;if(now<next)return;next=now+1;
  for(auto it=saved.begin();it!=saved.end();){if(!r.alive(target(r,it->loader))){r.gchandle_free(it->loader);it=saved.erase(it);}else ++it;}
  NSUserDefaults*d=NSUserDefaults.standardUserDefaults;bool enabled=[d boolForKey:@"phimod.avatar.enabled"];
- if(!enabled){for(auto&entry:saved){P loader=target(r,entry.loader);NSString*current=r.string(r.call(loader,"get_Code"));if([current hasPrefix:@"PM/pm_avatar/"])r.call(loader,"set_Code",{"System.String"},{r.managedString(entry.code)});r.gchandle_free(entry.loader);}saved.clear();return;}
+ if(!enabled){for(auto&entry:saved){P loader=target(r,entry.loader);NSString*current=r.string(r.call(loader,"get_Code"));if([current hasPrefix:@"PM/pm_avatar/"]){r.call(loader,"set_Code",{"System.String"},{r.managedString(entry.code)});P image=r.get<P>(loader,"_image");if(r.alive(image))r.call(image,"set_preserveAspect",{"System.Boolean"},{&entry.preserveAspect});}r.gchandle_free(entry.loader);}saved.clear();return;}
  NSString*revision=[d stringForKey:@"phimod.avatar.revision"]?:@"1";
  NSString*key=[NSString stringWithFormat:@"PM/pm_avatar/image@%@",revision];
  for(const char*name:{"PlayerBarControl","StatsFrameController"}){
@@ -302,7 +308,9 @@ void avatarPulse(Runtime&r){
   for(uintptr_t i=0;objects&&i<r.array_length(objects);++i){P owner=r.arrayAt(objects,(int)i),loader=r.get<P>(owner,"avatar");if(!r.alive(loader))continue;
    NSString*code=r.string(r.call(loader,"get_Code"));bool tracked=false;
    for(auto&entry:saved)if(target(r,entry.loader)==loader){tracked=true;if(![code hasPrefix:@"PM/pm_avatar/"])entry.code=code;break;}
-   if(!tracked)saved.push_back({r.gchandle_new(loader,false),code});
+   r.call(loader,"CheckInitialized");P avatarImage=r.get<P>(loader,"_image");
+   if(!tracked){bool preserve=r.alive(avatarImage)?r.unbox<bool>(r.call(avatarImage,"get_preserveAspect")):false;saved.push_back({r.gchandle_new(loader,false),code,preserve});}
+   if(r.alive(avatarImage)){bool preserve=true;if(!r.unbox<bool>(r.call(avatarImage,"get_preserveAspect")))r.call(avatarImage,"set_preserveAspect",{"System.Boolean"},{&preserve});}
    if(![code isEqualToString:key]){r.call(loader,"CheckInitialized");r.call(loader,"set_Code",{"System.String"},{r.managedString(key)});log(@"Custom avatar resource requested");}
   }
  }
@@ -469,12 +477,12 @@ bool assetRelease(Runtime&r,P self,bool force){
  log([NSString stringWithFormat:@"Content custom release (%@): %@",force?@"ReleaseResource":@"Release",r.string(key)]);return true;
 }
 void levelInfo(Runtime&r,P song,int slot,P info){NSString*id=r.string(r.get<P>(song,"songsId"));NSDictionary*custom=songFor(id,slot);if(!custom||!info)return;NSString*identifier=custom[@"id"];for(const auto&entry:std::vector<std::pair<const char*,NSString*>>{{"songsId",identifier},{"songsName",custom[@"title"] ?: @""},{"composer",custom[@"composer"] ?: @""},{"charter",custom[@"charter"] ?: @""},{"illustrator",custom[@"illustrator"] ?: @""},{"songsDifficulty",[custom[@"difficulty"] description]}})r.put(info,entry.first,r.managedString(entry.second));for(auto pair:std::vector<std::pair<const char*,const char*>>{{"musicAddressableKey","music"},{"chartAddressableKey","chart"},{"illustrationKey","image"}}){NSString*k=[NSString stringWithFormat:@"PM/%@/%s@%lu",identifier,pair.second,(unsigned long)PMContentStore.shared.revision];r.put(info,pair.first,r.managedString(k));}}
-void beforeChart(Runtime&r,P level){if(!levelID.length)return;NSString*path=[[PMContentStore.shared asset:levelID]stringByAppendingPathComponent:@"chart.json"];NSData*d=[NSData dataWithContentsOfFile:path];currentChart=d?[NSJSONSerialization JSONObjectWithData:d options:0 error:nil]:nil;if(!currentChart)throw std::runtime_error("Custom visual chart missing");resourceSubdir=@"";for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"]isEqualToString:levelID])resourceSubdir=s[@"resourceRoot"] ?: @"";}
+void beforeChart(Runtime&r,P level){if(!levelID.length)return;NSString*path=[[PMContentStore.shared asset:levelID]stringByAppendingPathComponent:@"chart.json"];NSData*d=[NSData dataWithContentsOfFile:path];currentChart=d?[NSJSONSerialization JSONObjectWithData:d options:0 error:nil]:nil;if(!currentChart)throw std::runtime_error("Custom visual chart missing");resourceSubdir=@"";for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"]isEqualToString:levelID])resourceSubdir=s[@"resourceRoot"] ?: @"";beforeInformation(r,level);}
 void afterChart(Runtime&r,P level){if(!currentChart)return;
  // Match Android's zOrder/index ranking instead of treating zOrder as a
  // native sortingOrder offset (negative values otherwise fall behind BG).
  NSArray*sourceLines=currentChart[@"judgeLineList"];std::vector<int>ordered;
- inertLineVisuals.clear();rpeIntroRetired=false;
+ inertLineVisuals.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();
  for(NSUInteger i=0;i<sourceLines.count;++i){
   ordered.push_back((int)i);NSDictionary*source=sourceLines[i],*decor=source[@"pmDecor"];
   NSString*texture=decor[@"Texture"];NSArray*alpha=source[@"judgeLineDisappearEvents"];
@@ -507,16 +515,35 @@ for(const auto&entry:extras){P note=entry.first;NSDictionary*source=entry.second
 }
 }
 void beforeInformation(Runtime&r,P level){
- extras.clear();if(!currentChart)return;
- P chart=r.get<P>(level,"chart"),lines=r.get<P>(chart,"judgeLineList");NSArray*data=currentChart[@"judgeLineList"];
+ if(!currentChart){extras.clear();extrasBoundChart=nullptr;return;}
+ P chart=r.get<P>(level,"chart");if(chart==extrasBoundChart)return;
+ P lines=r.get<P>(chart,"judgeLineList");NSArray*data=currentChart[@"judgeLineList"];
  if(r.count(lines)!=(int)data.count)throw std::runtime_error("Custom source/native line count mismatch");
+ // 4.0.3 sorts by floorPosition BEFORE SetCodeForNote and SetInformation.
+ // List.Sort is not stable for simultaneous Tap/Hold notes. Match serialized
+ // values, not list positions, while holdTime is still in chart ticks and
+ // before unified-note modes mutate type/speed/duration.
+ using Key=std::tuple<int,int,float,float,float,float>;
+ std::map<P,NSDictionary*>bound;size_t reordered=0;
  for(int i=0;i<(int)data.count;++i){P line=r.at(lines,i);
-  for(NSString*side in @[@"notesAbove",@"notesBelow"]){P list=r.get<P>(line,side.UTF8String);NSMutableArray*real=[NSMutableArray new];
-   for(NSDictionary*source in data[i][side])if(![source[@"pmFake"] boolValue])[real addObject:source];
+  for(NSString*side in @[@"notesAbove",@"notesBelow"]){
+   P list=r.get<P>(line,side.UTF8String);NSMutableArray*real=[NSMutableArray new];
+   std::map<Key,std::vector<NSDictionary*>>sources;
+   for(NSDictionary*source in data[i][side])if(![source[@"pmFake"]boolValue]){
+    [real addObject:source];Key key{[source[@"type"]intValue],[source[@"time"]intValue],[source[@"positionX"]floatValue],[source[@"holdTime"]floatValue],[source[@"speed"]floatValue],[source[@"floorPosition"]floatValue]};sources[key].push_back(source);
+   }
    if(r.count(list)!=(int)real.count)throw std::runtime_error("Custom source/native note count mismatch");
-   for(int j=0;j<(int)real.count;++j)extras[r.at(list,j)]=real[j];
+   std::map<Key,size_t>used;
+   for(int j=0;j<(int)real.count;++j){P note=r.at(list,j);
+    Key key{r.get<int>(note,"type"),r.get<int>(note,"time"),r.get<float>(note,"positionX"),r.get<float>(note,"holdTime"),r.get<float>(note,"speed"),r.get<float>(note,"floorPosition")};
+    auto found=sources.find(key);size_t&next=used[key];
+    if(found==sources.end()||next>=found->second.size())throw std::runtime_error("Custom note identity mismatch before source binding");
+    NSDictionary*source=found->second[next++];bound[note]=source;if(source!=real[j])++reordered;
+   }
   }
  }
+ extras.swap(bound);extrasBoundChart=chart;
+ log([NSString stringWithFormat:@"Content source binding: notes=%lu reordered=%lu (serialized identity, before mode edits)",(unsigned long)extras.size(),(unsigned long)reordered]);
 }
 
 namespace {
@@ -526,6 +553,16 @@ NSDictionary*eventAt(NSArray*events,double time,double units=1){
  NSUInteger lo=0,hi=events.count;
  while(lo<hi){NSUInteger mid=lo+(hi-lo)/2;if(scalar(events[mid][@"startTime"])*units<=time)lo=mid+1;else hi=mid;}
  return lo?events[lo-1]:nil;
+}
+// Both standard and textured RPE lines use the same native-tick alpha track.
+float sourceLineAlpha(NSArray*events,double now,double bpm){
+ if(!std::isfinite(bpm)||bpm<=0)return 0;
+ double secondsPerTick=60.0/(32.0*bpm);NSDictionary*event=eventAt(events,now,secondsPerTick);
+ if(!event)return 0;
+ double start=scalar(event[@"startTime"])*secondsPerTick,end=scalar(event[@"endTime"])*secondsPerTick;
+ double t=end>start?std::clamp((now-start)/(end-start),0.,1.):1.;
+ double value=scalar(event[@"start"])+(scalar(event[@"end"])-scalar(event[@"start"]))*t;
+ return std::isfinite(value)?float(std::clamp(value,0.,1.)):0.f;
 }
 double trackValue(NSArray*a,double now,double fallback,int channel=-1){NSDictionary*last=eventAt(a,now);return last?visualEvent(last,channel).value(now):fallback;}
 
@@ -574,14 +611,11 @@ NSString*storyTexturePath(NSString*name){
  }
  return match;
 }
-void updateStory(Runtime&r,int index,P line,P nativeRenderer,NSDictionary*d,NSArray*lineAlpha,float now,P progress,Color color,int order){
+void updateStory(Runtime&r,int index,P line,P nativeRenderer,NSDictionary*d,NSArray*lineAlpha,double bpm,float now,P progress,Color color,int order){
  bool hasText=[d[@"textEvents"] count]>0;
  NSString*texture=[d[@"Texture"] isKindOfClass:NSString.class]?d[@"Texture"]:nil;
  if(!hasText&&(!texture.length||[texture isEqualToString:@"line.png"]))return;
- // Converted charts store native alpha times in ticks (120 BPM => 64/s).
- NSDictionary*alphaEvent=eventAt(lineAlpha,now,1./64.);
- color.a=0;
- if(alphaEvent){double a=scalar(alphaEvent[@"startTime"])/64,b=scalar(alphaEvent[@"endTime"])/64,q=b>a?std::clamp((now-a)/(b-a),0.,1.):1;color.a=std::clamp((float)(scalar(alphaEvent[@"start"])+(scalar(alphaEvent[@"end"])-scalar(alphaEvent[@"start"]))*q),0.f,1.f);}
+ color.a=sourceLineAlpha(lineAlpha,now,bpm);
  auto found=storyVisuals.find(index);
  bool hideNative=false;r.call(nativeRenderer,"set_enabled",{"System.Boolean"},{&hideNative});
  if(color.a<=0){
@@ -683,11 +717,19 @@ void visuals(Runtime&r,P progress){
   V3 scale=r.unbox<V3>(r.call(tr,"get_localScale"));if(!lineScales.count(line))lineScales[line]=scale;scale=lineScales[line];scale.x*=trackValue(d[@"scaleXEvents"],now,1);scale.y*=trackValue(d[@"scaleYEvents"],now,1);r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});
   NSString*textureName=[d[@"Texture"] isKindOfClass:NSString.class]?d[@"Texture"]:nil;
   bool story=[d[@"textEvents"] count]>0||(textureName.length&&![textureName isEqualToString:@"line.png"]);
-  Color color=story?Color{1,1,1,1}:r.unbox<Color>(r.call(renderer,"get_color"));NSArray*colors=d[@"colorEvents"];if(colors.count){color.r=trackValue(colors,now,1,0);color.g=trackValue(colors,now,1,1);color.b=trackValue(colors,now,1,2);}
+  Color color=story?Color{1,1,1,1}:r.unbox<Color>(r.call(renderer,"get_color"));
+  if(!story&&[currentChart[@"pmFormat"]isEqualToString:@"RPE"]){
+   float alpha=sourceLineAlpha(data[i][@"judgeLineDisappearEvents"],now,scalar(data[i][@"bpm"],120));
+   if(alpha<=0&&color.a>.001f&&reportedLineAlphaCorrections.size()<12&&reportedLineAlphaCorrections.insert(i).second)
+    log([NSString stringWithFormat:@"Content line alpha corrected after native update: line=%d native=%.3f source=%.3f time=%.3f",i,color.a,alpha,now]);
+   color.a=alpha;
+   bool visible=alpha>0;if(r.unbox<bool>(r.call(renderer,"get_enabled"))!=visible)r.call(renderer,"set_enabled",{"System.Boolean"},{&visible});
+  }
+  NSArray*colors=d[@"colorEvents"];if(colors.count){color.r=trackValue(colors,now,1,0);color.g=trackValue(colors,now,1,1);color.b=trackValue(colors,now,1,2);}
   int order=i<(int)storyOrders.size()?storyOrders[i]:3+i*2;
   r.call(renderer,"set_sortingOrder",{"System.Int32"},{&order});
   r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});
-  updateStory(r,i,line,renderer,d,data[i][@"judgeLineDisappearEvents"],now,progress,color,order);
+  updateStory(r,i,line,renderer,d,data[i][@"judgeLineDisappearEvents"],scalar(data[i][@"bpm"],120),now,progress,color,order);
  }
  // Fake notes are independent SpriteRenderers: never native score/judgement
  // controllers. Only the local 8-second window is allocated.
@@ -918,9 +960,12 @@ void noteMoved(Runtime&r,P controlObject,bool hold){
     V3 zero{0,0,0};r.call(tr,"set_localEulerAngles",{"UnityEngine.Vector3"},{&zero});
     for(int k=0;k<2;++k){
      P child=r.get<P>(controlObject,k?"holdEnd":"holdHead");if(!r.alive(child))continue;
-     P ct=r.call(child,"get_transform");V3 cs=r.unbox<V3>(r.call(ct,"get_localScale"));cs.y=.22f/std::fabs(scale.y);
+     P ct=r.call(child,"get_transform");V3 cs=r.unbox<V3>(r.call(ct,"get_localScale"));cs.y=std::fabs(scale.x)/std::max(.00001f,std::fabs(scale.y));
      r.call(ct,"set_localScale",{"UnityEngine.Vector3"},{&cs});
-     if(k||!r.get<bool>(controlObject,"_holdHeadIsDestroyed")){V3 cp=r.unbox<V3>(r.call(ct,"get_localPosition"));cp.y=bounds.center.y+(k?bounds.extents.y:-bounds.extents.y);r.call(ct,"set_localPosition",{"UnityEngine.Vector3"},{&cp});}
+     if(k||!r.get<bool>(controlObject,"_holdHeadIsDestroyed")){V3 cp=r.unbox<V3>(r.call(ct,"get_localPosition"));cp.y=bounds.center.y+(k?bounds.extents.y:-bounds.extents.y);
+      P cap=r.get<P>(controlObject,k?"_holdEndSpriteRenderer1":"_holdHeadSpriteRenderer");P capSprite=r.alive(cap)?r.call(cap,"get_sprite"):nullptr;
+      if(r.alive(capSprite)){Bounds cb=r.unbox<Bounds>(r.call(capSprite,"get_bounds"));cp.y=rpeHoldCapPosition(cp.y,cb.center.y,cb.extents.y,cs.y,k!=0,false);}
+      r.call(ct,"set_localPosition",{"UnityEngine.Vector3"},{&cp});}
     }
     r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});
    }

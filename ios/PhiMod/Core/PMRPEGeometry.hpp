@@ -42,3 +42,9 @@ inline double rpeFloor(const std::vector<RpeFloorSegment>& segments,double now,d
  if(it!=segments.begin())--it;
  return it->floor+(now-it->start)*it->speed;
 }
+
+// Align cap edges with the body instead of covering a short body's interior.
+// Compact resource packs deliberately keep cap centers at the endpoints.
+inline float rpeHoldCapPosition(float edge,float capCenter,float capExtent,float capScale,bool tail,bool compact){
+ return edge+(compact?0.f:((tail?capExtent:-capExtent)-capCenter)*capScale);
+}

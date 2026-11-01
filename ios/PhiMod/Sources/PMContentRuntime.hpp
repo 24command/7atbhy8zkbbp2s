@@ -3,6 +3,7 @@
 namespace pmcontent {
 void attach(pmbridge::Runtime&);void pulse();void refreshMainlineAccess(pmbridge::Runtime&);
 void chapterPrepare(pmbridge::Runtime&,void*);void chapterReady(pmbridge::Runtime&,void*);
+bool sourceHoldGeometry(pmbridge::Runtime&,void*control);
 bool shortSourceHold(pmbridge::Runtime&,void*note);
 bool customLevel();bool isMainlineChapter(NSString*);bool isMainlineSong(NSString*);void levelBegin(pmbridge::Runtime&);void levelEnd(pmbridge::Runtime&);
 bool assetConstructor(pmbridge::Runtime&,void*self,void*key);bool assetRelease(pmbridge::Runtime&,void*self,bool force=false);

@@ -298,7 +298,7 @@ void onJudgeUpdate(P self,P mi){
   orig<VoidFn>(h::judgeUpdate)(self,mi);
  }
  if(heartbeat)diagf("JudgeControl.Update original returned n=%llu",(unsigned long long)count);
- try{auto &r=R();P progressControl=r.get<P>(self,"progressControl");if(heartbeat)logProgressSnapshot(r,progressControl,"JudgeControl.Update",count);tickGameplay(r,progressControl,"JudgeControl.Update");pmcontent::visuals(r,progressControl);pmfeatures::tick(r,progressControl);}
+ try{auto &r=R();P progressControl=r.get<P>(self,"progressControl");if(heartbeat)logProgressSnapshot(r,progressControl,"JudgeControl.Update",count);tickGameplay(r,progressControl,"JudgeControl.Update");pmfeatures::tick(r,progressControl);}
  catch(const std::exception&e){lastError=std::string("JudgeControl.Update: ")+e.what();diagf("JudgeControl.Update failed: %s",e.what());}
 }
 void onAddressableAudioUpdate(P self,P mi){
@@ -525,6 +525,9 @@ void onNoteManager(P self,P mi){
  if(applying())try{pmmodes::beginFrame(R(),self);}catch(const std::exception&e){fault(e);}
  orig<VoidFn>(h::noteManager)(self,mi);
    if(applying())try{pmmodes::frame(R(),self);}catch(const std::exception&e){fault(e);}
+ // Native NoteUpdateManager.Update calls JudgeLineControl.UpdateInfo for all
+ // lines. Apply custom visibility afterwards, never from a competing Update.
+ try{auto&r=R();pmcontent::visuals(r,r.get<P>(self,"progressControl"));}catch(const std::exception&e){diagf("Post-note-manager visuals failed: %s",e.what());}
 }
 bool onBlocking(P self,V2 point,P*out,P mi){
  if(applying())try{bool handled=false;bool value=pmmodes::blocking(R(),{point.x,point.y},out,handled);if(handled)return value;}catch(const std::exception&e){fault(e);}
