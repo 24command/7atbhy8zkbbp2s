@@ -4,6 +4,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 OUT="${1:-$ROOT/build}"
 SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 mkdir -p "$OUT/PhiMod.framework"
+bash "$ROOT/tools/build_shader_compiler.sh" "$OUT"
 echo "PhiMod build: explicit ImageIO + CoreMedia linkage (2026-10-25)"
 xcrun --sdk iphoneos clang++ \
   -arch arm64 -isysroot "$SDK" -miphoneos-version-min=15.0 \
@@ -22,6 +23,7 @@ xcrun --sdk iphoneos clang++ \
   "$ROOT"/PhiMod/Sources/*.mm \
   "$ROOT"/PhiMod/Vendor/PMZipVendor.cpp \
   "$ROOT"/PhiMod/Vendor/PMVorbisVendor.cpp \
+  "$OUT/compiler-lib/libPMShaderCompiler.a" \
   -I"$ROOT/PhiMod/Vendor" \
   -o "$OUT/PhiMod.framework/PhiMod"
 cp "$ROOT/PhiMod/Resources/Info.plist" "$OUT/PhiMod.framework/Info.plist"
