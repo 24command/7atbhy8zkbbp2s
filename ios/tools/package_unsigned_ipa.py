@@ -62,10 +62,13 @@ def main() -> None:
         raise RuntimeError(f"missing framework executable: {args.framework / 'PhiMod'}")
 
     binary = (args.framework / "PhiMod").read_bytes()
-    if b"PMGameplay-v1" in binary or any(marker not in binary for marker in (b"PMJudgeHook-v1", b"PMGameplay-v2", b"PMGameplay-contract-v2-61")):
-        raise RuntimeError("Stale framework: requires PMGameplay-v2 with all 61 gates; rebuild the new sources first")
+    if b"PMGameplay-v1" in binary or any(marker not in binary for marker in (b"PMJudgeHook-v1", b"PMGameplay-v2", b"PMGameplay-contract-v2-68-ios403")):
+        raise RuntimeError("Stale framework: requires PMGameplay-v2 with all 68 gates; rebuild the new sources first")
 
     tools = Path(__file__).resolve().parent
+    from patch_judge_windows import parse
+    source_unity = find_app(source_payload) / "Frameworks/UnityFramework.framework/UnityFramework"
+    parse(source_unity.read_bytes())  # Version gate: supplied iOS 4.0.3 only.
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="phimod-ipa-", dir=args.output.parent) as temporary:
         stage = Path(temporary)

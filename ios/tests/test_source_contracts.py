@@ -8,11 +8,34 @@ class SourceContracts(unittest.TestCase):
   protocol=(ROOT/'PhiMod/Core/PMHookProtocol.hpp').read_text(encoding='utf-8')
   header=(ROOT/'PhiMod/Core/PMHookManifest.hpp').read_text(encoding='utf-8')
   generated=re.findall(r'\{(0x[0-9a-f]+)u,(0x[0-9a-f]+)u\}',header)
-  self.assertEqual(len(manifest),61);self.assertEqual(len(generated),61)
+  self.assertEqual(len(manifest),68);self.assertEqual(len(generated),68)
   for i,(entry,(site,word)) in enumerate(zip(manifest,generated)):
    self.assertRegex(protocol,r'\b'+re.escape(entry['id'])+'='+str(i)+r',')
    self.assertEqual(int(site,16),entry['rva'])
    self.assertEqual(int(word,16),int.from_bytes(bytes.fromhex(entry['bytes']),'little'))
+ def test_extra_json_extension_tracks_and_resource_copy_are_wired(self):
+  converter=(ROOT/'PhiMod/Sources/PMExtensionTracks.mm').read_text(encoding='utf-8')
+  store=(ROOT/'PhiMod/Sources/PMContentStore.mm').read_text(encoding='utf-8')
+  runtime=(ROOT/'PhiMod/Sources/PMRuntimeFeatures.mm').read_text(encoding='utf-8')
+  android=""  # Android reference is local-only; CI checks the ported source.
+  for tag in ('"F "','"R "','"A "','"K "','"V "'):self.assertIn(tag,converter)
+  for name in ('effects-version.txt','extra.json','targetRange','bezierPoints','easingLeft','easingRight'):self.assertIn(name,android+converter)
+  self.assertIn('preserveExtraResources(folder,e)',store)
+  self.assertIn('for(int i=0;i<33;i++)',runtime)
+  self.assertNotIn('rpeVideo', (ROOT/'PhiMod/Sources/PMSettings.mm').read_text(encoding='utf-8'))
+  self.assertNotIn('rpeShader', (ROOT/'PhiMod/Sources/PMSettings.mm').read_text(encoding='utf-8'))
+ def test_mainline_full_unlock_is_settings_driven_and_guarded_to_official_chapters(self):
+  protocol=(ROOT/'PhiMod/Core/PMHookProtocol.hpp').read_text(encoding='utf-8')
+  hooks=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf-8')
+  unlock=(ROOT/'PhiMod/Sources/PMUnlockRuntime.mm').read_text(encoding='utf-8')
+  content=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text(encoding='utf-8')
+  self.assertIn('mainlineCheckUnlock=64',protocol);self.assertIn('mainlineApplyMapCover=67',protocol)
+  for name in ('CheckSongUnlock','Chapter9Phase1Control.Start','Chapter9Phase1Control.ToPhase2','Chapter9Phase2Control.ApplyMapCover'):
+   self.assertIn(name,(ROOT/'tools/gameplay_hook_manifest.json').read_text(encoding='utf-8'))
+  self.assertIn('pmcontent::isMainlineSong(identifier)',hooks)
+  self.assertIn('isMainlineChapter(NSString*code)',content)
+  self.assertIn('refreshMainlineAccess',content+unlock)
+  self.assertIn('"mainlineUnlock"', (ROOT/'PhiMod/Sources/PMSceneUI.mm').read_text(encoding='utf-8'))
  def test_no_declared_but_missing_ui_implementation(self):
   header=(ROOT/'PhiMod/Sources/PMSceneUI.hpp').read_text(encoding='utf-8')
   impl=(ROOT/'PhiMod/Sources/PMSceneUI.mm').read_text(encoding='utf-8')
@@ -90,7 +113,7 @@ class SourceContracts(unittest.TestCase):
   self.assertIn('bool readAccuracy(P self,float &outScore,int &outTotal)',hook)
   self.assertIn('orig<VoidFn>(h::scoreUpdate)(self,mi);',hook)
   score=hook[hook.index('void onScoreUpdate('):hook.index('P onResultInfo(')]
-  self.assertLess(score.index('orig<VoidFn>(h::scoreUpdate)(self,mi);'),score.index('readAccuracy(self,value,total)'))
+  self.assertLess(score.index('orig<VoidFn>(h::scoreUpdate)(self,mi);'),score.index('readAccuracy(self,accuracy,total)'))
   self.assertIn('scoreOfNote',score);self.assertIn('_percent',score)
   self.assertNotIn('fault(e)',score)
   self.assertIn('orig<VoidFn>(h::lifeStart)(self,mi);',hook)
@@ -126,9 +149,12 @@ class SourceContracts(unittest.TestCase):
   self.assertIn('[backend[@"unifiedReady"] boolValue]',s)
   self.assertIn('preview does not apply',s)
   ui=(ROOT/'PhiMod/Sources/PhiModBootstrap.mm').read_text(encoding='utf-8')
-  self.assertNotIn('选曲快捷按钮（待接入）',ui)
-  self.assertNotIn('隐藏 Combo',ui)
-  self.assertIn('Accuracy（去除连击分）',ui)
+  self.assertIn('addSetting:@"accuracy"',ui)
+  self.assertIn('addSetting:@"noCombo"',ui)
+  scene=(ROOT/'PhiMod/Sources/PMSceneUI.mm').read_text(encoding='utf-8')
+  self.assertIn('key:@"accuracy"',scene);self.assertIn('key:@"noCombo"',scene)
+  core=(ROOT/'PhiMod/Core/PMGameplayCore.hpp').read_text(encoding='utf-8')
+  self.assertIn('accuracyDisplay',core);self.assertIn('noComboScore',core)
  def test_hold_fx_runs_before_native_move(self):
   s=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf-8')
   f=s[s.index('void onHoldMove('):s.index('template<h::Index i>void onNoteMove(')]
@@ -170,8 +196,8 @@ class SourceContracts(unittest.TestCase):
   self.assertIn('pendingAction(playing||pmhp::failing()||hpLost',hook)
   self.assertIn('attempt->acknowledgeAction(action)',hook)
   self.assertNotIn('lastTickFrame',hook)
-  self.assertIn('bool inChallenge=r.get<bool>(progressControl,"_inChallengeMode")',hook)
-  self.assertIn('pmhp::finishChallenge(r,progressControl)',hook)
+  self.assertIn('HP failure ready; returning to SongSelector',hook)
+  self.assertIn('pmhp::finish(r)',hook)
   self.assertIn('if(options.hpEnabled)pmhp::beginAttempt(attempt->hp())',hook)
  def test_hold_array_edit_is_scoped_and_no_android_layout(self):
   bridge=(ROOT/'PhiMod/Sources/PMIL2CPP.hpp').read_text(encoding='utf-8')
@@ -188,15 +214,15 @@ class SourceContracts(unittest.TestCase):
   manifest=json.loads((ROOT/'tools/gameplay_hook_manifest.json').read_text(encoding='utf-8'))
   values=hook[hook.index('P callbacks[h::Count]'):hook.index('auto slots=',hook.index('P callbacks[h::Count]'))]
   self.assertEqual(values.count('reinterpret_cast<P>'),len(manifest))
-  self.assertIn('PMGameplay-contract-v2-'+str(len(manifest)),hook)
+  self.assertIn('PMGameplay-contract-v2-'+str(len(manifest))+'-ios403',hook)
   package=(ROOT/'tools/package_unsigned_ipa.py').read_text(encoding='utf-8')
-  self.assertIn('PMGameplay-contract-v2-'+str(len(manifest)),package)
+  self.assertIn('PMGameplay-contract-v2-'+str(len(manifest))+'-ios403',package)
  def test_practice_rate_segment_hooks_and_android_style_mode_categories(self):
   practice=(ROOT/'PhiMod/Sources/PMPractice.mm').read_text(encoding='utf-8')
   hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf-8')
   ui=(ROOT/'PhiMod/Sources/PhiModBootstrap.mm').read_text(encoding='utf-8')
   settings=(ROOT/'PhiMod/Sources/PMSettings.mm').read_text(encoding='utf-8')
-  self.assertIn('PMGameplay-contract-v2-61',hook)
+  self.assertIn('PMGameplay-contract-v2-68-ios403',hook)
   self.assertIn('audioUpdate=55', (ROOT/'PhiMod/Core/PMHookProtocol.hpp').read_text(encoding='utf-8'))
   self.assertIn('lineCreateNote=56', (ROOT/'PhiMod/Core/PMHookProtocol.hpp').read_text(encoding='utf-8'))
   self.assertIn('AddressableAudioSource.Update', (ROOT/'tools/gameplay_hook_manifest.json').read_text(encoding='utf-8'))
@@ -252,7 +278,7 @@ class SourceContracts(unittest.TestCase):
  def test_packager_rejects_old_framework_before_copying_payload(self):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp);(root/'source/Payload').mkdir(parents=True);(root/'PhiMod.framework').mkdir()
-   for marker in (b'PMGameplay-v1',b'PMGameplay-v2',b'PMGameplay-v2\0PMGameplay-contract-v2-45'):
+   for marker in (b'PMJudgeHook-v1\0PMGameplay-v2\0PMGameplay-contract-v2-68\0',b'PMGameplay-v1',b'PMGameplay-v2',b'PMGameplay-v2\0PMGameplay-contract-v2-68-ios403'):
     (root/'PhiMod.framework/PhiMod').write_bytes(marker)
     result=subprocess.run([sys.executable,str(ROOT/'tools/package_unsigned_ipa.py'),'--source',str(root/'source'),'--framework',str(root/'PhiMod.framework'),'--output',str(root/'out.ipa')],capture_output=True,text=True,encoding="utf-8",errors="replace")
     self.assertNotEqual(result.returncode,0);self.assertIn('Stale framework',result.stderr);self.assertFalse((root/'out.ipa').exists())
@@ -285,6 +311,182 @@ class SourceContracts(unittest.TestCase):
   for name in ('PMZipVendor.cpp','PMVorbisVendor.cpp','AVFoundation','UniformTypeIdentifiers'):self.assertIn(name,build)
   workflow=(ROOT/'.github/workflows/build-ios.yml').read_text(encoding='utf-8')
   self.assertIn('run_content_tests.sh',workflow)
+ def test_content_audio_uses_retained_ios_overload_and_readback(self):
+  source=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text(encoding='utf-8')
+  self.assertNotIn('"Copy",{"System.IntPtr","System.Single[]"',source)
+  self.assertIn('"copy_from_unmanaged"',source)
+  self.assertIn('{"System.IntPtr","System.Int32","System.Array","System.Int32"},{&ptr,&zero,data,&count}',source)
+  self.assertIn('validatePcmCopy(r);',source)
+  self.assertIn('r.unbox<float>(r.arrayAt(data,i))!=samples[i]',source)
+  self.assertIn('catch(...){r.gchandle_free(chunkRoot);throw;}',source)
+  self.assertIn('"SetData",{"System.Single[]","System.Int32"}',source)
+ def test_android_style_navigation_and_practice_entries(self):
+  source=(ROOT/'PhiMod/Sources/PMOfficialUI.mm').read_text(encoding='utf-8')
+  for item in ('@"谱库",@"章节",@"判定",@"模式",@"设置"','.267949','52.0/96','UIAccessibilityIsReduceMotionEnabled','accessibilityActivate'):
+   self.assertIn(item,source)
+  editor=(ROOT/'PhiMod/Sources/PMSceneUI.mm').read_text(encoding='utf-8')
+  for item in ('PMOfficialCategories','modeCard:','PMOfficialToggle','chooseMode:','practiceWhiteUi','practicePosition','copyDiagnostics','self.category=3'):
+   self.assertIn(item,editor)
+  content=(ROOT/'PhiMod/Sources/PMContentUI.mm').read_text(encoding='utf-8')
+  self.assertIn('PMContentCell',content)
+  self.assertIn('UIDocumentPickerViewController',content)
+ def test_diagnostics_calls_are_declared(self):
+  header=(ROOT/'PhiMod/Sources/PMDiagnostics.h').read_text(encoding='utf-8')
+  declarations=set(re.findall(r'\b(PMDiagnostics\w+)\s*\(',header))
+  for path in (ROOT/'PhiMod/Sources').glob('*.mm'):
+   if path.name=='PMDiagnostics.mm':continue  # Private implementation helpers.
+   calls=set(re.findall(r'\b(PMDiagnostics\w+)\s*\(',path.read_text(encoding='utf-8')))
+   self.assertFalse(calls-declarations,f'{path.name}: undeclared diagnostics calls {calls-declarations}')
+ def test_literal_overload_audit_rejects_stripped_method(self):
+  sys.path.insert(0,str(ROOT/'tools'))
+  from verify_gameplay_contracts import verify_sources
+  dump = '''// Namespace: System
+public struct IntPtr // TypeDefIndex: 1
+{
+}
+// Namespace: System
+public abstract class Array // TypeDefIndex: 2
+{
+}
+// Namespace: System.Runtime.InteropServices
+public static class Marshal // TypeDefIndex: 3
+{
+ // RVA: 0x100 Offset: 0x100 VA: 0x100
+ internal static void copy_from_unmanaged(IntPtr source, int startIndex, Array destination, int length) { }
+}
+'''
+  good='r.resolve(r.type("System.Runtime.InteropServices","Marshal"),"copy_from_unmanaged",{"System.IntPtr","System.Int32","System.Array","System.Int32"},true);'
+  self.assertGreater(verify_sources(dump,[good]),0)
+  with self.assertRaisesRegex(AssertionError,'Missing literal runtime overload'):
+   verify_sources(dump,['r.resolve(r.type("System.Runtime.InteropServices","Marshal"),"Copy",{"System.IntPtr","System.Single[]","System.Int32","System.Int32"},true);'])
+  with self.assertRaisesRegex(AssertionError,'Missing literal runtime overload'):
+   verify_sources(dump,[good.replace(',true)',',false)')])
+ def test_hp_failure_exits_without_a_result_coroutine(self):
+  s=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf-8')
+  section=s[s.index('}else if(action==phimod::Action::TrackLost'):s.index('void onProgressUpdate(')]
+  self.assertIn('r.string_new("SongSelector")',section)
+  self.assertIn('"LevelBreak"',section)
+  self.assertNotIn('"LevelOver"',section)
+  self.assertNotIn('"StartCoroutine"',section)
+  self.assertIn('attempt->acknowledgeAction(action)',section)
+  self.assertIn('guard.store(true)',section)
+ def test_reference_writes_use_direct_pointers_and_readback(self):
+  s=(ROOT/'PhiMod/Sources/PMIL2CPP.hpp').read_text(encoding='utf-8')
+  self.assertIn('field_set_value(obj,f,value);',s)
+  self.assertIn('field_static_set_value(f,value);',s)
+  self.assertIn('else field_set_value(obj,f,&value);',s)
+  self.assertIn('else field_static_set_value(f,&value);',s)
+  self.assertIn('Instance reference readback failed:',s)
+  self.assertIn('Static reference readback failed:',s)
+  content=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text(encoding='utf-8')
+  self.assertIn('Content reference write preflight passed',content)
+  self.assertIn('Content LoadScene begin:',content)
+  self.assertIn('Chapter is empty;',content)
+ def test_picker_dismisses_before_processing_copied_files(self):
+  s=(ROOT/'PhiMod/Sources/PMContentUI.mm').read_text(encoding='utf-8')
+  method=s[s.index('- (void)importFiles'):s.index('- (void)export:')]
+  self.assertIn('asCopy:YES',method)
+  self.assertNotIn('asCopy:NO',method)
+  self.assertIn('dismissViewControllerAnimated:YES completion:start',method)
+  self.assertIn('documentPickerWasCancelled:',method)
+  self.assertIn('Content picker selected',method)
+  self.assertIn('Content import begin:',method)
+  self.assertIn('self.busy=NO',method)
+ def test_texture_image_conversion_uses_managed_png_bytes(self):
+  s=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text(encoding='utf-8')
+  image=s[s.index('P image('):s.index('P audio(')]
+  self.assertIn('UIImagePNGRepresentation(img)',image)
+  self.assertIn('r.array_new(r.type("System","Byte")',image)
+  self.assertIn('copy_from_unmanaged',image)
+  self.assertIn('"ImageConversion"),"LoadImage"',image)
+  self.assertIn('"UnityEngine.Texture2D","System.Byte[]","System.Boolean"',image)
+  self.assertIn('r.call(texture,"get_width")',image);self.assertIn('r.call(texture,"get_height")',image)
+  self.assertNotIn('LoadRawTextureData',image)
+ def test_custom_chapter_cover_fallback_uses_loaded_sprite(self):
+  s=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text(encoding='utf-8')
+  self.assertIn('applyCachedChapterCover',s);self.assertIn('syncChapterCoverFallbacks',s)
+  self.assertIn('set_sprite',s);self.assertIn('chapterSelectorRoot=r.gchandle_new(self,false)',s)
+  self.assertIn('syncChapterCoverFallbacks(r);',s[s.index('bool assetConstructor('):s.index('bool assetRelease(')])
+ def test_practice_entry_suppresses_notes_until_range_reset(self):
+  practice=(ROOT/'PhiMod/Sources/PMPractice.mm').read_text(encoding='utf-8')
+  self.assertIn('bool entryLoading(Runtime&,P){return segment&&entryPending;}',practice)
+  self.assertIn('get_activeSelf',practice)
+  self.assertIn('skippedNotes=pmpracticepreview::reset',practice)
+  hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf-8')
+  manager=hook[hook.index('void onNoteManager('):hook.index('bool onBlocking(')]
+  judge=hook[hook.index('void onJudgeUpdate('):hook.index('void onAddressableAudioUpdate(')]
+  self.assertLess(manager.index('pmpractice::entryLoading'),manager.index('orig<VoidFn>(h::noteManager)'))
+  self.assertLess(judge.index('pmpractice::entryLoading'),judge.index('orig<VoidFn>(h::judgeUpdate)'))
+ def test_practice_skip_counts_initial_notes_as_misses(self):
+  source=(ROOT/'PhiMod/Sources/PMPracticePreview.mm').read_text(encoding='utf-8')
+  self.assertIn('if(skipped)++skippedCount;',source)
+  self.assertIn('r.put(n.note,"isJudged",skipped)',source)
+  practice=(ROOT/'PhiMod/Sources/PMPractice.mm').read_text(encoding='utf-8')
+  self.assertIn('r.put(score,"miss",skippedNotes)',practice)
+  self.assertIn('skippedNotes==0',practice)
+ def test_practice_transport_tap_activates_on_release(self):
+  source=(ROOT/'PhiMod/Sources/PMPracticeControls.mm').read_text(encoding='utf-8')
+  self.assertIn('transportAt:',source);self.assertIn('- (void)touchesEnded:',source)
+  self.assertIn('[self activateTransport:pending]',source)
+  self.assertIn('self.pressedTransport=-1',source)
+
+ def test_content_batch_management_and_crop_entrypoints(self):
+  ui=(ROOT/'PhiMod/Sources/PMContentUI.mm').read_text(encoding='utf-8')
+  store=(ROOT/'PhiMod/Sources/PMContentStore.mm').read_text(encoding='utf-8')
+  header=(ROOT/'PhiMod/Sources/PMContentStore.h').read_text(encoding='utf-8')
+  self.assertIn('PMImageCropController.h',ui);self.assertIn('toggleBulkSelection',ui);self.assertIn('removeSelected',ui);self.assertIn('exportSelected',ui)
+  self.assertIn('replaceImageData',ui);self.assertIn('removeSongs:ids',ui);self.assertIn('- (BOOL)removeSongs:',header);self.assertIn('- (BOOL)replaceImageData:',header)
+  self.assertIn('dismissViewControllerAnimated:YES completion:start',ui)
+  self.assertIn('if(ok)@synchronized(self){self.revision++;}',store)
+ def test_dynamic_large_texture_preference_has_runtime_gate(self):
+  settings=(ROOT/'PhiMod/Sources/PMSettings.mm').read_text(encoding='utf-8')
+  runtime=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text(encoding='utf-8')
+  ui=(ROOT/'PhiMod/Sources/PhiModBootstrap.mm').read_text(encoding='utf-8')
+  self.assertIn('dynamicLargeTextures',settings);self.assertIn('PMSettingBool("dynamicLargeTextures")',runtime)
+  image=runtime[runtime.index('P image('):runtime.index('P audio(')]
+  self.assertIn('4096.0:2048.0',image);self.assertIn('64.0:32.0',image)
+  self.assertIn('addSetting:@"dynamicLargeTextures"',ui)
+ def test_resource_pack_entry_is_safe_and_explicit(self):
+  ui=(ROOT/'PhiMod/Sources/PhiModBootstrap.mm').read_text(encoding='utf-8')
+  picker=(ROOT/'PhiMod/Sources/PMResourcePackUI.mm').read_text(encoding='utf-8')
+  self.assertIn('PMResourcePackUI.h',ui);self.assertIn('openResourcePack',ui)
+  self.assertIn('PMExtractArchive(temp,extract,&error)',picker)
+  for item in ('click.png','drag.png','flick.png','hold.png'):self.assertIn(item,picker)
+  self.assertIn('128ull*1024*1024',picker);self.assertIn('runtime application is gated separately',picker)
+  self.assertIn('dispatch_async(self.worker',picker);self.assertIn('startAccessingSecurityScopedResource',picker);self.assertIn('picker.presentingViewController',picker)
+ def test_custom_drawer_visibility_is_persisted_and_compacted(self):
+  settings=(ROOT/'PhiMod/Sources/PMSettings.mm').read_text(encoding='utf-8');scene=(ROOT/'PhiMod/Sources/PMSceneUI.mm').read_text(encoding='utf-8');ui=(ROOT/'PhiMod/Sources/PhiModBootstrap.mm').read_text(encoding='utf-8')
+  for key in ('shortcutAutoPlay','shortcutNoise','shortcutUnified','shortcutChallenge','shortcutHp','shortcutFullScreen','shortcutAccuracy'):self.assertIn(key,settings);self.assertIn(key,ui)
+  self.assertIn('shortcutVisible(NSDictionary*s,int i)',scene);self.assertIn('activeIndices',scene);self.assertIn('bool supported=shortcutVisible(s,i)',scene)
+ def test_release_resource_uses_custom_cleanup_and_preserves_new_owners(self):
+  s=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text(encoding='utf-8')
+  release=s[s.index('bool assetRelease('):s.index('void levelInfo(')]
+  self.assertIn('if(!force&&n>1)',release)
+  self.assertIn('"get_Item",{"System.String"},{key})==self',release)
+  self.assertIn('if(it!=refs.end())',release)
+  hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf-8')
+  self.assertIn('pmcontent::assetRelease(R(),self,true)',hook)
+  self.assertIn('orig<VoidFn>(h::assetReleaseResource)(self,mi)',hook)
+  self.assertIn('reinterpret_cast<P>(onAssetReleaseResource)',hook)
+ def test_chapters_are_hidden_by_cards_not_destroying_songs(self):
+  s=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text(encoding='utf-8')
+  apply=s[s.index('void apply('):s.index('P image(')]
+  self.assertNotIn('hiddenChapters',apply)
+  prepare=s[s.index('void chapterPrepare('):s.index('void chapterReady(')]
+  for contract in ('hiddenChapters','GetComponentsInChildren','Instantiate','SetSiblingIndex','_chapterInfos','coverAssetCode','coverBlurAssetCode'):
+   self.assertIn(contract,prepare)
+  self.assertLess(prepare.index('Instantiate'),prepare.index('for(P card:original){bool visible='))
+  hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf-8')
+  start=hook[hook.index('void onChapterStart('):hook.index('P onSongInfo(')]
+  self.assertLess(start.index('pmcontent::chapterPrepare'),start.index('orig<VoidFn>'))
+  self.assertLess(start.index('orig<VoidFn>'),start.index('pmcontent::chapterReady'))
+ def test_native_chart_does_not_leak_visual_metadata(self):
+  s=(ROOT/'PhiMod/Sources/PMChartConvert.mm').read_text(encoding='utf-8')
+  native=s[s.index('NSDictionary*PMNativeChart('):]
+  self.assertIn('chart[@"blockAreaList"] ?: @[]',native)
+  self.assertNotIn('[chart mutableCopy]',native)
+  self.assertNotIn('[line mutableCopy]',native)
+  self.assertIn('if(![n[@"pmFake"] boolValue])',native)
  def test_bridge_checks_value_type_and_size(self):
   s=(ROOT/'PhiMod/Sources/PMIL2CPP.hpp').read_text(encoding='utf-8')
   self.assertIn('class_value_size(c,&alignment)!=sizeof(T)',s)

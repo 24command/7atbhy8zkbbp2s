@@ -2,463 +2,463 @@
   {
     "id": "levelAwake",
     "name": "LevelControl.Awake",
-    "rva": 22547576,
+    "rva": 22550944,
     "args": "",
     "bytes": "ff0303d1",
-    "instruction": "SUB             SP, SP, #0xC0"
+    "instruction": "sub sp, sp, #0xc0"
   },
   {
     "id": "levelDestroy",
     "name": "LevelControl.OnDestroy",
-    "rva": 22548376,
+    "rva": 22551744,
     "args": "",
     "bytes": "f44fbea9",
-    "instruction": "STP             X20, X19, [SP,#-0x10+var_10]!"
+    "instruction": "stp x20, x19, [sp, #-0x20]!"
   },
   {
     "id": "progressStart",
     "name": "ProgressControl.Start",
-    "rva": 22619176,
+    "rva": 22622616,
     "args": "",
     "bytes": "f657bda9",
-    "instruction": "STP             X22, X21, [SP,#-0x10+var_20]!"
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
   },
   {
     "id": "progressUpdate",
     "name": "ProgressControl.Update",
-    "rva": 22619752,
+    "rva": 22623192,
     "args": "",
     "bytes": "e923bc6d",
-    "instruction": "STP             D9, D8, [SP,#-0x10+var_30]!"
+    "instruction": "stp d9, d8, [sp, #-0x40]!"
   },
   {
     "id": "miss",
     "name": "ScoreControl.Miss",
-    "rva": 22626968,
+    "rva": 22630408,
     "args": "float noteCode",
     "bytes": "e923bd6d",
-    "instruction": "STP             D9, D8, [SP,#-0x10+var_20]!"
+    "instruction": "stp d9, d8, [sp, #-0x30]!"
   },
   {
     "id": "bad",
     "name": "ScoreControl.Bad",
-    "rva": 22627200,
+    "rva": 22630640,
     "args": "float noteCode, float judgeTime",
     "bytes": "e923bd6d",
-    "instruction": "STP             D9, D8, [SP,#-0x10+var_20]!"
+    "instruction": "stp d9, d8, [sp, #-0x30]!"
   },
   {
     "id": "good",
     "name": "ScoreControl.Good",
-    "rva": 22627452,
+    "rva": 22630892,
     "args": "float noteCode, float judgeTime, Vector3 judgeTransform, bool isHold",
     "bytes": "ed33ba6d",
-    "instruction": "STP             D13, D12, [SP,#-0x10+var_50]!"
+    "instruction": "stp d13, d12, [sp, #-0x60]!"
   },
   {
     "id": "perfect",
     "name": "ScoreControl.Perfect",
-    "rva": 22627960,
+    "rva": 22631400,
     "args": "float noteCode, float judgeTime, Vector3 judgeTransform, bool isHold",
     "bytes": "ed33ba6d",
-    "instruction": "STP             D13, D12, [SP,#-0x10+var_50]!"
+    "instruction": "stp d13, d12, [sp, #-0x60]!"
   },
   {
     "id": "scoreUpdate",
     "name": "ScoreControl.Update",
-    "rva": 22628424,
+    "rva": 22631864,
     "args": "",
     "bytes": "ff0301d1",
-    "instruction": "SUB             SP, SP, #0x40"
+    "instruction": "sub sp, sp, #0x40"
   },
   {
     "id": "resultInfo",
     "name": "ScoreControl.GetLevelResultInfo",
-    "rva": 22622096,
+    "rva": 22625536,
     "args": "",
     "bytes": "f657bda9",
-    "instruction": "STP             X22, X21, [SP,#-0x10+var_20]!"
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
   },
   {
     "id": "click",
     "name": "ClickControl.Judge",
-    "rva": 22603164,
+    "rva": 22606604,
     "args": "",
     "bytes": "eb2bbc6d",
-    "instruction": "STP             D11, D10, [SP,#-0x10+var_30]!"
+    "instruction": "stp d11, d10, [sp, #-0x40]!"
   },
   {
     "id": "drag",
     "name": "DragControl.Judge",
-    "rva": 22605284,
+    "rva": 22608724,
     "args": "",
     "bytes": "e923bd6d",
-    "instruction": "STP             D9, D8, [SP,#-0x10+var_20]!"
+    "instruction": "stp d9, d8, [sp, #-0x30]!"
   },
   {
     "id": "hold",
     "name": "HoldControl.Judge",
-    "rva": 22610648,
+    "rva": 22614088,
     "args": "",
     "bytes": "e923bc6d",
-    "instruction": "STP             D9, D8, [SP,#-0x10+var_30]!"
+    "instruction": "stp d9, d8, [sp, #-0x40]!"
   },
   {
     "id": "flick",
     "name": "FlickControl.Judge",
-    "rva": 22607168,
+    "rva": 22610608,
     "args": "",
     "bytes": "e923bd6d",
-    "instruction": "STP             D9, D8, [SP,#-0x10+var_20]!"
+    "instruction": "stp d9, d8, [sp, #-0x30]!"
   },
   {
     "id": "record",
     "name": "LevelRecord.UpdateRecord",
-    "rva": 21635760,
+    "rva": 21636176,
     "args": "LevelResultInfo levelResult",
     "bytes": "f85fbca9",
-    "instruction": "STP             X24, X23, [SP,#-0x10+var_30]!"
+    "instruction": "stp x24, x23, [sp, #-0x40]!"
   },
   {
     "id": "setRecord",
     "name": "GameInformation.SetSongRecord",
-    "rva": 21652928,
+    "rva": 21653384,
     "args": "string songsId, string songsLevel, LevelRecord record",
     "bytes": "f85fbca9",
-    "instruction": "STP             X24, X23, [SP,#-0x10+var_30]!"
+    "instruction": "stp x24, x23, [sp, #-0x40]!"
   },
   {
     "id": "ranking",
     "name": "GameInformation.UpdateRankingScore",
-    "rva": 21653472,
+    "rva": 21653928,
     "args": "",
     "bytes": "ff4301d1",
-    "instruction": "SUB             SP, SP, #0x50"
+    "instruction": "sub sp, sp, #0x50"
   },
   {
     "id": "resultStart",
     "name": "LevelOverControl.Start",
-    "rva": 22566900,
+    "rva": 22570268,
     "args": "",
     "bytes": "f657bda9",
-    "instruction": "STP             X22, X21, [SP,#-0x10+var_20]!"
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
   },
   {
     "id": "resultMove",
     "name": "LevelOverControl.<Start>d__43.MoveNext",
-    "rva": 22598344,
+    "rva": 22601784,
     "args": "",
     "bytes": "fa67bba9",
-    "instruction": "STP             X26, X25, [SP,#-0x10+var_40]!"
+    "instruction": "stp x26, x25, [sp, #-0x50]!"
   },
   {
     "id": "selector",
     "name": "SongSelector.Update",
-    "rva": 22764048,
+    "rva": 22767712,
     "args": "",
     "bytes": "eb2bb86d",
-    "instruction": "STP             D11, D10, [SP,#-0x80]!"
+    "instruction": "stp d11, d10, [sp, #-0x80]!"
   },
   {
     "id": "selectorOff",
     "name": "SongSelector.OnDisable",
-    "rva": 22747724,
+    "rva": 22751388,
     "args": "",
     "bytes": "f85fbca9",
-    "instruction": "STP             X24, X23, [SP,#-0x10+var_30]!"
+    "instruction": "stp x24, x23, [sp, #-0x40]!"
   },
   {
     "id": "setting",
     "name": "Setting.Update",
-    "rva": 22689888,
+    "rva": 22693328,
     "args": "",
     "bytes": "f44fbea9",
-    "instruction": "STP             X20, X19, [SP,#-0x10+var_10]!"
+    "instruction": "stp x20, x19, [sp, #-0x20]!"
   },
   {
     "id": "settingTab",
     "name": "Setting.ChangeTab",
-    "rva": 22692848,
+    "rva": 22696288,
     "args": "int index",
     "bytes": "e923bb6d",
-    "instruction": "STP             D9, D8, [SP,#-0x10+var_40]!"
+    "instruction": "stp d9, d8, [sp, #-0x50]!"
   },
   {
     "id": "settingBack",
     "name": "Setting.Back",
-    "rva": 22692136,
+    "rva": 22695576,
     "args": "",
     "bytes": "f85fbca9",
-    "instruction": "STP             X24, X23, [SP,#-0x10+var_30]!"
+    "instruction": "stp x24, x23, [sp, #-0x40]!"
   },
   {
     "id": "button",
     "name": "Button.Press",
-    "rva": 61089304,
+    "rva": 61115580,
     "args": "",
     "bytes": "f44fbea9",
-    "instruction": "STP             X20, X19, [SP,#-0x10+var_10]!"
+    "instruction": "stp x20, x19, [sp, #-0x20]!"
   },
   {
     "id": "checkNote",
     "name": "JudgeControl.CheckNote",
-    "rva": 22529400,
+    "rva": 22532776,
     "args": "int fingerIndex",
     "bytes": "ed33b76d",
-    "instruction": "STP             D13, D12, [SP,#-0x10+var_80]!"
+    "instruction": "stp d13, d12, [sp, #-0x90]!"
   },
   {
     "id": "checkFlick",
     "name": "JudgeControl.CheckFlick",
-    "rva": 22531304,
+    "rva": 22534680,
     "args": "int fingerIndex",
     "bytes": "ed33b76d",
-    "instruction": "STP             D13, D12, [SP,#-0x10+var_80]!"
+    "instruction": "stp d13, d12, [sp, #-0x90]!"
   },
   {
     "id": "DeleteKey",
     "name": "SaveManagement.DeleteKey",
-    "rva": 21692624,
+    "rva": 21693080,
     "args": "string keyName",
     "bytes": "f657bda9",
-    "instruction": "STP             X22, X21, [SP,#-0x10+var_20]!"
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
   },
   {
     "id": "SaveBool",
     "name": "SaveManagement.SaveBool",
-    "rva": 21692828,
+    "rva": 21693284,
     "args": "string keyName, bool value",
     "bytes": "ff0301d1",
-    "instruction": "SUB             SP, SP, #0x40"
+    "instruction": "sub sp, sp, #0x40"
   },
   {
     "id": "SaveInt",
     "name": "SaveManagement.SaveInt",
-    "rva": 21693060,
+    "rva": 21693516,
     "args": "string keyName, int value",
     "bytes": "ff0301d1",
-    "instruction": "SUB             SP, SP, #0x40"
+    "instruction": "sub sp, sp, #0x40"
   },
   {
     "id": "SaveFloat",
     "name": "SaveManagement.SaveFloat",
-    "rva": 21693208,
+    "rva": 21693664,
     "args": "string keyName, float value",
     "bytes": "ff0301d1",
-    "instruction": "SUB             SP, SP, #0x40"
+    "instruction": "sub sp, sp, #0x40"
   },
   {
     "id": "SaveDate",
     "name": "SaveManagement.SaveDate",
-    "rva": 21693452,
+    "rva": 21693908,
     "args": "string keyName, DateTime value",
     "bytes": "ff0301d1",
-    "instruction": "SUB             SP, SP, #0x40"
+    "instruction": "sub sp, sp, #0x40"
   },
   {
     "id": "SaveString",
     "name": "SaveManagement.SaveString",
-    "rva": 21693660,
+    "rva": 21694116,
     "args": "string keyName, string value",
     "bytes": "f657bda9",
-    "instruction": "STP             X22, X21, [SP,#-0x10+var_20]!"
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
   },
   {
     "id": "LegacySaveBool",
     "name": "SaveManagement.LegacySaveBool",
-    "rva": 21698000,
+    "rva": 21698456,
     "args": "string keyName, bool value",
     "bytes": "ff0301d1",
-    "instruction": "SUB             SP, SP, #0x40"
+    "instruction": "sub sp, sp, #0x40"
   },
   {
     "id": "LegacySaveInt",
     "name": "SaveManagement.LegacySaveInt",
-    "rva": 21698232,
+    "rva": 21698688,
     "args": "string keyName, int value",
     "bytes": "ff0301d1",
-    "instruction": "SUB             SP, SP, #0x40"
+    "instruction": "sub sp, sp, #0x40"
   },
   {
     "id": "LegacySaveFloat",
     "name": "SaveManagement.LegacySaveFloat",
-    "rva": 21698380,
+    "rva": 21698836,
     "args": "string keyName, float value",
     "bytes": "ff0301d1",
-    "instruction": "SUB             SP, SP, #0x40"
+    "instruction": "sub sp, sp, #0x40"
   },
   {
     "id": "LegacySaveString",
     "name": "SaveManagement.LegacySaveString",
-    "rva": 21698528,
+    "rva": 21698984,
     "args": "string keyName, string value",
     "bytes": "f657bda9",
-    "instruction": "STP             X22, X21, [SP,#-0x10+var_20]!"
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
   },
   {
     "id": "buttonClick",
     "name": "Button.OnPointerClick",
     "args": "PointerEventData eventData",
-    "rva": 61089460,
+    "rva": 61115736,
     "bytes": "f44fbea9",
-    "instruction": "Audited position-independent stack prologue"
+    "instruction": "stp x20, x19, [sp, #-0x20]!"
   },
   {
     "id": "buttonSubmit",
     "name": "Button.OnSubmit",
     "args": "BaseEventData eventData",
-    "rva": 61089628,
+    "rva": 61115904,
     "bytes": "f657bda9",
-    "instruction": "Audited position-independent stack prologue"
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
   },
   {
     "id": "lifeStart",
     "name": "SecretChallengeLifeBar.Start",
     "args": "",
-    "rva": 21857720,
+    "rva": 21861640,
     "bytes": "f657bda9",
-    "instruction": "Audited position-independent stack prologue"
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
   },
   {
     "id": "lifeNormalized",
     "name": "SecretChallengeLifeBar.GetNormalizedLife",
     "args": "GameInformation gameInformation",
-    "rva": 21859048,
+    "rva": 21862968,
     "bytes": "f657bda9",
-    "instruction": "Audited position-independent stack prologue"
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
   },
   {
     "id": "lifeModStart",
     "name": "SecretChallengeLifeMod.Start",
     "args": "",
-    "rva": 21860996,
+    "rva": 21864916,
     "bytes": "f85fbca9",
-    "instruction": "Audited position-independent stack prologue"
+    "instruction": "stp x24, x23, [sp, #-0x40]!"
   },
   {
     "id": "hpBackgroundStart",
     "name": "HPDisplayControl.Start",
     "args": "",
-    "rva": 22499136,
+    "rva": 22503500,
     "bytes": "f657bda9",
-    "instruction": "Audited position-independent stack prologue"
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
   },
   {
     "id": "progressLevelOver",
     "name": "ProgressControl.LevelOver",
     "args": "",
-    "rva": 22622680,
+    "rva": 22626120,
     "bytes": "f657bda9",
-    "instruction": "Audited position-independent stack prologue"
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
   },
   {
-    "rva": 21859692,
+    "rva": 21863612,
     "bytes": "eb2bbb6d",
     "id": "lifeUpdate",
     "name": "SecretChallengeLifeBar.Update",
     "args": "",
-    "instruction": "Audited position-independent stack prologue"
+    "instruction": "stp d11, d10, [sp, #-0x50]!"
   },
   {
     "id": "levelCodes",
     "name": "LevelControl.SetCodeForNote",
-    "rva": 22548496,
+    "rva": 22551864,
     "args": "",
     "bytes": "fc6fbaa9",
-    "instruction": "IDA-verified relocatable stack prologue"
+    "instruction": "stp x28, x27, [sp, #-0x60]!"
   },
   {
     "id": "levelInfo",
     "name": "LevelControl.SetInformation",
-    "rva": 22549752,
+    "rva": 22553120,
     "args": "",
     "bytes": "ef3bb66d",
-    "instruction": "IDA-verified relocatable stack prologue"
+    "instruction": "stp d15, d14, [sp, #-0xa0]!"
   },
   {
     "id": "noteManager",
     "name": "NoteUpdateManager.Update",
-    "rva": 22612644,
+    "rva": 22616084,
     "args": "",
     "bytes": "eb2bb86d",
-    "instruction": "IDA-verified relocatable stack prologue"
+    "instruction": "stp d11, d10, [sp, #-0x80]!"
   },
   {
     "id": "blocking",
     "name": "JudgeControl.TryGetBlockingBlock",
-    "rva": 22533736,
+    "rva": 22537112,
     "args": "UnityEngine.Vector2,PreviewBlockControl&",
     "bytes": "ff8302d1",
-    "instruction": "IDA-verified relocatable stack prologue"
+    "instruction": "sub sp, sp, #0xa0"
   },
   {
     "id": "blockLate",
     "name": "BlockRender.LateUpdate",
-    "rva": 22513896,
+    "rva": 22518056,
     "args": "",
     "bytes": "f657bda9",
-    "instruction": "IDA-verified relocatable stack prologue"
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
   },
   {
     "id": "holdMove",
     "name": "HoldControl.NoteMove",
-    "rva": 22608352,
+    "rva": 22611792,
     "args": "",
     "bytes": "ed33ba6d",
-    "instruction": "IDA-verified relocatable stack prologue"
+    "instruction": "stp d13, d12, [sp, #-0x60]!"
   },
   {
     "id": "clickMove",
     "name": "ClickControl.NoteMove",
-    "rva": 22602424,
+    "rva": 22605864,
     "args": "",
     "bytes": "eb2bbb6d",
-    "instruction": "IDA-verified STP D11, D10 stack prologue"
+    "instruction": "stp d11, d10, [sp, #-0x50]!"
   },
   {
     "id": "dragMove",
     "name": "DragControl.NoteMove",
-    "rva": 22604600,
+    "rva": 22608040,
     "args": "",
     "bytes": "eb2bbb6d",
-    "instruction": "IDA-verified STP D11, D10 stack prologue"
+    "instruction": "stp d11, d10, [sp, #-0x50]!"
   },
   {
     "id": "flickMove",
     "name": "FlickControl.NoteMove",
-    "rva": 22606484,
+    "rva": 22609924,
     "args": "",
     "bytes": "eb2bbb6d",
-    "instruction": "IDA-verified STP D11, D10 stack prologue"
+    "instruction": "stp d11, d10, [sp, #-0x50]!"
   },
   {
     "id": "judgeUpdate",
     "name": "JudgeControl.Update",
-    "rva": 22526752,
+    "rva": 22530128,
     "args": "",
     "bytes": "e923ba6d",
-    "instruction": "IDA-verified relocatable stack prologue"
+    "instruction": "stp d9, d8, [sp, #-0x60]!"
   },
   {
     "id": "audioUpdate",
     "name": "AddressableAudioSource.Update",
-    "rva": 22838076,
+    "rva": 22841656,
     "args": "",
     "bytes": "eb2bbb6d",
-    "instruction": "IDA-verified relocatable STP D11, D10 stack prologue"
+    "instruction": "stp d11, d10, [sp, #-0x50]!"
   },
   {
     "id": "lineCreateNote",
     "name": "JudgeLineControl.CreateNote",
-    "rva": 22537376,
+    "rva": 22540744,
     "args": "int,bool",
     "bytes": "eb2bb96d",
-    "instruction": "IDA-verified relocatable STP D11, D10 stack prologue"
+    "instruction": "stp d11, d10, [sp, #-0x70]!"
   },
   {
     "id": "assetCtor",
     "name": "AssetStore.AssetRef<object>..ctor",
-    "rva": 34208408,
+    "rva": 34282468,
     "args": "string key",
     "bytes": "ff8301d1",
     "instruction": "sub sp, sp, #0x60"
@@ -466,7 +466,7 @@
   {
     "id": "assetRelease",
     "name": "AssetStore.AssetRef<object>.Release",
-    "rva": 34208764,
+    "rva": 34282824,
     "args": "",
     "bytes": "f44fbea9",
     "instruction": "stp x20, x19, [sp, #-0x20]!"
@@ -474,7 +474,7 @@
   {
     "id": "songInfo",
     "name": "SongsItem.GetLevelStartInfo",
-    "rva": 21638376,
+    "rva": 21638792,
     "args": "int level",
     "bytes": "ff8301d1",
     "instruction": "sub sp, sp, #0x60"
@@ -482,8 +482,64 @@
   {
     "id": "itemInfo",
     "name": "SongSelectorItem.GetLevelStartInfo",
-    "rva": 22811264,
+    "rva": 22814844,
     "args": "int level",
+    "bytes": "f657bda9",
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
+  },
+  {
+    "id": "assetReleaseResource",
+    "name": "AssetStore.AssetRef<object>.ReleaseResource",
+    "rva": 34283368,
+    "args": "",
+    "bytes": "ffc301d1",
+    "instruction": "sub sp, sp, #0x70"
+  },
+  {
+    "id": "chapterStart",
+    "name": "ChapterSelector.Start",
+    "rva": 22396304,
+    "args": "",
+    "bytes": "ff8302d1",
+    "instruction": "sub sp, sp, #0xa0"
+  },
+  {
+    "id": "normalStart",
+    "name": "SongSelector.NormalStart",
+    "rva": 22783836,
+    "args": "",
+    "bytes": "f44fbea9",
+    "instruction": "stp x20, x19, [sp, #-0x20]!"
+  },
+  {
+    "id": "mainlineCheckUnlock",
+    "name": "GameInformation.CheckSongUnlock",
+    "rva": 21659216,
+    "args": "string,out int,out bool[],out bool,out string",
+    "bytes": "ff0303d1",
+    "instruction": "sub sp, sp, #0xc0"
+  },
+  {
+    "id": "mainlinePhase1Start",
+    "name": "Phigros2.Chapter9.Chapter9Phase1Control.Start",
+    "rva": 21959368,
+    "args": "",
+    "bytes": "f85fbca9",
+    "instruction": "stp x24, x23, [sp, #-0x40]!"
+  },
+  {
+    "id": "mainlinePhase1ToPhase2",
+    "name": "Phigros2.Chapter9.Chapter9Phase1Control.ToPhase2",
+    "rva": 21979316,
+    "args": "",
+    "bytes": "f657bda9",
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
+  },
+  {
+    "id": "mainlineApplyMapCover",
+    "name": "Phigros2.Chapter9.Scripts.Chapter9Phase2Control.ApplyMapCover",
+    "rva": 22108068,
+    "args": "",
     "bytes": "f657bda9",
     "instruction": "stp x22, x21, [sp, #-0x30]!"
   }

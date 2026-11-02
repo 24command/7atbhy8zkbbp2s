@@ -1,4 +1,4 @@
-"""Verify iOS gameplay ABI/reflection contracts against the local 4.0.1 dump.
+"""Verify iOS gameplay ABI/reflection contracts against the supplied iOS dump.
 The dump is not shipped. This is a static check, not Apple/device verification.
 """
 import argparse
@@ -40,6 +40,8 @@ FIELDS['HoldControl'].update(judged='bool', missed='bool', timeOfJudge='float')
 
 # Helper overloads invoked reflectively. Each tuple is (name, parameters, static).
 METHODS = {
+ 'System.Runtime.InteropServices.Marshal': [('copy_from_unmanaged','IntPtr,int,Array,int',True)],
+ 'UnityEngine.AudioClip': [('Create','string,int,int,int,bool',True), ('SetData','float[],int',False)],
  'JsonUtility': [('ToJson','object',True), ('FromJson','string,Type',True), ('FromJsonOverwrite','string,object',True)],
  'Array': [('GetValue','int',False), ('SetValue','object,int',False)],
  'Mathf': [('SmoothDamp','float,float,float&,float,float,float',True)],
@@ -131,12 +133,12 @@ def verify(dump, manifest):
    assert len(matches)==1, f'Method contract mismatch: {name}.{method}({args}), static={static}'
    count += 1
  for entry in manifest:
-  if entry['id'] in ('assetCtor','assetRelease'):
+  if entry['id'] in ('assetCtor','assetRelease','assetReleaseResource'):
    # IL2CPP's shared generic code has an RVA in GenericInstMethod rather
    # than on the open generic C# declaration. Verify that exact shared body.
    name='AssetStore.AssetRef<T>'
    text=body(name)
-   method='.ctor' if entry['id']=='assetCtor' else 'Release'
+   method={'assetCtor':'.ctor','assetRelease':'Release','assetReleaseResource':'ReleaseResource'}[entry['id']]
    expected='AssetStore.AssetRef<object>.'+method
    assert entry['name']==expected, 'Generic hook name mismatch'
    marker='|-'+expected
@@ -144,7 +146,7 @@ def verify(dump, manifest):
    assert at>=0, 'Shared generic instantiation missing: '+expected
    rvas=re.findall(r'\|-RVA: (0x[0-9A-Fa-f]+)',text[:at])
    assert rvas and int(rvas[-1],16)==entry['rva'], 'Shared generic RVA mismatch'
-   assert re.search(r'public void '+re.escape(method)+r'\(',text), 'Generic signature missing'
+   assert re.search(r'(?:public|private) void '+re.escape(method)+r'\(',text), 'Generic signature missing'
    count+=1
    continue
   name,method = entry['name'].rsplit('.',1)
@@ -164,15 +166,27 @@ def verify(dump, manifest):
 def canonical_type(spelling, types):
  spelling = spelling.strip()
  primitives = dict(bool='System.Boolean', int='System.Int32', float='System.Single',
-                   string='System.String', object='System.Object')
+                   string='System.String', object='System.Object', long='System.Int64',
+                   double='System.Double', byte='System.Byte', char='System.Char',
+                   uint='System.UInt32', ulong='System.UInt64', short='System.Int16',
+                   ushort='System.UInt16', sbyte='System.SByte')
  if spelling in primitives:
   return primitives[spelling]
+ if spelling.endswith('&'):
+  return canonical_type(spelling[:-1],types)+'&'
  if spelling.endswith('[]'):
   return canonical_type(spelling[:-2],types)+'[]'
  if spelling.startswith('List<') and spelling.endswith('>'):
   return 'System.Collections.Generic.List<'+canonical_type(spelling[5:-1],types)+'>'
+ if '<' in spelling and spelling.endswith('>'):
+  base,arguments=spelling[:-1].split('<',1)
+  candidates={key.split('<',1)[0] for key,value in types.items() if value is not None and '<' in key and (key.split('<',1)[0]==base or key.split('<',1)[0].endswith('.'+base))}
+  assert len(candidates)==1, 'Cannot resolve generic type: '+spelling
+  return candidates.pop()+'<'+','.join(canonical_type(t.strip(),types) for t in arguments.split(','))+'>'
  if spelling in types and types[spelling] is not None:
   return spelling
+ if 'System.'+spelling in types:
+  return 'System.'+spelling
  # The dump uses unqualified Unity field types throughout Assembly-CSharp.
  if 'UnityEngine.'+spelling in types:
   return 'UnityEngine.'+spelling
@@ -203,8 +217,44 @@ def verify_sources(dump, sources):
    declaration = re.search(r'^\s*(?:public|private|internal|protected)\s+(?P<static>static\s+)?(?:readonly\s+)?(?P<type>[^;\n]+?)\s+'+re.escape(match['field'])+r'; //',body,re.M)
    assert declaration, 'Missing preflight field: '+full+'.'+match['field']
    assert bool(declaration['static'])==(match['static']=='true'), 'Static flag mismatch: '+full+'.'+match['field']
-   expected = canonical_type(declaration['type'],types)
+   spelling=declaration['type']
+   overrides = {('ChapterInfo','play','Button'):'UnityEngine.UI.Button', ('AddressableImageLoader','_image','Image'):'UnityEngine.UI.Image'}
+   expected = overrides.get((full,match['field'],spelling)) or canonical_type(spelling,types)
    assert match['typ']==expected, f'Runtime field namespace/type mismatch: {full}.{match["field"]}: {match["typ"]} != {expected}'
+   count += 1
+  # These literal method calls were previously unchecked: a class could exist
+  # while its requested overload had been stripped from the iOS player.
+  call = r'r\.(?P<op>resolve|stat)\(\s*'+lookup+r'\s*,\s*"(?P<method>[^"]+)"\s*(?:,\s*\{(?P<params>[^{}]*)\})?(?:\s*,\s*(?P<isstatic>true|false))?'
+  for match in re.finditer(call,source):
+   full = match['root'] or ((match['ns']+'.') if match['ns'] else '')+match['name']
+   expected = re.findall(r'"([^"]+)"',match['params'] or '')
+   isstatic = match['op']=='stat' or match['isstatic']=='true'
+   pattern = r'^\s*((?:(?:public|private|internal|protected|static|virtual|override|sealed|abstract|extern|new)\s+)+)(\S+)\s+'+re.escape(match['method'])+r'\(([^\n]*)\) \{ \}'
+   found = False
+   for declaration in re.finditer(pattern,types[full][0],re.M):
+    if ('static' in declaration[1].split()) != isstatic:
+     continue
+    actual = []
+    for parameter in declaration[3].split(','):
+     tokens=parameter.split('=',1)[0].split()
+     if tokens:
+      byref=tokens[0] in ('ref','out','in')
+      actual.append(tokens[1]+'&' if byref else tokens[0])
+    if len(actual)!=len(expected):
+     continue
+    try:
+     namespace=full.rpartition('.')[0]
+     def qualify(t):
+      if t.endswith('[]'):return qualify(t[:-2])+'[]'
+      if t.endswith('&'):return qualify(t[:-1])+'&'
+      local=namespace+'.'+t
+      return local if local in types and types[local] is not None else canonical_type(t,types)
+     canonical = [qualify(t) for t in actual]
+    except AssertionError:
+     continue  # Unsupported generic candidate cannot match this literal signature.
+    if canonical==expected:
+     found=True;break
+   assert found, f'Missing literal runtime overload: {full}.{match["method"]}({expected}), static={isstatic}'
    count += 1
  return count
 
@@ -216,7 +266,7 @@ def main():
  dump = args.dump.read_text(encoding='utf-8-sig')
  manifest = json.loads((ROOT/'tools/gameplay_hook_manifest.json').read_text(encoding='utf-8'))
  count = verify(dump,manifest)
- sources = [(ROOT/"PhiMod/Sources"/name).read_text(encoding="utf-8") for name in ("PMChartModes.mm", "PMHPLife.mm", "PMPractice.mm", "PMPracticePreview.mm", "PMContentRuntime.mm", "PMHookBackend.mm")]
+ sources = [(ROOT/"PhiMod/Sources"/name).read_text(encoding="utf-8") for name in ("PMChartModes.mm", "PMHPLife.mm", "PMPractice.mm", "PMPracticePreview.mm", "PMContentRuntime.mm", "PMRPEHudRuntime.inc", "PMRPESkewRuntime.inc", "PMHookBackend.mm", "PMSceneUI.mm", "PMRuntime.mm", "PMUnlockRuntime.mm")]
  source_count = verify_sources(dump,sources)
  for old,new in [('public ChartNote noteInfor;', 'public ChartNote noteInfo;'),
                  ('public float timeOfJudge;', 'public double timeOfJudge;'),
@@ -237,7 +287,14 @@ def main():
    pass
   else:
    raise AssertionError('Failed to reject incorrect runtime namespace: '+old)
- print(f'PASS: {count} gameplay metadata / 61 hook contracts + {source_count} source lookups + 5 negative fixtures')
+ # Regression for the framework14 startup blocker: must fail before shipping.
+ try:
+  verify_sources(dump,['r.resolve(r.type("System.Runtime.InteropServices","Marshal"),"Copy",{"System.IntPtr","System.Single[]","System.Int32","System.Int32"},true);'])
+ except AssertionError:
+  pass
+ else:
+  raise AssertionError('Accepted stripped Marshal.Copy Single[] overload')
+ print(f'PASS: {count} gameplay metadata / {len(manifest)} hook contracts + {source_count} source lookups + 6 negative fixtures')
 
 if __name__=='__main__':
  main()

@@ -32,7 +32,7 @@ def fixture():
     header=struct.pack('<IIIIIIII',0xfeedfacf,0x100000c,0,6,len(commands),sum(map(len,commands)),0,0)
     b=bytearray(text_end+0x1000);b[:32]=header;b[32:32+sum(map(len,commands))]=b''.join(commands)
     # Text section must actually cover all sites, leave padding after the sites.
-    struct.pack_into('<Q',b,32+72+40,0x1593000-0x4000)
+    struct.pack_into('<Q',b,32+72+40,0x1593800-0x4000)
     for site,old in zip(patch.SITES,patch.ORIGINAL):b[site:site+4]=old
     b[text_end+4]=0x0f;b[text_end+5]=2
     return bytes(b)
@@ -64,14 +64,17 @@ class JudgePatchTest(unittest.TestCase):
         code=self.report['code'];state=self.report['state'];rng=random.Random(401)
         # Test different ASLR slides too: PC-relative addressing must remain valid.
         for slide in (0,0x100000000):
-            uc=Uc(UC_ARCH_ARM64,UC_MODE_ARM)
+            uc=Uc(UC_ARCH_ARM64,UC_MODE_ARM);mapped=set()
+            def ensure(addr,size):
+                for page in range(addr&~4095,(addr+size+4095)&~4095,4096):
+                    if page not in mapped:uc.mem_map(page,4096);mapped.add(page)
             for addr,size in ((code&~4095,0x2000),(state&~4095,0x1000),(0x100000,0x2000),(0x200000,0x2000)):
-                uc.mem_map(slide+addr,size)
+                ensure(slide+addr,size)
             uc.mem_write(slide+code,self.patched[code:code+self.report['code_size']])
             for site in patch.SITES:
                 page=(site+slide)&~4095
                 # All sites are within one page.
-                if site==patch.SITES[0]:uc.mem_map(page,4096)
+                ensure(page,4096)
                 uc.mem_write(slide+site,self.patched[site:site+4])
             for frame in range(90):
                 enabled=frame%3!=0;p=rng.uniform(.001,.1);g=p+rng.uniform(.01,.2);b=max(.22,g+.04)
