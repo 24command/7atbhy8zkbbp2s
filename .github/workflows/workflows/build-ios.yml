@@ -7,13 +7,14 @@ on:
       - 'ios/build_unsigned.sh'
       - 'ios/tests/**'
       - 'ios/tools/**'
+      - 'ios/shader-compiler/**'
       - '.github/workflows/build-ios.yml'
 permissions:
   contents: read
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - name: Test portable gameplay core
@@ -32,6 +33,15 @@ jobs:
         run: bash ios/tests/run_content_tests.sh
       - name: Test iOS Metal shader presets
         run: bash ios/tests/run_shader_tests.sh
+      - name: Test full GLSL compiler and generated Metal
+        run: |
+          cmake -S ios/shader-compiler -B "$RUNNER_TEMP/shader-host" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/shader-host" --target pmshadercompiler-test --parallel 3
+          mkdir -p "$RUNNER_TEMP/full-shaders"
+          "$RUNNER_TEMP/shader-host/pmshadercompiler-test" "$RUNNER_TEMP/full-shaders"
+          for shader in "$RUNNER_TEMP/full-shaders/"*.metal; do
+            xcrun --sdk iphoneos metal -std=ios-metal2.3 -c "$shader" -o "$shader.air"
+          done
       - name: Build arm64 framework
         run: bash ios/build_unsigned.sh "$RUNNER_TEMP/out"
       - name: Verify and archive
