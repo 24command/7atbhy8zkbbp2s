@@ -387,7 +387,13 @@ void levelBegin(Runtime&r,void*level){PMMetalShadersClear();clearVideos(r);if(vi
 void levelEnd(Runtime&r){PMMetalShadersClear();clearVideos(r);if(videoLevel){r.gchandle_free(videoLevel);videoLevel=0;}clearLegacy();releaseRoots(r);}
 void afterChart(Runtime&r,void*level){try{loadSkin(r);}catch(const std::exception&e){logf("Skin runtime setup failed: %s",e.what());releaseRoots(r);}try{prepareVideos(r,level);}catch(const std::exception&e){logf("RPE video load failed: %s",e.what());}try{P info=r.get<P>(r.mainGame(),"levelStartInfo");NSString*identifier=info?r.string(r.get<P>(info,"songsId")):nil;NSString*folder=resourceFolder(identifier);PMMetalShadersLoad(folder);}catch(const std::exception&e){logf("RPE shader metadata scan failed: %s",e.what());}}
 void observe(int rating){if(legacyActive)legacyJudge=rating==0?2:rating==1?1:0;}
-void noteMoved(Runtime&r,void*control,bool hold){try{P c=control;applyNote(r,c,hold);if(hold)adjustHold(r,c);}catch(const std::exception&e){if(skinErrors.insert(e.what()).second)logf("Skin note update failed: %s",e.what());}}
+void noteMoved(Runtime&r,void*control,bool hold){try{P c=control;
+ // Native completion can destroy a controller later in the frame. Do not
+ // replace its last sprite or rescale a completed/fading Hold after NoteMove.
+ if(!r.alive(c))return;
+ if(hold){if(r.get<bool>(c,"judgeOver")||r.get<bool>(c,"missed"))return;}
+ else if(r.get<bool>(c,"isJudged"))return;
+ applyNote(r,c,hold);if(hold)adjustHold(r,c);}catch(const std::exception&e){if(skinErrors.insert(e.what()).second)logf("Skin note update failed: %s",e.what());}}
 void tick(Runtime&r,void*progress){PMMetalShadersTick(r.get<float>(progress,"nowTime"));try{updateVideos(r,progress);updateLegacy(r,progress);}catch(const std::exception&e){logf("Feature update failed: %s",e.what());}}
 }
 

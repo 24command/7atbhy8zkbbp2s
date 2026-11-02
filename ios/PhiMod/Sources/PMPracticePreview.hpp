@@ -6,5 +6,6 @@ void render(pmbridge::Runtime&,void* manager,float current,bool countdown,float 
 void clear();
 void discardControls();
 bool creating();
+bool settled(void*note);
 void validate(pmbridge::Runtime&);
 }

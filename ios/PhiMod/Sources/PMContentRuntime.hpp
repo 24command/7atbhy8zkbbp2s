@@ -16,7 +16,9 @@ NSDictionary*officialSnapshot();NSDictionary*cachedOfficialSnapshot();NSDictiona
 void beforeInformation(pmbridge::Runtime&,void*level);
 void beforeChart(pmbridge::Runtime&,void*level);void afterChart(pmbridge::Runtime&,void*level);
 void prepareHoldHitFX(pmbridge::Runtime&,void*control);
+void judgeWithHudPause(pmbridge::Runtime&,void*,void*,void(*)(void*,void*));
 void visuals(pmbridge::Runtime&,void*progress);void noteMoved(pmbridge::Runtime&,void*control,bool hold);
+void finishNoteGeometry(pmbridge::Runtime&,void*control,bool hold);
 void ranking(pmbridge::Runtime&,void*,void*,void(*)(void*,void*));
 void validate(pmbridge::Runtime&);
 }

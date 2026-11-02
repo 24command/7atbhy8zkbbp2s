@@ -66,9 +66,21 @@ void prepareRange(Runtime&r,P progress,float current){
  for(int i=0;i<lineCount;++i){P line=r.at(lines,i);for(const char*field:{"nowSpeedIndex","nowDisappearIndex","nowMoveIndex","nowRotateIndex","nowProductIndexAbove","nowProductIndexBelow"})r.put(line,field,0);r.put(line,"lastProductIndexAbove",-1);r.put(line,"lastProductIndexBelow",-1);r.put(line,"numOfFingers",0);}
  P score=r.get<P>(progress,"scoreControl");
  for(const char*field:{"perfect","good","bad","miss","early","late","_combo","maxcombo"})r.put(score,field,0);
- r.put(score,"_score",0.f);r.put(score,"_percent",0.f);r.put(score,"miss",skippedNotes);r.put(score,"isAllPerfect",skippedNotes==0);r.put(score,"isFullCombo",skippedNotes==0);r.put(score,"scoreFrozen",false);
+ // Rebuild native result codes without invoking Miss/Perfect callbacks,
+ // particle spawning, HP damage, challenge retries or sound for skipped notes.
+ bool autoplay=options.autoplay;
+ P codes=r.get<P>(score,"_noteCodes");if(!codes)throw std::runtime_error("Practice score code list missing");r.call(codes,"Clear");
+ for(int i=0;i<noteCount;++i){P note=r.at(notes,i);if(!pmpracticepreview::settled(note))continue;
+  float code=r.get<float>(note,"noteCode")+(autoplay?3.5f:0.f);r.call(codes,"Add",{"System.Single"},{&code});
+ }
+ r.put(score,"perfect",autoplay?skippedNotes:0);r.put(score,"miss",autoplay?0:skippedNotes);
+ r.put(score,"_combo",autoplay?skippedNotes:0);r.put(score,"maxcombo",autoplay?skippedNotes:0);
+ float credited=autoplay&&noteCount>0?float(skippedNotes)/noteCount:0.f;
+ r.put(score,"_score",credited*1000000.f);r.put(score,"scoreOfNote",credited*(options.noComboScore?1000000.f:900000.f));
+ r.put(score,"_percent",autoplay&&noteCount>0?100.f*skippedNotes/noteCount:0.f);
+ r.put(score,"isAllPerfect",autoplay||skippedNotes==0);r.put(score,"isFullCombo",autoplay||skippedNotes==0);r.put(score,"scoreFrozen",false);
  r.call(score,"SetNoteCodeList");
- if(skippedNotes>0){r.put(score,"miss",skippedNotes);r.put(score,"isAllPerfect",false);r.put(score,"isFullCombo",false);}
+ PMDiagnosticsWrite((std::string("Practice prefix settled silently: ")+(autoplay?"Perfect=":"Miss=")+std::to_string(skippedNotes)).c_str());
  if(segmentEnd<=segmentStart)throw std::runtime_error("Practice range end must exceed start");
  segmentCursor=std::clamp(current,segmentStart,segmentEnd);segmentEnded=false;
  r.put(progress,"nowTime",segmentCursor);r.put(progress,"audioTime",std::max(0.f,segmentCursor+clipOffset(r,progress)));
@@ -81,7 +93,7 @@ void resumeAt(Runtime&r,P progress,float current,bool handoff=false){
   if(!handoff)prepareRange(r,progress,current);
   P info=r.get<P>(progress,"levelInformation"),judge=r.get<P>(progress,"judgeControl"),source=sourceObject(r);
   bool yes=true,no=false;bool restartAudio=!handoff||!countdownAudio;
-  if(handoff){clearControllers(r,r.get<P>(judge,"noteUpdateManager"));P lines=r.get<P>(judge,"judgeLineControls");for(int i=0,n=r.count(lines);i<n;++i){P line=r.at(lines,i);for(const char*name:{"nowProductIndexAbove","nowProductIndexBelow"})r.put(line,name,0);r.put(line,"lastProductIndexAbove",-1);r.put(line,"lastProductIndexBelow",-1);}}
+  if(handoff){pmpracticepreview::reset(r,progress,current);clearControllers(r,r.get<P>(judge,"noteUpdateManager"));P lines=r.get<P>(judge,"judgeLineControls");for(int i=0,n=r.count(lines);i<n;++i){P line=r.at(lines,i);for(const char*name:{"nowProductIndexAbove","nowProductIndexBelow"})r.put(line,name,0);r.put(line,"lastProductIndexAbove",-1);r.put(line,"lastProductIndexBelow",-1);}}
   r.call(progress,"Play",{"System.Boolean"},{&yes});
   float clipAt=std::max(0.f,current+clipOffset(r,progress));
   if(restartAudio&&source){r.call(source,"Seek",{"System.Single"},{&clipAt});r.call(source,"Play");float volume=r.get<float>(info,"musicVol");r.call(source,"set_Volume",{"System.Single"},{&volume});}

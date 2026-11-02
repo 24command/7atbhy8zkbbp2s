@@ -94,7 +94,7 @@ NSDictionary*rpe(NSDictionary*input){
   [above sortUsingComparator:byFloor];[below sortUsingComparator:byFloor];
   NSMutableDictionary*decor=[NSMutableDictionary new];NSDictionary*extended=o[@"extended"];
   for(NSString*key in @[@"scaleXEvents",@"scaleYEvents",@"colorEvents",@"textEvents",@"inclineEvents"])decor[key]=normalEvents(array(extended[key]),t);
-  for(NSString*key in @[@"alphaControl",@"sizeControl",@"posControl",@"yControl"])decor[key]=array(o[key]);
+  for(NSString*key in @[@"alphaControl",@"sizeControl",@"posControl",@"yControl",@"skewControl"])decor[key]=array(o[key]);
   decor[@"Texture"]=o[@"Texture"] ?: @"line.png";
   decor[@"anchor"]=array(o[@"anchor"]).count==2?o[@"anchor"]:@[@0.5,@0.5];
   decor[@"zOrder"]=o[@"zOrder"] ?: @0;

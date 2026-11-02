@@ -8,6 +8,7 @@
 #include "PMHPLife.hpp"
 #include "PMChartModes.hpp"
 #include "PMPractice.hpp"
+#include "PMPracticePreview.hpp"
 #include "PMContentRuntime.hpp"
 #include "PMRuntimeFeatures.hpp"
 #include "PMUnlockRuntime.hpp"
@@ -295,7 +296,7 @@ void onJudgeUpdate(P self,P mi){
  try{auto&r=R();P pc=r.get<P>(self,"progressControl");ensureFloorArray(r,pc?r.get<P>(pc,"levelInformation"):nullptr);}catch(const std::exception&e){diagf("Judge floor buffer preparation failed: %s",e.what());}
  {
   auto &r=R();PlaybackJudgeScope rate(r);
-  orig<VoidFn>(h::judgeUpdate)(self,mi);
+  pmcontent::judgeWithHudPause(r,self,mi,orig<VoidFn>(h::judgeUpdate));
  }
  if(heartbeat)diagf("JudgeControl.Update original returned n=%llu",(unsigned long long)count);
  try{auto &r=R();P progressControl=r.get<P>(self,"progressControl");if(heartbeat)logProgressSnapshot(r,progressControl,"JudgeControl.Update",count);tickGameplay(r,progressControl,"JudgeControl.Update");pmfeatures::tick(r,progressControl);}
@@ -518,7 +519,14 @@ void onChapterStart(P self,P mi){
 }
 P onSongInfo(P self,int slot,P mi){P value=orig<P(*)(P,int,P)>(h::songInfo)(self,slot,mi);try{pmcontent::levelInfo(R(),self,slot,value);pmunlock::songInfo(R(),self,slot,value);}catch(const std::exception&e){diagf("Content level info: %s",e.what());}return value;}
 P onItemInfo(P self,int slot,P mi){P value=orig<P(*)(P,int,P)>(h::itemInfo)(self,slot,mi);try{pmcontent::levelInfo(R(),R().get<P>(self,"songInfo"),slot,value);pmunlock::itemInfo(R(),self,slot,value);}catch(const std::exception&e){diagf("Content item info: %s",e.what());}return value;}
-void onCreateNote(P self,int index,bool above,P mi){if(pmpractice::allowNoteCreation())orig<void(*)(P,int,bool,P)>(h::lineCreateNote)(self,index,above,mi);}
+void onCreateNote(P self,int index,bool above,P mi){
+ if(!pmpractice::allowNoteCreation())return;
+ if(!pmpracticepreview::creating()){
+  auto&r=R();P notes=r.get<P>(self,above?"notesAbove":"notesBelow");
+  if(index>=0&&index<r.count(notes)&&pmpracticepreview::settled(r.at(notes,index)))return;
+ }
+ orig<void(*)(P,int,bool,P)>(h::lineCreateNote)(self,index,above,mi);
+}
 void onNoteManager(P self,P mi){
  if(pmpractice::entryLoading(R(),self))return;
  if(pmpractice::paused()){try{auto&r=R();ensureFloorArray(r,r.get<P>(self,"levelInformation"));pmpractice::previewFrame(r,self);pmcontent::visuals(r,r.get<P>(self,"progressControl"));}catch(const std::exception&e){diagf("Practice preview failed: %s",e.what());}return;}
@@ -545,7 +553,7 @@ void onHoldMove(P self,P mi){
  pmfeatures::noteMoved(R(),self,true);
  if(applying())try{pmmodes::moved(R(),self,true);}catch(const std::exception&e){fault(e);}
 }
-template<h::Index i>void onNoteMove(P self,P mi){pmfeatures::beforeNoteMove(R(),self,false);orig<VoidFn>(i)(self,mi);pmfeatures::noteMoved(R(),self,false);try{pmcontent::noteMoved(R(),self,false);}catch(const std::exception&e){diagf("RPE note visual/skin failed: %s",e.what());}if(applying())try{pmmodes::moved(R(),self);}catch(const std::exception&e){fault(e);}}
+template<h::Index i>void onNoteMove(P self,P mi){pmfeatures::beforeNoteMove(R(),self,false);orig<VoidFn>(i)(self,mi);pmfeatures::noteMoved(R(),self,false);try{pmcontent::noteMoved(R(),self,false);pmcontent::finishNoteGeometry(R(),self,false);}catch(const std::exception&e){diagf("RPE note visual/skin failed: %s",e.what());}if(applying())try{pmmodes::moved(R(),self);}catch(const std::exception&e){fault(e);}}
 void onNormalStart(P self,P mi){
  try{if(pmunlock::beforeStart(R(),self,^{try{pmcontent::selectorLoadingEnd(R(),true);}catch(const std::exception&e){diagf("Selector loading resume: %s",e.what());}orig<VoidFn>(h::normalStart)(self,mi);}))return;}
  catch(const std::exception&e){diagf("Unlock start gate failed: %s",e.what());return;}

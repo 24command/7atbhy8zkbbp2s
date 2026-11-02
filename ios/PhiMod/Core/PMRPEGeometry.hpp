@@ -57,3 +57,13 @@ inline float rpeHorizontalPosition(float x,bool hold,float posControl,float incl
  float perspective=1-std::sin(inclineDegrees*0.017453292519943295f)*head*(2*(16.f/9.f)/worldWidth)*1.25f;
  return x*posControl*perspective;
 }
+
+inline bool rpeCovered(bool cover,double now,double start,double startFloor,double currentFloor,float rawSpeed){
+ return cover&&now<start&&(startFloor-currentFloor)*rawSpeed < -std::max(.0025,std::fabs(startFloor)*.00000024);
+}
+inline float rpeSkew(float rpeX,float control,bool below,float sx,float sy){
+ if(std::fabs(sx)<1e-6f)return 0;
+ double radians=double(rpeX)*control*.017453292519943295;
+ double slope=std::tan(radians)*(below?-1.:1.)*sy/sx;
+ return std::isfinite(slope)&&std::fabs(slope)<10000?float(slope):0.f;
+}

@@ -10,10 +10,12 @@
 #include "../Core/PMRPECore.hpp"
 #include "../Core/PMRPEGeometry.hpp"
 #include "../Core/PMChartCore.hpp"
+#include "../Core/PMRPEHud.hpp"
 #include <algorithm>
 #include <map>
 #include <set>
 #include <tuple>
+#include <limits>
 #include <chrono>
 namespace pmcontent {
 using pmbridge::P;using pmbridge::Runtime;
@@ -56,6 +58,9 @@ void restoreHoldHitFX(Runtime&r){
  }
  holdHitFX.clear();
 }
+void clearHud(Runtime&r);
+void clearSkew(Runtime&r);
+std::map<int,int>hudLines;uint32_t hudLevel=0;
 std::set<int>uiControlLines;
 std::set<int>inertLineVisuals;bool rpeIntroRetired=false;std::set<int>reportedLineAlphaCorrections;
 std::map<P,int>lineBaseOrder;std::vector<int>storyOrders;int storyHoldOrder=1028,storyNoteOrder=1030;
@@ -182,7 +187,7 @@ P audio(Runtime&r,NSString*path){
  }catch(...){r.gchandle_free(clipRoot);throw;}
 }
 NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=[[key stringByReplacingOccurrencesOfString:id withString:@""]lowercaseString];*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":[lower containsString:@"blur"]?@"blur":@"image";return id;}
-void clearVisuals(Runtime&r){restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();extrasBoundChart=nullptr;noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();uiControlLines.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
+void clearVisuals(Runtime&r){clearSkew(r);clearHud(r);restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();extrasBoundChart=nullptr;noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();uiControlLines.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
 void applyCachedChapterCover(Runtime&r,P card,const char*codeField,const char*loaderField){
  NSString*code=r.string(r.get<P>(card,codeField));if(!code.length)return;auto found=assets.find(code.UTF8String);if(found==assets.end())return;P sprite=target(r,found->second);if(!r.alive(sprite))return;
  P loader=r.get<P>(card,loaderField);if(!r.alive(loader))return;bool changed=false;
@@ -430,8 +435,14 @@ void selectorFrame(Runtime&r,P selector){
    int level=r.get<int>(selector,"nowLevel"),selected=level;
    if(level<0||level>=4||!(mask&(1<<level))){selected=-1;for(int i=std::min(level,3);i>=0;--i)if(mask&(1<<i)){selected=i;break;}if(selected<0)for(int i=0;i<4;++i)if(mask&(1<<i)){selected=i;break;}}
    // Preserve original slot indices: AT must remain slot 3 for assets, records and rules.
-   r.put(item,"<PlayableLevelCount>k__BackingField",extent);r.put(selector,"levelNum",extent);
-   if(lastSelector!=selector||lastItem!=item||lastLevel!=selected||lastMask!=mask||selected!=level||launch){
+   // Match Android songItemCtor: lower placeholders occupy three slots,
+   // and AT uses the normal four-slot width, not the old two-slot width.
+   int displayCount=std::max(3,extent),infoWidth=displayCount>=4?100:115;
+   bool layoutChanged=r.get<int>(item,"<PlayableLevelCount>k__BackingField")!=displayCount||r.get<int>(item,"<SelectorTargetWidth>k__BackingField")!=infoWidth;
+   r.put(item,"<PlayableLevelCount>k__BackingField",displayCount);
+   r.put(item,"<SelectorTargetWidth>k__BackingField",infoWidth);
+   r.put(selector,"levelNum",displayCount);
+   if(lastSelector!=selector||lastItem!=item||lastLevel!=selected||lastMask!=mask||selected!=level||layoutChanged||launch){
     r.put(selector,"nowLevel",selected);r.call(selector,"SetLevel",{"System.Int32"},{&selected});
     P bar=r.get<P>(selector,"levelBarController");
     if(bar){r.call(bar,"UpdateInfoImmediately",{"SongSelectorItem"},{item});P infos=r.get<P>(bar,"levelInfos");
@@ -479,7 +490,7 @@ bool assetRelease(Runtime&r,P self,bool force){
 }
 void levelInfo(Runtime&r,P song,int slot,P info){NSString*id=r.string(r.get<P>(song,"songsId"));NSDictionary*custom=songFor(id,slot);if(!custom||!info)return;NSString*identifier=custom[@"id"];for(const auto&entry:std::vector<std::pair<const char*,NSString*>>{{"songsId",identifier},{"songsName",custom[@"title"] ?: @""},{"composer",custom[@"composer"] ?: @""},{"charter",custom[@"charter"] ?: @""},{"illustrator",custom[@"illustrator"] ?: @""},{"songsDifficulty",[custom[@"difficulty"] description]}})r.put(info,entry.first,r.managedString(entry.second));for(auto pair:std::vector<std::pair<const char*,const char*>>{{"musicAddressableKey","music"},{"chartAddressableKey","chart"},{"illustrationKey","image"}}){NSString*k=[NSString stringWithFormat:@"PM/%@/%s@%lu",identifier,pair.second,(unsigned long)PMContentStore.shared.revision];r.put(info,pair.first,r.managedString(k));}}
 void beforeChart(Runtime&r,P level){if(!levelID.length)return;NSString*path=[[PMContentStore.shared asset:levelID]stringByAppendingPathComponent:@"chart.json"];NSData*d=[NSData dataWithContentsOfFile:path];currentChart=d?[NSJSONSerialization JSONObjectWithData:d options:0 error:nil]:nil;if(!currentChart)throw std::runtime_error("Custom visual chart missing");resourceSubdir=@"";for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"]isEqualToString:levelID])resourceSubdir=s[@"resourceRoot"] ?: @"";beforeInformation(r,level);}
-void afterChart(Runtime&r,P level){if(!currentChart)return;
+void afterChart(Runtime&r,P level){clearHud(r);if(!currentChart)return;hudLevel=r.gchandle_new(level,false);
  // Match Android's zOrder/index ranking instead of treating zOrder as a
  // native sortingOrder offset (negative values otherwise fall behind BG).
  NSArray*sourceLines=currentChart[@"judgeLineList"];std::vector<int>ordered;
@@ -490,6 +501,7 @@ void afterChart(Runtime&r,P level){if(!currentChart)return;
   NSString*attachment=[decor[@"attachUI"]isKindOfClass:NSString.class]?[decor[@"attachUI"]lowercaseString]:@"";
   if([@[@"pause",@"combonumber",@"combo",@"score",@"bar",@"name",@"level"]containsObject:attachment]){
    uiControlLines.insert((int)i);
+   int code=(int)[@[@"pause",@"combonumber",@"combo",@"score",@"bar",@"name",@"level"]indexOfObject:attachment]+1;hudLines[code]=(int)i;
    log([NSString stringWithFormat:@"Content UI control line excluded from chart rendering: line=%lu attachUI=%@",(unsigned long)i,attachment]);
   }
   // Keep every native line and its index: invisible lines can still be parents
@@ -572,6 +584,8 @@ float sourceLineAlpha(NSArray*events,double now,double bpm){
 }
 double trackValue(NSArray*a,double now,double fallback,int channel=-1){NSDictionary*last=eventAt(a,now);return last?visualEvent(last,channel).value(now):fallback;}
 
+#include "PMRPEHudRuntime.inc"
+
 float notePerspectiveWidth(Runtime&r,NSDictionary*decor,float now){
  if(![decor[@"inclineEvents"]count]||std::fabs(trackValue(decor[@"inclineEvents"],now,0))<1e-6)return 0;
  // Cache within a Unity frame, including real and fake notes, without scene scans.
@@ -581,11 +595,11 @@ float notePerspectiveWidth(Runtime&r,NSDictionary*decor,float now){
  return width;
 }
 double control(NSDictionary*d,NSString*key,double distance){
- NSArray*points=d[key];if(!points.count)return 1;
+ NSArray*points=d[key];if(!points.count)return [key isEqualToString:@"skewControl"]?0:1;
  auto found=controlCache.find(points);
  if(found==controlCache.end()){
   NSString*value=[key substringToIndex:key.length-7];std::vector<ControlPoint>cached;cached.reserve(points.count);
-  for(NSDictionary*p in points)cached.push_back({scalar(p[@"x"]),scalar(p[value],1),(int)scalar(p[@"easing"],1)});
+  for(NSDictionary*p in points)cached.push_back({scalar(p[@"x"]),scalar(p[value],[key isEqualToString:@"skewControl"]?0:1),(int)scalar(p[@"easing"],1)});
   std::stable_sort(cached.begin(),cached.end(),[](const auto&a,const auto&b){return a.x<b.x;});
   found=controlCache.emplace(points,std::move(cached)).first;
  }
@@ -596,6 +610,8 @@ double control(NSDictionary*d,NSString*key,double distance){
  const auto&a=*(next-1);const auto&b=*next;double q=b.x>a.x?(distance-a.x)/(b.x-a.x):1;
  return a.value+(b.value-a.value)*phimod::rpe::ease(b.easing,q);
 }
+#include "PMRPESkewRuntime.inc"
+
 P addComponent(Runtime&r,P go,P type){return r.call(go,"AddComponent",{"System.Type"},{r.type_get_object(r.class_get_type(type))});}
 P graphic(Runtime&r,P go){P list=r.children(go,r.type("UnityEngine","SpriteRenderer"));return list&&r.array_length(list)?r.arrayAt(list,0):nullptr;}
 float floor(Runtime&r,P info,int index){P a=r.get<P>(info,"floorPositions");return a&&index>=0&&uintptr_t(index)<r.array_length(a)?r.unbox<float>(r.arrayAt(a,index)):0;}
@@ -713,8 +729,37 @@ void updateStory(Runtime&r,int index,P line,P nativeRenderer,NSDictionary*d,NSAr
 }
 
 }
+void judgeWithHudPause(Runtime&r,P judge,P mi,void(*original)(P,P)){
+ auto binding=hudBindings.find(1);if(binding==hudBindings.end()){original(judge,mi);return;}
+ auto&h=binding->second;P progress=r.get<P>(judge,"progressControl"),info=r.get<P>(progress,"levelInformation");
+ bool canPause=r.get<bool>(info,"canPause");
+ if(!canPause||r.get<bool>(judge,"stopJudge")||!r.get<bool>(progress,"isPlaying")||r.get<float>(progress,"nowTime")<0){original(judge,mi);return;}
+ P tr=target(r,h.wrapper),parent=target(r,h.parent),element=target(r,h.element);
+ if(!r.alive(tr)||!r.alive(parent)||!r.alive(element)){original(judge,mi);return;}
+ bool mapped=false;
+ try{
+  P wrapperTr=r.call(tr,"get_transform");V3 scale=r.unbox<V3>(r.call(wrapperTr,"get_localScale"));
+  bool visible=h.alpha>.001f&&std::fabs(scale.x)>.00001f&&std::fabs(scale.y)>.00001f&&r.unbox<bool>(r.call(element,"get_activeInHierarchy"));
+  P fingers=r.get<P>(r.get<P>(judge,"fingerManagement"),"fingers");
+  mapped=true; // Never replay a partially processed pause touch at the old location.
+  if(visible)for(int i=0,n=r.count(fingers);i<n;++i){P finger=r.at(fingers,i);if(r.get<int>(finger,"phase")!=0)continue;
+   V2 saved=r.get<V2>(finger,"nowPosition");V3 point{saved.x,saved.y,0};
+   V3 local=r.unbox<V3>(r.call(wrapperTr,"InverseTransformPoint",{"UnityEngine.Vector3"},{&point}));
+   V3 base=r.unbox<V3>(r.call(parent,"TransformPoint",{"UnityEngine.Vector3"},{&local}));if(!std::isfinite(base.x)||!std::isfinite(base.y))continue;
+   V2 translated{base.x,base.y};r.put(finger,"nowPosition",translated);
+   try{r.call(judge,"CheckPause",{"System.Int32"},{&i});}catch(...){r.put(finger,"nowPosition",saved);throw;}r.put(finger,"nowPosition",saved);
+  }
+  mapped=true;
+ }catch(const std::exception&e){if(hudErrors.insert(0).second)log([NSString stringWithFormat:@"RPE HUD pause mapping failed: %s",e.what()]);}
+ if(mapped)r.put(info,"canPause",false);
+ try{original(judge,mi);}catch(...){if(mapped)r.put(info,"canPause",canPause);throw;}
+ if(mapped)r.put(info,"canPause",canPause);
+}
 void visuals(Runtime&r,P progress){
  storyFrameCamera=nullptr;storyFrameWidth=0;
+ if(!currentChart)return;
+ static double skewCleanupAt=0;double skewNow=NSDate.timeIntervalSinceReferenceDate;
+ if(skewNow-skewCleanupAt>1){skewCleanupAt=skewNow;for(auto it=skewMeshes.begin();it!=skewMeshes.end();){if(!r.alive(target(r,it->second.renderer))){releaseSkew(r,it->second);it=skewMeshes.erase(it);}else ++it;}}
  if(!currentChart)return;P judge=r.get<P>(progress,"judgeControl"),lineList=r.get<P>(judge,"judgeLineControls"),info=r.get<P>(progress,"levelInformation");float now=r.get<float>(progress,"nowTime");NSArray*data=currentChart[@"judgeLineList"];int total=std::min<int>(r.count(lineList),(int)data.count);
  // Android also retires the stock cut-in line for RPE charts once playback is
  // prepared. It is not one of the chart's judgeLineControls and can otherwise
@@ -729,6 +774,8 @@ void visuals(Runtime&r,P progress){
   // attachUI lines carry HUD animation data, not a drawable line/texture.
   // Keep the controller, transforms and indices; suppress only its visual.
   if(uiControlLines.count(i)){
+   auto binding=std::find_if(hudLines.begin(),hudLines.end(),[&](const auto&entry){return entry.second==i;});
+   if(binding!=hudLines.end()&&now>=0){try{updateHud(r,binding->first,line,data[i],now);}catch(const std::exception&e){if(hudErrors.insert(binding->first).second)log([NSString stringWithFormat:@"RPE HUD %d failed: %s",binding->first,e.what()]);}}
    bool no=false;if(r.unbox<bool>(r.call(renderer,"get_enabled")))r.call(renderer,"set_enabled",{"System.Boolean"},{&no});
    auto visual=storyVisuals.find(i);if(visual!=storyVisuals.end()&&visual->second.visible){r.call(visual->second.go,"SetActive",{"System.Boolean"},{&no});visual->second.visible=false;}
    continue;
@@ -758,6 +805,8 @@ void visuals(Runtime&r,P progress){
   for(NSUInteger li=0;li<data.count;++li)for(NSString*side in @[@"notesAbove",@"notesBelow"])for(NSDictionary*n in data[li][side])if([n[@"pmFake"] boolValue]){
    double start=scalar(n[@"pmTime"],scalar(n[@"time"])/64);
    double end=start+((int)scalar(n[@"type"])==3?scalar(n[@"pmDuration"]):0);
+   NSDictionary*decor=data[li][@"pmDecor"];bool cover=decor[@"isCover"]?[decor[@"isCover"]boolValue]:true;
+   if((int)scalar(n[@"type"])!=3&&!cover)end=std::numeric_limits<double>::infinity();
    fakeSchedule.push_back(fakeNotes.size());fakeNotes.push_back({n,(int)li,[side isEqualToString:@"notesBelow"],start,end});
   }
   std::stable_sort(fakeSchedule.begin(),fakeSchedule.end(),[](size_t a,size_t b){return fakeNotes[a].start<fakeNotes[b].start;});
@@ -902,6 +951,9 @@ void visuals(Runtime&r,P progress){
  if(alpha>1)alpha=1;
  alpha*=std::clamp((float)control(decor,@"alphaControl",distance),0.f,1.f);
  if(start-now>scalar(f.note[@"pmVisible"],999999))alpha=0;
+ bool cover=decor[@"isCover"]?[decor[@"isCover"]boolValue]:true;
+ if(rpeCovered(cover,now,start,scalar(f.note[@"floorPosition"]),currentFloor,scalar(f.note[@"pmRawSpeed"],1)))alpha=0;
+ if(!isHold)applySkew(r,renderer,rpeSkew(scalar(f.note[@"positionX"])*75,control(decor,@"skewControl",distance),f.below,size.x,size.y));
  Color color{1,1,1,alpha};
  bool colorChanged=!visual.colorSet||visual.color.a!=color.a;
  auto ends=fakeHoldEnds.find(i);if(ends!=fakeHoldEnds.end())for(int k=0;k<2;++k){
@@ -947,11 +999,26 @@ void prepareHoldHitFX(Runtime&r,P controlObject){
  }
 }
 void noteMoved(Runtime&r,P controlObject,bool hold){
+ if(!r.alive(controlObject))return;
  P note=r.get<P>(controlObject,"noteInfor");auto it=extras.find(note);if(it==extras.end())return;
  NSDictionary*n=it->second;int index=r.get<int>(note,"judgeLineIndex")/2;NSArray*lines=currentChart[@"judgeLineList"];
  NSDictionary*d=index>=0&&index<(int)lines.count?lines[index][@"pmDecor"]:nil;
  P progress=r.get<P>(controlObject,"progressControl"),info=r.get<P>(controlObject,"levelInformation"),tr=r.call(controlObject,"get_transform");
  float now=r.get<float>(progress,"nowTime"),start=r.get<float>(note,"realTime");
+ // Native NoteMove may hide/destroy a judged renderer in this same frame.
+ // Never re-enable it from the RPE visual pass after judgement. Holds are
+ // different: their head can be judged while the body remains drawable.
+ bool controlJudged=r.get<bool>(controlObject,"isJudged");
+ bool controlMissed=hold&&r.get<bool>(controlObject,"missed");
+ bool controlOver=hold&&r.get<bool>(controlObject,"judgeOver");
+ // Do not use ChartNote.isJudged alone: preview/autoplay may reserve it
+ // before the visible controller is actually finished. Preserve native miss fade.
+ bool ended=hold?(controlOver||now>=start+r.get<float>(note,"holdTime")):controlJudged;
+ if(ended){
+  for(const char*field:hold?std::vector<const char*>{"_holdHeadSpriteRenderer","_holdSpriteRenderer","_holdEndSpriteRenderer1"}:std::vector<const char*>{"_spriteRenderer"}){P renderer=r.get<P>(controlObject,field);if(r.alive(renderer)){bool no=false;r.call(renderer,"set_enabled",{"System.Boolean"},{&no});}}
+  return;
+ }
+
  V3 scale=r.unbox<V3>(r.call(tr,"get_localScale"));if(!noteScales.count(controlObject))noteScales[controlObject]=scale;
  double currentFloor=sourceFloor(index,now,floor(r,info,index));
  float delta=scalar(n[@"floorPosition"])-currentFloor;
@@ -1003,6 +1070,9 @@ void noteMoved(Runtime&r,P controlObject,bool hold){
  if(!std::isfinite(alpha)||alpha<0)alpha=0;if(alpha>1)alpha=1;
  if(start-now>scalar(n[@"pmVisible"],999999))alpha=0;
  if(hold&&std::fabs(yControlValue)<0.0001f)alpha=0;
+ bool cover=d[@"isCover"]?[d[@"isCover"]boolValue]:true;
+ if(n[@"pmRawSpeed"]&&rpeCovered(cover,now,start,scalar(n[@"floorPosition"]),currentFloor,scalar(n[@"pmRawSpeed"],1)))alpha=0;
+ if(hold&&now>=start+r.get<float>(note,"holdTime"))alpha=0;
  for(const char*field:hold?std::vector<const char*>{"_holdHeadSpriteRenderer","_holdSpriteRenderer","_holdEndSpriteRenderer1"}:std::vector<const char*>{"_spriteRenderer"}){
   P renderer=r.get<P>(controlObject,field);if(!r.alive(renderer))continue;
   Color color=r.unbox<Color>(r.call(renderer,"get_color"));
@@ -1010,14 +1080,27 @@ void noteMoved(Runtime&r,P controlObject,bool hold){
   // Android: native Hold fading/visibility is based on its constant-speed
   // geometry; do not let it flash a source-geometry Hold during its lifetime.
   bool liveHold=hold&&sourceGeometry&&now<start+r.get<float>(note,"holdTime");
-  color.a=(now<=start||(liveHold&&!r.get<bool>(controlObject,"missed")))?alpha:std::min(color.a,alpha);
-  if(sourceGeometry&&(now<=start||liveHold)){
+  color.a=(sourceGeometry&&!controlMissed)?alpha:std::min(color.a,alpha);
+  if(sourceGeometry&&!controlMissed&&(now<=start||liveHold)){
    bool show=!(hold&&!strcmp(field,"_holdHeadSpriteRenderer")&&r.get<bool>(controlObject,"_holdHeadIsDestroyed"));
+   // This branch is reached only while the control is alive and unjudged (or
+   // while a Hold body is still active), so enabling here cannot resurrect a
+   // Tap/Flick/Drag after its judgement.
    r.call(renderer,"set_enabled",{"System.Boolean"},{&show});
   }
   r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});
   int order=hold?storyHoldOrder:storyNoteOrder;r.call(renderer,"set_sortingOrder",{"System.Int32"},{&order});
  }
+}
+void finishNoteGeometry(Runtime&r,P controlObject,bool hold){
+ if(hold||!currentChart||!r.alive(controlObject)||r.get<bool>(controlObject,"isJudged"))return;P note=r.get<P>(controlObject,"noteInfor");auto found=extras.find(note);if(found==extras.end())return;
+ int index=r.get<int>(note,"judgeLineIndex")/2;NSArray*lines=currentChart[@"judgeLineList"];if(index<0||index>=(int)lines.count)return;
+ NSDictionary*d=lines[index][@"pmDecor"];P renderer=r.get<P>(controlObject,"_spriteRenderer");
+ if(![d[@"skewControl"]count]&&!skewMeshes.count(renderer))return;
+ float now=r.get<float>(r.get<P>(controlObject,"progressControl"),"nowTime");double current=sourceFloor(index,now,0);
+ double distance=(scalar(found->second[@"floorPosition"])-current)*rpeFloorToDistance+scalar(found->second[@"pmYOffset"]);
+ V3 scale=r.unbox<V3>(r.call(r.call(controlObject,"get_transform"),"get_localScale"));
+ applySkew(r,renderer,rpeSkew(scalar(found->second[@"positionX"])*75,control(d,@"skewControl",distance),r.get<int>(note,"judgeLineIndex")%2,scale.x,scale.y));
 }
 void ranking(Runtime&r,P self,P mi,void(*original)(P,P)){if(!baseline){original(self,mi);return;}P previous=r.get<P>(self,"song");uint32_t oldRoot=r.gchandle_new(previous,false);P official=decode(r,baseline,"SongBase");uint32_t newRoot=r.gchandle_new(official,false);try{r.put(self,"song",official);original(self,mi);r.put(self,"song",previous);}catch(...){try{r.put(self,"song",previous);}catch(...){}r.gchandle_free(oldRoot);r.gchandle_free(newRoot);throw;}r.gchandle_free(oldRoot);r.gchandle_free(newRoot);}
 void validatePcmCopy(Runtime&r){
@@ -1034,6 +1117,9 @@ void validatePcmCopy(Runtime&r){
  r.gchandle_free(root);PMDiagnosticsWrite("Content PCM copy preflight passed (4 float elements)");
 }
 void validate(Runtime&r){
+ validateHud(r);
+ r.resolve(r.type("UnityEngine","Sprite"),"OverrideGeometry",{"UnityEngine.Vector2[]","System.UInt16[]"});
+ r.resolve(r.type("UnityEngine","Sprite"),"get_vertices");r.resolve(r.type("UnityEngine","Sprite"),"get_triangles");
  r.field(r.klass("ChapterSelector"),"_chapterInfos","ChapterInfo[]",false);
  r.field(r.klass("ChapterSelector"),"chapterPanel","UnityEngine.RectTransform",false);
  r.field(r.klass("ChapterInfo"),"chapterCode","System.String",false);
