@@ -1,0 +1,13 @@
+
+# Local-only PhiMod artifacts
+ios/audit/
+ios/build/
+**/__pycache__/
+*.pyc
+*.bak
+*.exe
+*.obj
+*.pdb
+*.ipa
+ios/a.out
+ios/t

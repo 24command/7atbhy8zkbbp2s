@@ -1,3 +1,7 @@
+# Current target ? 2026-10-31
+
+Supplied iOS Phigros **4.0.3**, **68 hooks**, build marker `PMGameplay-contract-v2-68-ios403`. See `ADAPTATION_4.0.3.md`. Earlier entries below are historical and do not describe the current target.
+
 # Latest content fix - 2026-10-22
 
 Current source now requires **63 hooks / build 63**. See [CONTENT_FIX_20261022.md](CONTENT_FIX_20261022.md) for the framework16 device report fixes and validation limits. Rebuild and repackage; previous 61-hook binaries are incompatible with this packager.

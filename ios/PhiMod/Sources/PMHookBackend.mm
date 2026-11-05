@@ -58,6 +58,20 @@ using PerfectFn=void(*)(P,float,float,V3,bool,P);
 void diagf(const char *format,...){
  char buffer[768];va_list args;va_start(args,format);vsnprintf(buffer,sizeof(buffer),format,args);va_end(args);PMDiagnosticsWrite(buffer);
 }
+// Capture the synchronous controller responsible for a native Miss; no rule changes.
+P diagnosticJudgeControl=nullptr;unsigned missDiagnosticCount=0;
+struct DiagnosticJudgeScope{P previous;explicit DiagnosticJudgeScope(P control):previous(diagnosticJudgeControl){diagnosticJudgeControl=control;}~DiagnosticJudgeScope(){diagnosticJudgeControl=previous;}};
+void diagnoseNativeMiss(float code){
+ if(missDiagnosticCount++>=32)return;
+ try{auto&r=R();P control=diagnosticJudgeControl;
+  if(!control){diagf("Native Miss code=%.3f source=outside-note-Judge",code);return;}
+  P note=r.get<P>(control,"noteInfor"),progress=r.get<P>(control,"progressControl"),line=r.get<P>(control,"judgeLine");
+  int type=r.get<int>(note,"type"),count=r.get<int>(line,"numOfFingers");float now=r.get<float>(progress,"nowTime"),start=r.get<float>(note,"realTime"),duration=r.get<float>(note,"holdTime"),x=r.get<float>(note,"positionX");
+  float nearest=99999;P fingers=r.get<P>(line,"fingerPositionX");for(int i=0;fingers&&i<count&&uintptr_t(i)<r.array_length(fingers);++i){float position=r.unbox<float>(r.arrayAt(fingers,i));if(std::isfinite(position))nearest=std::min(nearest,std::fabs(position-x));}
+  diagf("Native Miss code=%.3f type=%d line=%d time=%.6f now=%.6f deltaMs=%.2f duration=%.6f fingers=%d nearestX=%.5f lineAngle=%.3f",code,type,r.get<int>(note,"judgeLineIndex"),start,now,(now-start)*1000,duration,count,nearest,r.get<float>(line,"theta"));
+  if(type==3)diagf("Hold Miss detail headJudged=%d missed=%d over=%d safeFrame=%d headOffsetMs=%.2f tailLeftMs=%.2f autoplay=%d noise=%d rate=%.3f",r.get<bool>(control,"judged"),r.get<bool>(control,"missed"),r.get<bool>(control,"judgeOver"),r.get<int>(control,"_safeFrame"),r.get<float>(control,"_judgeTime")*1000,(start+duration-now)*1000,attempt?attempt->options().autoplay:0,attempt?attempt->options().noise:0,attempt?attempt->options().playbackRate:1);
+ }catch(const std::exception&e){diagf("Miss diagnostics failed: %s",e.what());}
+}
 uint32_t realtimeAccuracyRoot=0;P realtimeAccuracyOwner=nullptr,realtimeAccuracyText=nullptr;std::string realtimeAccuracyLast;
 void clearRealtimeAccuracy(Runtime&r){if(realtimeAccuracyRoot){P go=r.gchandle_get_target(realtimeAccuracyRoot);if(r.alive(go))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{go});r.gchandle_free(realtimeAccuracyRoot);}realtimeAccuracyRoot=0;realtimeAccuracyOwner=realtimeAccuracyText=nullptr;realtimeAccuracyLast.clear();diagf("Live ACC display cleared");}
 void updateRealtimeAccuracy(Runtime&r,P score,bool enabled){
@@ -75,7 +89,7 @@ void updateRealtimeAccuracy(Runtime&r,P score,bool enabled){
  int p=r.get<int>(score,"perfect"),g=r.get<int>(score,"good"),b=r.get<int>(score,"bad"),m=r.get<int>(score,"miss"),judged=p+g+b+m;double accuracy=judged>0?100.0*(p+.65*g)/judged:100.0;char text[32];snprintf(text,sizeof(text),"%.2f%%",accuracy);bool visible=r.unbox<bool>(r.call(official,"get_isActiveAndEnabled"));r.call(realtimeAccuracyText,"set_enabled",{"System.Boolean"},{&visible});if(realtimeAccuracyLast!=text){r.text(realtimeAccuracyText,text);realtimeAccuracyLast=text;}
 }
 struct PlaybackJudgeScope{Runtime&r;explicit PlaybackJudgeScope(Runtime&value):r(value){pmpractice::judgeRateEnter(r);}~PlaybackJudgeScope(){pmpractice::judgeRateLeave();}};
-void resetChartRegistration(){registered.clear();}
+void resetChartRegistration(){registered.clear();missDiagnosticCount=0;}
 void restartPracticeSession(){
  if(attempt&&attempt->phase()==phimod::Phase::Playing){attempt->restartSegment();resetChartRegistration();try{pmmodes::restartSegment(R());if(attempt->options().hpEnabled)pmhp::beginAttempt(attempt->hp());diagf("Practice segment session reset hp=%.2f",attempt->hp());}catch(const std::exception&e){diagf("Practice session reset failed: %s",e.what());}}
 }
@@ -211,6 +225,7 @@ void onPerfect(P self,float code,float offset,V3 pos,bool hold,P mi){
  observe(code,offset,phimod::Rating::Perfect);pmfeatures::observe(0);credit(self,code,offset,pos,hold,mi);
 }
 void onMiss(P self,float code,P mi){
+ diagnoseNativeMiss(code);
  if(applying()&&attempt->options().autoplay){
   // Android only defers type-3 holds to their real tail. Ordinary Tap/Drag/
   // Flick misses are converted to an immediate Perfect and must not enter
@@ -308,6 +323,7 @@ void onAddressableAudioUpdate(P self,P mi){
  try{if(pmpractice::ownsAudio(R(),self))pmpractice::audioAfter(R(),self);}catch(const std::exception&e){diagf("Practice audio post-update failed: %s",e.what());}
 }
 bool noteJudge(P self,P mi,h::Index index,bool hold){
+ DiagnosticJudgeScope diagnosticScope(self);
  if(!applying())return orig<JudgeFn>(index)(self,mi);
  auto &r=R();P clock=nullptr,note=nullptr;bool restoreClock=false,restoreX=false;float now=0,oldX=0;
  bool called=false,result=false;

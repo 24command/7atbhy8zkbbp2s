@@ -1010,10 +1010,12 @@ void noteMoved(Runtime&r,P controlObject,bool hold){
  // different: their head can be judged while the body remains drawable.
  bool controlJudged=r.get<bool>(controlObject,"isJudged");
  bool controlMissed=hold&&r.get<bool>(controlObject,"missed");
- bool controlOver=hold&&r.get<bool>(controlObject,"judgeOver");
  // Do not use ChartNote.isJudged alone: preview/autoplay may reserve it
  // before the visible controller is actually finished. Preserve native miss fade.
- bool ended=hold?(controlOver||now>=start+r.get<float>(note,"holdTime")):controlJudged;
+ // judgeOver also means successful early-tail scoring (native end - 0.22s).
+ // It is not a renderer lifetime flag. Let native missed Holds fade, and keep
+ // successful bodies/skin geometry through the authored end time.
+ bool ended=hold?now>=start+r.get<float>(note,"holdTime"):controlJudged;
  if(ended){
   for(const char*field:hold?std::vector<const char*>{"_holdHeadSpriteRenderer","_holdSpriteRenderer","_holdEndSpriteRenderer1"}:std::vector<const char*>{"_spriteRenderer"}){P renderer=r.get<P>(controlObject,field);if(r.alive(renderer)){bool no=false;r.call(renderer,"set_enabled",{"System.Boolean"},{&no});}}
   return;

@@ -5,15 +5,43 @@ on:
     paths:
       - 'ios/PhiMod/**'
       - 'ios/build_unsigned.sh'
+      - 'ios/tests/**'
+      - 'ios/tools/**'
+      - 'ios/shader-compiler/**'
       - '.github/workflows/build-ios.yml'
 permissions:
   contents: read
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - name: Test portable gameplay core
+        run: bash ios/tests/run_core_tests.sh
+      - name: Test generated arm64 judge trampolines
+        run: |
+          python3 -m venv "$RUNNER_TEMP/judge-tests"
+          "$RUNNER_TEMP/judge-tests/bin/pip" install --disable-pip-version-check unicorn==2.1.4
+          "$RUNNER_TEMP/judge-tests/bin/python" ios/tests/test_judge_patch.py
+      - name: Test gameplay gates and protocol
+        run: |
+          "$RUNNER_TEMP/judge-tests/bin/python" ios/tests/test_gameplay_hooks.py
+          "$RUNNER_TEMP/judge-tests/bin/python" ios/tests/test_source_contracts.py
+          "$RUNNER_TEMP/judge-tests/bin/python" ios/tests/test_resume_integrity.py
+      - name: Test chart conversion and safe archives
+        run: bash ios/tests/run_content_tests.sh
+      - name: Test iOS Metal shader presets
+        run: bash ios/tests/run_shader_tests.sh
+      - name: Test full GLSL compiler and generated Metal
+        run: |
+          cmake -S ios/shader-compiler -B "$RUNNER_TEMP/shader-host" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/shader-host" --target pmshadercompiler-test --parallel 3
+          mkdir -p "$RUNNER_TEMP/full-shaders"
+          "$RUNNER_TEMP/shader-host/pmshadercompiler-test" "$RUNNER_TEMP/full-shaders"
+          for shader in "$RUNNER_TEMP/full-shaders/"*.metal; do
+            xcrun --sdk iphoneos metal -std=ios-metal2.3 -c "$shader" -o "$shader.air"
+          done
       - name: Build arm64 framework
         run: bash ios/build_unsigned.sh "$RUNNER_TEMP/out"
       - name: Verify and archive
@@ -21,6 +49,15 @@ jobs:
           file "$RUNNER_TEMP/out/PhiMod.framework/PhiMod"
           xcrun lipo -info "$RUNNER_TEMP/out/PhiMod.framework/PhiMod"
           codesign --verify --verbose "$RUNNER_TEMP/out/PhiMod.framework"
+          python3 - "$RUNNER_TEMP/out/PhiMod.framework/PhiMod" <<'PY'
+          import sys
+          from pathlib import Path
+          binary = Path(sys.argv[1]).read_bytes()
+          for marker in (b"PMJudgeHook-v1", b"PMGameplay-v2", b"PMGameplay-contract-v2-68-ios403"):
+              assert marker in binary, f"Missing build marker: {marker!r}"
+          assert b"PMGameplay-v1" not in binary, "Stale gameplay protocol"
+          print("PASS: framework judge/gameplay protocol v2, 68 hooks")
+          PY
           cd "$RUNNER_TEMP/out"
           ditto -c -k --keepParent PhiMod.framework PhiMod.framework.zip
       - uses: actions/upload-artifact@v4
