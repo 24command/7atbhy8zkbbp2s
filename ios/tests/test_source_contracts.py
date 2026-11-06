@@ -91,7 +91,12 @@ class SourceContracts(unittest.TestCase):
   self.assertIn('levelOverStarted=true',hook)
   self.assertIn('void clearGameplayMask(Runtime&r,P progressControl)',hook)
   self.assertIn('clearGameplayMask(r,progressControl)',hook)
-  self.assertIn('orig<VoidFn>(h::judgeUpdate)(self,mi)',hook)
+  self.assertIn('pmcontent::judgeWithHudPause(r,self,mi,orig<VoidFn>(h::judgeUpdate))',hook)
+  content=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text(encoding='utf-8')
+  wrapper=content[content.index('void judgeWithHudPause('):content.index('void visuals(')]
+  self.assertIn('if(binding==hudBindings.end()){original(judge,mi);return;}',wrapper)
+  self.assertIn('try{original(judge,mi);}catch(...){if(mapped)r.put(info,"canPause",canPause);throw;}',wrapper)
+  self.assertIn('if(mapped)r.put(info,"canPause",canPause);',wrapper)
   self.assertIn('tickGameplay(r,progressControl,"JudgeControl.Update")',hook)
   judge_update=hook[hook.index('void onJudgeUpdate('):hook.index('void onAddressableAudioUpdate(')]
   self.assertLess(judge_update.index('ensureFloorArray('),judge_update.index('orig<VoidFn>(h::judgeUpdate)'))
@@ -309,7 +314,7 @@ class SourceContracts(unittest.TestCase):
  def test_content_build_includes_vendors_frameworks_and_host_tests(self):
   build=(ROOT/'build_unsigned.sh').read_text(encoding='utf-8')
   for name in ('PMZipVendor.cpp','PMVorbisVendor.cpp','AVFoundation','UniformTypeIdentifiers'):self.assertIn(name,build)
-  workflow=(ROOT/'.github/workflows/build-ios.yml').read_text(encoding='utf-8')
+  workflow=next(p for p in (ROOT.parent/'.github/workflows/build-ios.yml',ROOT/'.github/workflows/build-ios.yml') if p.is_file()).read_text(encoding='utf-8')
   self.assertIn('run_content_tests.sh',workflow)
  def test_content_audio_uses_retained_ios_overload_and_readback(self):
   source=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text(encoding='utf-8')
@@ -417,12 +422,22 @@ public static class Marshal // TypeDefIndex: 3
   judge=hook[hook.index('void onJudgeUpdate('):hook.index('void onAddressableAudioUpdate(')]
   self.assertLess(manager.index('pmpractice::entryLoading'),manager.index('orig<VoidFn>(h::noteManager)'))
   self.assertLess(judge.index('pmpractice::entryLoading'),judge.index('orig<VoidFn>(h::judgeUpdate)'))
- def test_practice_skip_counts_initial_notes_as_misses(self):
+ def test_practice_prefix_is_settled_silently_for_manual_and_autoplay(self):
   source=(ROOT/'PhiMod/Sources/PMPracticePreview.mm').read_text(encoding='utf-8')
-  self.assertIn('if(skipped)++skippedCount;',source)
+  self.assertIn('if(skipped){++skippedCount;settledNotes.insert(n.note);}',source)
   self.assertIn('r.put(n.note,"isJudged",skipped)',source)
   practice=(ROOT/'PhiMod/Sources/PMPractice.mm').read_text(encoding='utf-8')
-  self.assertIn('r.put(score,"miss",skippedNotes)',practice)
+  self.assertIn('r.put(score,"miss",autoplay?0:skippedNotes)',practice)
+  self.assertIn('r.put(score,"perfect",autoplay?skippedNotes:0)',practice)
+  self.assertIn('r.get<float>(note,"noteCode")+(autoplay?3.5f:0.f)',practice)
+  self.assertIn('r.call(codes,"Clear")',practice)
+  prefix=practice[practice.index('void prepareRange('):practice.index('void resumeAt(')]
+  self.assertNotIn('r.call(score,"Miss"',prefix)
+  self.assertNotIn('r.call(score,"Perfect"',prefix)
+  hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf-8')
+  create=hook[hook.index('void onCreateNote('):hook.index('void onNoteManager(')]
+  self.assertIn('pmpracticepreview::settled(r.at(notes,index))',create)
+  self.assertLess(create.index('pmpracticepreview::settled'),create.index('orig<void(*)(P,int,bool,P)>'))
   self.assertIn('skippedNotes==0',practice)
  def test_practice_transport_tap_activates_on_release(self):
   source=(ROOT/'PhiMod/Sources/PMPracticeControls.mm').read_text(encoding='utf-8')

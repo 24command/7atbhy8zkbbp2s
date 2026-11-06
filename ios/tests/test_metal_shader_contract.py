@@ -19,6 +19,6 @@ class MetalShaderContract(unittest.TestCase):
   self.assertIn('PMMetalShadersTick(',features)
   self.assertIn('-framework Metal',(R/'build_unsigned.sh').read_text(encoding='utf-8'))
  def test_host_shader_check_in_ci(self):
-  self.assertIn('run_shader_tests.sh',(R/'.github/workflows/build-ios.yml').read_text(encoding='utf-8'))
+  self.assertIn('run_shader_tests.sh',next(p for p in (R.parent/'.github/workflows/build-ios.yml',R/'.github/workflows/build-ios.yml') if p.is_file()).read_text(encoding='utf-8'))
   self.assertIn('xcrun --sdk iphoneos metal',(R/'tests/run_shader_tests.sh').read_text(encoding='utf-8'))
 if __name__=='__main__':unittest.main()
