@@ -396,7 +396,7 @@ void noteMoved(Runtime&r,void*control,bool hold){try{P c=control;
   P note=r.get<P>(c,"noteInfor"),progress=r.get<P>(c,"progressControl");
   if(!note||!progress||r.get<float>(progress,"nowTime")>=r.get<float>(note,"realTime")+r.get<float>(note,"holdTime"))return;
  }
- else if(r.get<bool>(c,"isJudged"))return;
+ else if(r.get<int>(r.get<P>(c,"noteInfor"),"type")==1&&r.get<bool>(c,"isJudged"))return;
  applyNote(r,c,hold);if(hold)adjustHold(r,c);}catch(const std::exception&e){if(skinErrors.insert(e.what()).second)logf("Skin note update failed: %s",e.what());}}
 void tick(Runtime&r,void*progress){PMMetalShadersTick(r.get<float>(progress,"nowTime"));try{updateVideos(r,progress);updateLegacy(r,progress);}catch(const std::exception&e){logf("Feature update failed: %s",e.what());}}
 }

@@ -13,6 +13,7 @@
 #include "PMRuntimeFeatures.hpp"
 #include "PMUnlockRuntime.hpp"
 #include "../Core/PMFlowCore.hpp"
+#include "../Core/PMHoldTail.hpp"
 #include "../Core/PMHookProtocol.hpp"
 #include "../Core/PMHookManifest.hpp"
 #include <atomic>
@@ -358,21 +359,27 @@ bool noteJudge(P self,P mi,h::Index index,bool hold){
 bool onClick(P s,P m){return noteJudge(s,m,h::click,false);}
 bool onDrag(P s,P m){return noteJudge(s,m,h::drag,false);}
 bool onHold(P s,P m){
- auto&r=R();P note=nullptr;float duration=0;bool adjusted=false;
+ auto&r=R();P note=nullptr;float duration=0;bool adjusted=false,safeAdjusted=false;int oldSafe=0;
+ PlaybackJudgeScope tailRate(r);
  try{
   note=r.get<P>(s,"noteInfor");
   if(pmcontent::shortSourceHold(r,note)){
    duration=r.get<float>(note,"holdTime");
-   // 4.0.3 Judge finishes at realTime + holdTime - 0.22.
-   // For a short source Hold, cancel that early-tail allowance only during
-   // Judge; restore before the next NoteMove/preview/registration frame.
+   // Preserve native head quality, but allow the source Hold's final
+   // Perfect window. Native Judge checks release BEFORE tail completion.
    registerOne(note);
-   r.put(note,"holdTime",duration+.22f);adjusted=true;
+   P progress=r.get<P>(s,"progressControl");float now=r.get<float>(progress,"nowTime");
+   float perfect=r.staticValue<float>(r.klass("JudgeControl"),"PerfectTimeRange","System.Single");
+   auto plan=phimod::shortHoldTail(r.get<float>(note,"realTime"),duration,now,perfect,r.get<bool>(s,"judged"),r.get<bool>(s,"missed"),r.get<bool>(s,"judgeOver"));
+   r.put(note,"holdTime",plan.adjustedDuration);adjusted=true;
+   if(plan.protectRelease){oldSafe=r.get<int>(s,"_safeFrame");if(oldSafe<1){r.put(s,"_safeFrame",1);safeAdjusted=true;}}
+
   }
  }catch(const std::exception&e){diagf("Short Hold scope setup: %s",e.what());}
  bool result=false;
- try{result=noteJudge(s,m,h::hold,true);}catch(...){if(adjusted)r.put(note,"holdTime",duration);throw;}
+ try{result=noteJudge(s,m,h::hold,true);}catch(...){if(adjusted)r.put(note,"holdTime",duration);if(safeAdjusted&&r.get<int>(s,"_safeFrame")<=1)r.put(s,"_safeFrame",oldSafe);throw;}
  if(adjusted)r.put(note,"holdTime",duration);
+ if(safeAdjusted&&r.get<int>(s,"_safeFrame")<=1)r.put(s,"_safeFrame",oldSafe);
  return result;
 }
 bool onFlick(P s,P m){return noteJudge(s,m,h::flick,false);}

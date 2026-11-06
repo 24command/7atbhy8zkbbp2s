@@ -94,9 +94,9 @@ class SourceContracts(unittest.TestCase):
   self.assertIn('pmcontent::judgeWithHudPause(r,self,mi,orig<VoidFn>(h::judgeUpdate))',hook)
   content=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text(encoding='utf-8')
   wrapper=content[content.index('void judgeWithHudPause('):content.index('void visuals(')]
-  self.assertIn('if(binding==hudBindings.end()){original(judge,mi);return;}',wrapper)
-  self.assertIn('try{original(judge,mi);}catch(...){if(mapped)r.put(info,"canPause",canPause);throw;}',wrapper)
-  self.assertIn('if(mapped)r.put(info,"canPause",canPause);',wrapper)
+  self.assertEqual(wrapper.count('original(judge,mi);'),1)
+  self.assertNotIn('r.put(',wrapper)
+  self.assertNotIn('InverseTransformPoint',wrapper)
   self.assertIn('tickGameplay(r,progressControl,"JudgeControl.Update")',hook)
   judge_update=hook[hook.index('void onJudgeUpdate('):hook.index('void onAddressableAudioUpdate(')]
   self.assertLess(judge_update.index('ensureFloorArray('),judge_update.index('orig<VoidFn>(h::judgeUpdate)'))

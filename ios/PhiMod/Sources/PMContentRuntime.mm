@@ -9,6 +9,7 @@
 #import <UIKit/UIKit.h>
 #include "../Core/PMRPECore.hpp"
 #include "../Core/PMRPEGeometry.hpp"
+#include "../Core/PMHoldTail.hpp"
 #include "../Core/PMChartCore.hpp"
 #include "../Core/PMRPEHud.hpp"
 #include <algorithm>
@@ -35,7 +36,8 @@ float loadingPosition=0;double selectionChangedAt=0;bool selectorDragging=true;
 P extrasBoundChart=nullptr;
 std::map<std::string,std::map<int,NSDictionary*>>variants;std::map<P,NSDictionary*>extras;std::map<P,V3>noteScales,lineScales;std::map<int,uint32_t>decorText,decorImage;
 struct StoryVisual {P go=nullptr,tr=nullptr,graphic=nullptr,canvas=nullptr;bool text=false,visible=true;NSString*lastText=nil;};
-std::map<int,StoryVisual>storyVisuals;std::map<int,double>storyRetry;std::set<int>storyReported;
+std::map<int,StoryVisual>storyVisuals;
+std::map<int,P>plainLineRenderers;std::map<int,double>storyRetry;std::set<int>storyReported;
 NSArray*storyFiles=nil;bool storyIndexed=false;P storyFrameCamera=nullptr;float storyFrameWidth=0;std::map<std::string,P>storySprites;P storyMaterial=nullptr;
 struct Fake{NSDictionary*note;int line;bool below;double start,end;};
 struct FakeVisualCache{P transform=nullptr;P capTransforms[2]{};Bounds bounds{};bool shown=false;bool capShown[2]{false,false};bool colorSet=false,scaleSet=false;Color color{};V3 scale{};};
@@ -187,7 +189,7 @@ P audio(Runtime&r,NSString*path){
  }catch(...){r.gchandle_free(clipRoot);throw;}
 }
 NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=[[key stringByReplacingOccurrencesOfString:id withString:@""]lowercaseString];*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":[lower containsString:@"blur"]?@"blur":@"image";return id;}
-void clearVisuals(Runtime&r){clearSkew(r);clearHud(r);restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();extrasBoundChart=nullptr;noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();uiControlLines.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
+void clearVisuals(Runtime&r){clearSkew(r);clearHud(r);restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();extrasBoundChart=nullptr;noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();plainLineRenderers.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();uiControlLines.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
 void applyCachedChapterCover(Runtime&r,P card,const char*codeField,const char*loaderField){
  NSString*code=r.string(r.get<P>(card,codeField));if(!code.length)return;auto found=assets.find(code.UTF8String);if(found==assets.end())return;P sprite=target(r,found->second);if(!r.alive(sprite))return;
  P loader=r.get<P>(card,loaderField);if(!r.alive(loader))return;bool changed=false;
@@ -730,30 +732,9 @@ void updateStory(Runtime&r,int index,P line,P nativeRenderer,NSDictionary*d,NSAr
 
 }
 void judgeWithHudPause(Runtime&r,P judge,P mi,void(*original)(P,P)){
- auto binding=hudBindings.find(1);if(binding==hudBindings.end()){original(judge,mi);return;}
- auto&h=binding->second;P progress=r.get<P>(judge,"progressControl"),info=r.get<P>(progress,"levelInformation");
- bool canPause=r.get<bool>(info,"canPause");
- if(!canPause||r.get<bool>(judge,"stopJudge")||!r.get<bool>(progress,"isPlaying")||r.get<float>(progress,"nowTime")<0){original(judge,mi);return;}
- P tr=target(r,h.wrapper),parent=target(r,h.parent),element=target(r,h.element);
- if(!r.alive(tr)||!r.alive(parent)||!r.alive(element)){original(judge,mi);return;}
- bool mapped=false;
- try{
-  P wrapperTr=r.call(tr,"get_transform");V3 scale=r.unbox<V3>(r.call(wrapperTr,"get_localScale"));
-  bool visible=h.alpha>.001f&&std::fabs(scale.x)>.00001f&&std::fabs(scale.y)>.00001f&&r.unbox<bool>(r.call(element,"get_activeInHierarchy"));
-  P fingers=r.get<P>(r.get<P>(judge,"fingerManagement"),"fingers");
-  mapped=true; // Never replay a partially processed pause touch at the old location.
-  if(visible)for(int i=0,n=r.count(fingers);i<n;++i){P finger=r.at(fingers,i);if(r.get<int>(finger,"phase")!=0)continue;
-   V2 saved=r.get<V2>(finger,"nowPosition");V3 point{saved.x,saved.y,0};
-   V3 local=r.unbox<V3>(r.call(wrapperTr,"InverseTransformPoint",{"UnityEngine.Vector3"},{&point}));
-   V3 base=r.unbox<V3>(r.call(parent,"TransformPoint",{"UnityEngine.Vector3"},{&local}));if(!std::isfinite(base.x)||!std::isfinite(base.y))continue;
-   V2 translated{base.x,base.y};r.put(finger,"nowPosition",translated);
-   try{r.call(judge,"CheckPause",{"System.Int32"},{&i});}catch(...){r.put(finger,"nowPosition",saved);throw;}r.put(finger,"nowPosition",saved);
-  }
-  mapped=true;
- }catch(const std::exception&e){if(hudErrors.insert(0).second)log([NSString stringWithFormat:@"RPE HUD pause mapping failed: %s",e.what()]);}
- if(mapped)r.put(info,"canPause",false);
- try{original(judge,mi);}catch(...){if(mapped)r.put(info,"canPause",canPause);throw;}
- if(mapped)r.put(info,"canPause",canPause);
+ // attachUI animates the icon only. Keep the native top-left double-tap
+ // region, including when the animated icon is hidden or scaled to zero.
+ (void)r;original(judge,mi);
 }
 void visuals(Runtime&r,P progress){
  storyFrameCamera=nullptr;storyFrameWidth=0;
@@ -782,7 +763,7 @@ void visuals(Runtime&r,P progress){
   }
   if(inertLineVisuals.count(i)){if(r.unbox<bool>(r.call(renderer,"get_enabled"))){bool no=false;r.call(renderer,"set_enabled",{"System.Boolean"},{&no});}continue;}
   P tr=r.call(line,"get_transform");NSDictionary*d=data[i][@"pmDecor"];if(!d)continue;
-  V3 scale=r.unbox<V3>(r.call(tr,"get_localScale"));if(!lineScales.count(line))lineScales[line]=scale;scale=lineScales[line];scale.x*=trackValue(d[@"scaleXEvents"],now,1);scale.y*=trackValue(d[@"scaleYEvents"],now,1);r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});
+  // Extended line scale is visual-only; never scale the note/controller parent.
   NSString*textureName=[d[@"Texture"] isKindOfClass:NSString.class]?d[@"Texture"]:nil;
   bool story=[d[@"textEvents"] count]>0||(textureName.length&&![textureName isEqualToString:@"line.png"]);
   Color color=story?Color{1,1,1,1}:r.unbox<Color>(r.call(renderer,"get_color"));
@@ -797,7 +778,29 @@ void visuals(Runtime&r,P progress){
   int order=i<(int)storyOrders.size()?storyOrders[i]:3+i*2;
   r.call(renderer,"set_sortingOrder",{"System.Int32"},{&order});
   r.call(renderer,"set_color",{"UnityEngine.Color"},{&color});
+  if(!story&&([d[@"scaleXEvents"]count]||[d[@"scaleYEvents"]count])){
+   P display=nullptr;auto existing=plainLineRenderers.find(i);
+   if(existing!=plainLineRenderers.end())display=existing->second;
+   if(!r.alive(display)){
+    P sprite=r.call(renderer,"get_sprite");if(!r.alive(sprite))continue;
+    P go=r.object_new(r.type("UnityEngine","GameObject"));uint32_t handle=r.gchandle_new(go,false);
+    try{
+     r.call(go,".ctor",{"System.String"},{r.string_new("PhiMod Line Visual")});
+     int layer=r.unbox<int>(r.call(r.call(line,"get_gameObject"),"get_layer"));r.call(go,"set_layer",{"System.Int32"},{&layer});
+     P child=r.call(go,"get_transform");bool world=false;r.call(child,"SetParent",{"UnityEngine.Transform","System.Boolean"},{tr,&world});
+     display=addComponent(r,go,r.type("UnityEngine","SpriteRenderer"));
+     P material=r.call(renderer,"get_sharedMaterial");if(r.alive(material))r.call(display,"SetMaterial",{"UnityEngine.Material"},{material});
+     visualRoots.push_back(handle);plainLineRenderers[i]=display;
+    }catch(...){if(r.alive(go))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{go});r.gchandle_free(handle);throw;}
+   }
+   P child=r.call(display,"get_transform");V3 scale{(float)trackValue(d[@"scaleXEvents"],now,1),(float)trackValue(d[@"scaleYEvents"],now,1),1};
+   r.call(child,"set_localScale",{"UnityEngine.Vector3"},{&scale});
+   r.call(display,"set_sprite",{"UnityEngine.Sprite"},{r.call(renderer,"get_sprite")});
+   int layer=r.unbox<int>(r.call(renderer,"get_sortingLayerID"));r.call(display,"set_sortingLayerID",{"System.Int32"},{&layer});r.call(display,"set_sortingOrder",{"System.Int32"},{&order});r.call(display,"set_color",{"UnityEngine.Color"},{&color});
+   bool visible=color.a>0;r.call(display,"set_enabled",{"System.Boolean"},{&visible});bool no=false;r.call(renderer,"set_enabled",{"System.Boolean"},{&no});
+  }else{
   updateStory(r,i,line,renderer,d,data[i][@"judgeLineDisappearEvents"],scalar(data[i][@"bpm"],120),now,progress,color,order);
+  }
  }
  // Fake notes are independent SpriteRenderers: never native score/judgement
  // controllers. Only the local 8-second window is allocated.
@@ -1015,7 +1018,7 @@ void noteMoved(Runtime&r,P controlObject,bool hold){
  // judgeOver also means successful early-tail scoring (native end - 0.22s).
  // It is not a renderer lifetime flag. Let native missed Holds fade, and keep
  // successful bodies/skin geometry through the authored end time.
- bool ended=hold?now>=start+r.get<float>(note,"holdTime"):controlJudged;
+ bool ended=phimod::noteRenderFinished(r.get<int>(note,"type"),controlJudged,now,start,hold?r.get<float>(note,"holdTime"):0);
  if(ended){
   for(const char*field:hold?std::vector<const char*>{"_holdHeadSpriteRenderer","_holdSpriteRenderer","_holdEndSpriteRenderer1"}:std::vector<const char*>{"_spriteRenderer"}){P renderer=r.get<P>(controlObject,field);if(r.alive(renderer)){bool no=false;r.call(renderer,"set_enabled",{"System.Boolean"},{&no});}}
   return;
@@ -1095,7 +1098,7 @@ void noteMoved(Runtime&r,P controlObject,bool hold){
  }
 }
 void finishNoteGeometry(Runtime&r,P controlObject,bool hold){
- if(hold||!currentChart||!r.alive(controlObject)||r.get<bool>(controlObject,"isJudged"))return;P note=r.get<P>(controlObject,"noteInfor");auto found=extras.find(note);if(found==extras.end())return;
+ if(hold||!currentChart||!r.alive(controlObject))return;P note=r.get<P>(controlObject,"noteInfor");auto found=extras.find(note);if(found==extras.end())return;
  int index=r.get<int>(note,"judgeLineIndex")/2;NSArray*lines=currentChart[@"judgeLineList"];if(index<0||index>=(int)lines.count)return;
  NSDictionary*d=lines[index][@"pmDecor"];P renderer=r.get<P>(controlObject,"_spriteRenderer");
  if(![d[@"skewControl"]count]&&!skewMeshes.count(renderer))return;
