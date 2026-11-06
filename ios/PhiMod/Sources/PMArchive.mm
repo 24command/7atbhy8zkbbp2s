@@ -24,8 +24,14 @@ static NSArray<NSString*>*PMExtractArchiveImpl(NSString*archive,NSString*destina
 NSArray<NSString*>*PMExtractArchive(NSString*archive,NSString*destination,NSError**error){return PMExtractArchiveImpl(archive,destination,100000,1024ull*1024*1024,512ull*1024*1024,error);}
 NSArray<NSString*>*PMExtractArchiveLimited(NSString*archive,NSString*destination,NSUInteger maxEntries,unsigned long long maxUncompressed,unsigned long long maxFile,NSError**error){return PMExtractArchiveImpl(archive,destination,maxEntries,maxUncompressed,maxFile,error);}
 BOOL PMCreateArchive(NSString*folder,NSString*output,NSError**error){
+ // NSURL enumeration may canonicalize /var to /private/var on Apple systems.
+ // Derive archive-relative names from the same canonical root as enumerated URLs.
+ folder=folder.stringByStandardizingPath.stringByResolvingSymlinksInPath;
+ NSString*prefix=[folder stringByAppendingString:@"/"];
  mz_zip_archive zip{};if(!mz_zip_writer_init_file(&zip,output.fileSystemRepresentation,0)){if(error)*error=PMArchiveError(@"无法创建导出文件");return NO;}BOOL ok=YES;
  NSDirectoryEnumerator*entries=[NSFileManager.defaultManager enumeratorAtURL:[NSURL fileURLWithPath:folder] includingPropertiesForKeys:@[NSURLIsRegularFileKey,NSURLIsSymbolicLinkKey] options:NSDirectoryEnumerationSkipsHiddenFiles errorHandler:nil];
- for(NSURL*url in entries){NSNumber*file=nil,*symlink=nil;[url getResourceValue:&file forKey:NSURLIsRegularFileKey error:nil];[url getResourceValue:&symlink forKey:NSURLIsSymbolicLinkKey error:nil];if(symlink.boolValue){ok=NO;break;}if(!file.boolValue)continue;NSString*name=[url.path substringFromIndex:folder.length+1];if(!mz_zip_writer_add_file(&zip,name.UTF8String,url.fileSystemRepresentation,nullptr,0,MZ_BEST_SPEED)){ok=NO;break;}}
+ for(NSURL*url in entries){NSNumber*file=nil,*symlink=nil;[url getResourceValue:&file forKey:NSURLIsRegularFileKey error:nil];[url getResourceValue:&symlink forKey:NSURLIsSymbolicLinkKey error:nil];if(symlink.boolValue){ok=NO;break;}if(!file.boolValue)continue;NSString*path=url.path.stringByStandardizingPath.stringByResolvingSymlinksInPath;
+ if(![path hasPrefix:prefix]){ok=NO;break;}
+ NSString*name=[path substringFromIndex:prefix.length];if(!mz_zip_writer_add_file(&zip,name.UTF8String,url.fileSystemRepresentation,nullptr,0,MZ_BEST_SPEED)){ok=NO;break;}}
  if(ok)ok=mz_zip_writer_finalize_archive(&zip);mz_zip_writer_end(&zip);if(!ok&&error)*error=PMArchiveError(@"导出压缩包失败");return ok;
 }
