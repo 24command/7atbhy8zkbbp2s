@@ -368,21 +368,25 @@ namespace {
 double selectorNow(){return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();}
 void observeSelector(Runtime&r,P selector){
  int index=r.get<int>(selector,"nowSong"),slot=r.get<int>(selector,"nowLevel");float position=r.get<float>(selector,"nowSongSelectorValue");
- bool moving=r.get<bool>(selector,"isMoving")||r.get<bool>(selector,"isJumping")||r.get<bool>(selector,"fingerOnSongList")||r.unbox<int>(r.stat(r.type("UnityEngine","Input"),"get_touchCount"))>0;
+ // Native transition flags can outlive positional movement while assets load.
+ // Settle on actual position/selection changes and touches, not asset-dependent flags.
+ bool moving=r.unbox<int>(r.stat(r.type("UnityEngine","Input"),"get_touchCount"))>0;
  bool changed=index!=loadingSong||slot!=loadingSlot||std::fabs(position-loadingPosition)>.001f;
  if(changed||moving)selectionChangedAt=selectorNow();
  selectorDragging=moving;loadingPosition=position;loadingSong=index;loadingSlot=slot;
  selectedAssetIDs.clear();P items=r.call(selector,"get_SongItems");if(index<0||index>=r.count(items))return;
  P item=r.at(items,index),song=r.get<P>(item,"songInfo");NSString*group=r.string(r.get<P>(song,"songsId"));
- if(changed&&selectorSongIDs.count(group.UTF8String?:"")){P cover=r.get<P>(item,"cover");NSString*blur=r.string(r.get<P>(item,"coverBlurAssetCode"));
+ try{if(changed&&selectorSongIDs.count(group.UTF8String?:"")){P cover=r.get<P>(item,"cover");NSString*blur=r.string(r.get<P>(item,"coverBlurAssetCode"));
   if(blur.length&&r.alive(cover)&&!r.get<bool>(cover,"loadedImage")&&!r.get<bool>(cover,"loadedLowResImage")){
    r.call(cover,"CheckInitialized");r.call(cover,"SetLowResImage",{"System.String"},{r.managedString(blur)});
   }
- }
+ }}catch(const std::exception&e){log([NSString stringWithFormat:@"Selector low-res preview failed (full cover continues): %s",e.what()]);}
  if(group.length)selectedAssetIDs.insert(group.UTF8String);
  auto found=variants.find(group.UTF8String?:"");if(found!=variants.end()){auto member=found->second.find(slot);if(member!=found->second.end()){NSString*id=member->second[@"id"];if(id.length)selectedAssetIDs.insert(id.UTF8String);}}
  for(const char*field:{"coverAssetCode"}){NSString*kind=nil,*id=keyID(r.string(r.get<P>(item,field)),&kind);if(id.length)selectedAssetIDs.insert(id.UTF8String);}
- P preview=r.get<P>(item,"previewClipPlayer");if(r.alive(preview)){NSString*kind=nil,*id=keyID(r.string(r.get<P>(preview,"clipCode")),&kind);if(id.length)selectedAssetIDs.insert(id.UTF8String);}
+ P coverLoader=r.get<P>(item,"cover");if(r.alive(coverLoader)){NSString*kind=nil,*id=keyID(r.string(r.call(coverLoader,"get_Code")),&kind);if(id.length)selectedAssetIDs.insert(id.UTF8String);}
+ // Preview bookkeeping must not abort completion of an already-selected cover.
+ try{P preview=r.get<P>(item,"previewClipPlayer");if(r.alive(preview)){NSString*kind=nil,*id=keyID(r.string(r.get<P>(preview,"clipCode")),&kind);if(id.length)selectedAssetIDs.insert(id.UTF8String);}}catch(const std::exception&e){static bool reported=false;if(!reported){reported=true;log([NSString stringWithFormat:@"Selector preview key lookup failed (cover continues): %s",e.what()]);}}
 }
 void completeSelectorAsset(Runtime&r,P asset){
  auto found=selectorAssets.find(asset);if(found==selectorAssets.end())return;
