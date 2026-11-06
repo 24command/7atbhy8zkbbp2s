@@ -548,6 +548,7 @@ void onCreateNote(P self,int index,bool above,P mi){
   auto&r=R();P notes=r.get<P>(self,above?"notesAbove":"notesBelow");
   if(index>=0&&index<r.count(notes)&&pmpracticepreview::settled(r.at(notes,index)))return;
  }
+ if(pmcontent::hasNoteController(R(),self,index,above))return;
  orig<void(*)(P,int,bool,P)>(h::lineCreateNote)(self,index,above,mi);
 }
 void onNoteManager(P self,P mi){
@@ -558,7 +559,7 @@ void onNoteManager(P self,P mi){
    if(applying())try{pmmodes::frame(R(),self);}catch(const std::exception&e){fault(e);}
  // Native NoteUpdateManager.Update calls JudgeLineControl.UpdateInfo for all
  // lines. Apply custom visibility afterwards, never from a competing Update.
- try{auto&r=R();pmcontent::visuals(r,r.get<P>(self,"progressControl"));}catch(const std::exception&e){diagf("Post-note-manager visuals failed: %s",e.what());}
+ try{auto&r=R();pmcontent::recoverSourceNotes(r,self);pmcontent::visuals(r,r.get<P>(self,"progressControl"));}catch(const std::exception&e){diagf("Post-note-manager visuals failed: %s",e.what());}
 }
 bool onBlocking(P self,V2 point,P*out,P mi){
  if(applying())try{bool handled=false;bool value=pmmodes::blocking(R(),{point.x,point.y},out,handled);if(handled)return value;}catch(const std::exception&e){fault(e);}

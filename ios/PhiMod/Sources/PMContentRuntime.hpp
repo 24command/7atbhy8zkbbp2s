@@ -17,6 +17,8 @@ void beforeInformation(pmbridge::Runtime&,void*level);
 void beforeChart(pmbridge::Runtime&,void*level);void afterChart(pmbridge::Runtime&,void*level);
 void prepareHoldHitFX(pmbridge::Runtime&,void*control);
 void judgeWithHudPause(pmbridge::Runtime&,void*,void*,void(*)(void*,void*));
+bool hasNoteController(pmbridge::Runtime&,void*line,int index,bool above);
+void recoverSourceNotes(pmbridge::Runtime&,void*manager);
 void visuals(pmbridge::Runtime&,void*progress);void noteMoved(pmbridge::Runtime&,void*control,bool hold);
 void finishNoteGeometry(pmbridge::Runtime&,void*control,bool hold);
 void ranking(pmbridge::Runtime&,void*,void*,void(*)(void*,void*));

@@ -93,7 +93,7 @@ class SourceContracts(unittest.TestCase):
   self.assertIn('clearGameplayMask(r,progressControl)',hook)
   self.assertIn('pmcontent::judgeWithHudPause(r,self,mi,orig<VoidFn>(h::judgeUpdate))',hook)
   content=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text(encoding='utf-8')
-  wrapper=content[content.index('void judgeWithHudPause('):content.index('void visuals(')]
+  wrapper=content[content.index('void judgeWithHudPause('):content.index('\n}',content.index('void judgeWithHudPause('))+2]
   self.assertEqual(wrapper.count('original(judge,mi);'),1)
   self.assertNotIn('r.put(',wrapper)
   self.assertNotIn('InverseTransformPoint',wrapper)
