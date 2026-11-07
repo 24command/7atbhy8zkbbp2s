@@ -1,3 +1,4 @@
+#import "PMCoverImage.h"
 #import "PMImageCropController.h"
 #import <QuartzCore/QuartzCore.h>
 #include <cmath>
@@ -22,7 +23,7 @@ BOOL quarterTurn=image.imageOrientation==UIImageOrientationLeft||image.imageOrie
 - (void)viewDidLoad {
  [super viewDidLoad];self.view.backgroundColor=[UIColor colorWithRed:.025 green:.035 blue:.05 alpha:1];self.title=@"裁剪 / 旋转封面";
  self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc]initWithBarButtonSystemItem:UIBarButtonSystemItemCancel target:self action:@selector(cancel)];
- UIBarButtonItem*save=[[UIBarButtonItem alloc]initWithTitle:@"使用封面" style:UIBarButtonItemStyleDone target:self action:@selector(save)];UIBarButtonItem*rotate=[[UIBarButtonItem alloc]initWithTitle:@"旋转 90°" style:UIBarButtonItemStylePlain target:self action:@selector(rotate)];self.navigationItem.rightBarButtonItems=@[save,rotate];
+ UIBarButtonItem*save=[[UIBarButtonItem alloc]initWithTitle:@"使用封面" style:UIBarButtonItemStyleDone target:self action:@selector(save)];UIBarButtonItem*rotate=[[UIBarButtonItem alloc]initWithTitle:@"旋转 90°" style:UIBarButtonItemStylePlain target:self action:@selector(rotate)];UIBarButtonItem*complete=[[UIBarButtonItem alloc]initWithTitle:@"\u5b8c\u6574\u663e\u793a" style:UIBarButtonItemStylePlain target:self action:@selector(completeCover)];self.navigationItem.rightBarButtonItems=self.allowsCompleteCover?@[save,complete,rotate]:@[save,rotate];
  self.scroll=[UIScrollView new];self.scroll.delegate=self;self.scroll.backgroundColor=UIColor.blackColor;self.scroll.clipsToBounds=YES;self.scroll.contentInsetAdjustmentBehavior=UIScrollViewContentInsetAdjustmentNever;self.scroll.minimumZoomScale=.01;self.scroll.maximumZoomScale=8;self.scroll.bouncesZoom=YES;self.scroll.showsHorizontalScrollIndicator=NO;self.scroll.showsVerticalScrollIndicator=NO;[self.view addSubview:self.scroll];
  self.imageView=[[UIImageView alloc]initWithImage:self.sourceImage];self.imageView.contentMode=UIViewContentModeScaleToFill;self.imageView.userInteractionEnabled=YES;[self.scroll addSubview:self.imageView];
  self.cropBorder=[UIView new];self.cropBorder.userInteractionEnabled=NO;self.cropBorder.layer.borderColor=[UIColor colorWithRed:.35 green:.9 blue:.8 alpha:1].CGColor;self.cropBorder.layer.borderWidth=2;self.cropBorder.layer.shadowColor=UIColor.blackColor.CGColor;self.cropBorder.layer.shadowOpacity=.55;self.cropBorder.layer.shadowRadius=6;[self.view addSubview:self.cropBorder];
@@ -37,6 +38,12 @@ BOOL quarterTurn=image.imageOrientation==UIImageOrientationLeft||image.imageOrie
 - (void)centerImage { CGFloat boundsWidth = self.scroll.bounds.size.width; CGFloat boundsHeight = self.scroll.bounds.size.height; CGSize content = self.scroll.contentSize; CGFloat x = MAX(0, (boundsWidth - content.width) / 2); CGFloat y = MAX(0, (boundsHeight - content.height) / 2); self.imageView.center = CGPointMake(content.width / 2 + x, content.height / 2 + y); }
 - (void)rotate {
  UIImage*source=self.sourceImage;CGSize old=source.size,newSize=CGSizeMake(old.height,old.width);UIGraphicsImageRendererFormat*f=[UIGraphicsImageRendererFormat defaultFormat];f.scale=1;UIGraphicsImageRenderer*r=[[UIGraphicsImageRenderer alloc]initWithSize:newSize format:f];UIImage*rotated=[r imageWithActions:^(UIGraphicsImageRendererContext*c){CGContextRef ctx=c.CGContext;CGContextTranslateCTM(ctx,newSize.width/2,newSize.height/2);CGContextRotateCTM(ctx,(CGFloat)M_PI_2);[source drawInRect:CGRectMake(-old.width/2,-old.height/2,old.width,old.height)];}];self.sourceImage=rotated;self.imageView.image=rotated;self.didLayoutImage=NO;self.scroll.zoomScale=1;self.scroll.contentOffset=CGPointZero;[self.view setNeedsLayout];[self.view layoutIfNeeded];}
+- (void)completeCover {
+ NSError*error=nil;UIImage*result=PMCompleteCover(self.sourceImage,self.aspect,&error);
+ if(!result){UIAlertController*a=[UIAlertController alertControllerWithTitle:@"Cover" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];[a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[self presentViewController:a animated:YES completion:nil];return;}
+ self.scroll.zoomScale=1;self.sourceImage=result;self.imageView.image=result;self.didLayoutImage=NO;self.scroll.contentOffset=CGPointZero;
+ [self.view setNeedsLayout];[self.view layoutIfNeeded];
+}
 - (UIImage*)croppedImage {
  CGFloat scale=self.scroll.zoomScale;if(scale<=0||!self.sourceImage.CGImage)return nil;CGRect rect=[self.cropBorder convertRect:self.cropBorder.bounds toView:self.imageView];rect=CGRectIntersection(CGRectIntegral(rect),CGRectMake(0,0,CGImageGetWidth(self.sourceImage.CGImage),CGImageGetHeight(self.sourceImage.CGImage)));CGImageRef image=CGImageCreateWithImageInRect(self.sourceImage.CGImage,rect);if(!image)return nil;UIImage*out=[UIImage imageWithCGImage:image scale:1 orientation:UIImageOrientationUp];CGImageRelease(image);return out;
 }

@@ -12,6 +12,7 @@ xcrun --sdk iphoneos clang++ \
   -framework UIKit \
   -framework Foundation \
   -framework CoreGraphics \
+  -framework CoreImage \
   -framework QuartzCore \
   -framework Metal \
   -framework AVFoundation \
