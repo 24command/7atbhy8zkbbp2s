@@ -829,7 +829,10 @@ void visuals(Runtime&r,P progress){
     try{
      r.call(go,".ctor",{"System.String"},{r.string_new("PhiMod Line Visual")});
      int layer=r.unbox<int>(r.call(r.call(line,"get_gameObject"),"get_layer"));r.call(go,"set_layer",{"System.Int32"},{&layer});
-     P child=r.call(go,"get_transform");bool world=false;r.call(child,"SetParent",{"UnityEngine.Transform","System.Boolean"},{tr,&world});
+     P child=r.call(go,"get_transform"),sourceTransform=r.call(renderer,"get_transform");bool world=false;
+     // Inherit the actual renderer's authored transform, not the note controller.
+     r.call(child,"SetParent",{"UnityEngine.Transform","System.Boolean"},{sourceTransform,&world});
+     V3 zero{0,0,0};r.call(child,"set_localPosition",{"UnityEngine.Vector3"},{&zero});r.call(child,"set_localEulerAngles",{"UnityEngine.Vector3"},{&zero});
      display=addComponent(r,go,r.type("UnityEngine","SpriteRenderer"));
      P material=r.call(renderer,"get_sharedMaterial");if(r.alive(material))r.call(display,"SetMaterial",{"UnityEngine.Material"},{material});
      visualRoots.push_back(handle);plainLineRenderers[i]=display;
@@ -837,7 +840,16 @@ void visuals(Runtime&r,P progress){
    }
    P child=r.call(display,"get_transform");V3 scale{(float)trackValue(d[@"scaleXEvents"],now,1),(float)trackValue(d[@"scaleYEvents"],now,1),1};
    r.call(child,"set_localScale",{"UnityEngine.Vector3"},{&scale});
-   r.call(display,"set_sprite",{"UnityEngine.Sprite"},{r.call(renderer,"get_sprite")});
+   P sourceSprite=r.call(renderer,"get_sprite");if(r.call(display,"get_sprite")!=sourceSprite)r.call(display,"set_sprite",{"UnityEngine.Sprite"},{sourceSprite});
+   // A fresh renderer defaults to Simple; stock lines can use stretched/tiled
+   // size independently of Sprite pixel bounds. Preserve that baseline on both axes.
+   int drawMode=r.unbox<int>(r.call(renderer,"get_drawMode"));
+   if(r.unbox<int>(r.call(display,"get_drawMode"))!=drawMode)r.call(display,"set_drawMode",{"UnityEngine.SpriteDrawMode"},{&drawMode});
+   V2 sourceSize=r.unbox<V2>(r.call(renderer,"get_size")),displaySize=r.unbox<V2>(r.call(display,"get_size"));
+   if(sourceSize.x!=displaySize.x||sourceSize.y!=displaySize.y)r.call(display,"set_size",{"UnityEngine.Vector2"},{&sourceSize});
+   bool flipX=r.unbox<bool>(r.call(renderer,"get_flipX")),flipY=r.unbox<bool>(r.call(renderer,"get_flipY"));
+   if(r.unbox<bool>(r.call(display,"get_flipX"))!=flipX)r.call(display,"set_flipX",{"System.Boolean"},{&flipX});
+   if(r.unbox<bool>(r.call(display,"get_flipY"))!=flipY)r.call(display,"set_flipY",{"System.Boolean"},{&flipY});
    int layer=r.unbox<int>(r.call(renderer,"get_sortingLayerID"));r.call(display,"set_sortingLayerID",{"System.Int32"},{&layer});r.call(display,"set_sortingOrder",{"System.Int32"},{&order});r.call(display,"set_color",{"UnityEngine.Color"},{&color});
    bool visible=color.a>0;r.call(display,"set_enabled",{"System.Boolean"},{&visible});bool no=false;r.call(renderer,"set_enabled",{"System.Boolean"},{&no});
   }else{
