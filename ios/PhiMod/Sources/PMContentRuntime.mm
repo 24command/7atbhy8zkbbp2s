@@ -8,6 +8,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
 #include "../Core/PMRPECore.hpp"
+#include "../Core/PMRPEText.hpp"
 #include "../Core/PMRPEGeometry.hpp"
 #include "../Core/PMHoldTail.hpp"
 #include "../Core/PMChartCore.hpp"
@@ -692,7 +693,10 @@ void updateStory(Runtime&r,int index,P line,P nativeRenderer,NSDictionary*d,NSAr
     r.call(v.canvas,"set_overrideSorting",{"System.Boolean"},{&yes});r.call(v.canvas,"set_sortingLayerID",{"System.Int32"},{&sorting});
     v.tr=r.call(v.go,"get_transform");V2 rect{1024,300};r.call(v.tr,"set_sizeDelta",{"UnityEngine.Vector2"},{&rect});
     v.graphic=addComponent(r,v.go,r.type("UnityEngine.UI","Text"));
-    P label=r.get<P>(r.get<P>(progress,"scoreControl"),"comboText");P font=r.call(label,"get_font");r.call(v.graphic,"set_font",{"UnityEngine.Font"},{font});
+    P level=target(r,hudLevel),label=level?r.get<P>(level,"songsName"):nullptr;
+    if(!r.alive(label))label=r.get<P>(r.get<P>(progress,"scoreControl"),"comboText");
+    P font=r.call(label,"get_font");r.call(v.graphic,"set_font",{"UnityEngine.Font"},{font});
+    r.call(v.graphic,"set_supportRichText",{"System.Boolean"},{&no});r.call(v.graphic,"set_resizeTextForBestFit",{"System.Boolean"},{&no});
     int fontSize=48,alignment=4,overflow=1;
     r.call(v.graphic,"set_fontSize",{"System.Int32"},{&fontSize});r.call(v.graphic,"set_alignment",{"UnityEngine.TextAnchor"},{&alignment});
     r.call(v.graphic,"set_horizontalOverflow",{"UnityEngine.HorizontalWrapMode"},{&overflow});r.call(v.graphic,"set_verticalOverflow",{"UnityEngine.VerticalWrapMode"},{&overflow});
@@ -725,10 +729,19 @@ void updateStory(Runtime&r,int index,P line,P nativeRenderer,NSDictionary*d,NSAr
  if(v.text){
   NSDictionary*event=eventAt(d[@"textEvents"],now);
   NSString*value=@"";
-  if(event){NSString*a=[event[@"start"] description]?:@"",*b=[event[@"end"] description]?:@"";value=a;
-   if([a containsString:@"%P%"]||[b containsString:@"%P%"]){a=[a stringByReplacingOccurrencesOfString:@"%P%" withString:@""];b=[b stringByReplacingOccurrencesOfString:@"%P%" withString:@""];double q=std::clamp((now-scalar(event[@"startTime"]))/std::max(.001,scalar(event[@"endTime"])-scalar(event[@"startTime"])),0.,1.);value=[b substringToIndex:MIN(b.length,(NSUInteger)std::round(double(a.length)+(double(b.length)-double(a.length))*q))];}
+  if(event){NSString*a=[event[@"start"] description]?:@"",*b=[event[@"end"] description]?:@"";
+   double begin=scalar(event[@"startTime"]),end=scalar(event[@"endTime"]);
+   float q=end>begin?float(std::clamp((now-begin)/(end-begin),0.,1.)):1.f;
+   std::string text=rpeTextTween(a.UTF8String?:"",b.UTF8String?:"",q);
+   value=[[NSString alloc]initWithBytes:text.data() length:text.size() encoding:NSUTF8StringEncoding]?:@"";
   }
-  if(![v.lastText isEqualToString:value]){r.text(v.graphic,value.UTF8String);v.lastText=value;}
+  if(![v.lastText isEqualToString:value]){
+   r.call(v.graphic,"set_text",{"System.String"},{r.managedString(value)});v.lastText=value;
+   // Measure after assigning text. Fixed 1024x300 bounds can cull long or
+   // multiline text despite overflow flags; keep the authored font size.
+   float w=r.unbox<float>(r.call(v.graphic,"get_preferredWidth")),h=r.unbox<float>(r.call(v.graphic,"get_preferredHeight"));
+   if(std::isfinite(w)&&std::isfinite(h)){V2 rect{std::max(1.f,w+96.f),std::max(96.f,h+48.f)};r.call(v.tr,"set_sizeDelta",{"UnityEngine.Vector2"},{&rect});}
+  }
  }
  r.call(v.graphic,"set_color",{"UnityEngine.Color"},{&color});
  r.call(v.text?v.canvas:v.graphic,"set_sortingOrder",{"System.Int32"},{&order});
