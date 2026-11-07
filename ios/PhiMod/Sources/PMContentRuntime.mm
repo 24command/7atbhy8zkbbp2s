@@ -590,6 +590,13 @@ float sourceLineAlpha(NSArray*events,double now,double bpm){
  double value=scalar(event[@"start"])+(scalar(event[@"end"])-scalar(event[@"start"]))*t;
  return std::isfinite(value)?float(std::clamp(value,0.,1.)):0.f;
 }
+bool sourceNotesHidden(NSDictionary*line,double now){
+ NSArray*events=line[@"pmDecor"][@"sourceAlphaEvents"];if(![events isKindOfClass:NSArray.class]||!events.count)return false;
+ double unit=60./(32.*scalar(line[@"bpm"],120));NSDictionary*event=eventAt(events,now,unit);if(!event)return false;
+ double start=scalar(event[@"startTime"])*unit,end=scalar(event[@"endTime"])*unit;
+ double q=end>start?std::clamp((now-start)/(end-start),0.,1.):1.;
+ return scalar(event[@"start"])+(scalar(event[@"end"])-scalar(event[@"start"]))*q<0;
+}
 double trackValue(NSArray*a,double now,double fallback,int channel=-1){NSDictionary*last=eventAt(a,now);return last?visualEvent(last,channel).value(now):fallback;}
 
 #include "PMRPEHudRuntime.inc"
@@ -775,6 +782,8 @@ void recoverSourceNotes(Runtime&r,P manager){
  for(int i=lo;i<n;++i){P note=r.at(notes,i);float start=r.get<float>(note,"realTime");if(start>now+8)break;
   auto extra=extras.find(note);if(extra==extras.end()||!extra->second[@"pmRawSpeed"])continue;
   if(start-now>scalar(extra->second[@"pmVisible"],999999))continue;
+  int sourceIndex=r.get<int>(note,"judgeLineIndex")/2;NSArray*sourceLines=currentChart[@"judgeLineList"];
+  if(sourceIndex>=0&&sourceIndex<(int)sourceLines.count&&sourceNotesHidden(sourceLines[sourceIndex],now))continue;
   int li=r.get<int>(note,"judgeLineIndex")/2;if(li<0||li>=r.count(lines))continue;P line=r.at(lines,li);
   double current=sourceFloor(li,now,floor(r,info,li)),delta=scalar(extra->second[@"floorPosition"])-current;
   if(std::fabs(delta*scalar(extra->second[@"pmRawSpeed"],1)*world)>30)continue;
@@ -1020,7 +1029,7 @@ void visuals(Runtime&r,P progress){
  if(!std::isfinite(alpha)||alpha<0)alpha=0;
  if(alpha>1)alpha=1;
  alpha*=std::clamp((float)control(decor,@"alphaControl",distance),0.f,1.f);
- if(start-now>scalar(f.note[@"pmVisible"],999999))alpha=0;
+ if(start-now>scalar(f.note[@"pmVisible"],999999)||sourceNotesHidden(data[f.line],now))alpha=0;
  bool cover=decor[@"isCover"]?[decor[@"isCover"]boolValue]:true;
  if(rpeCovered(cover,now,start,scalar(f.note[@"floorPosition"]),currentFloor,scalar(f.note[@"pmRawSpeed"],1)))alpha=0;
  if(!isHold)applySkew(r,renderer,rpeSkew(scalar(f.note[@"positionX"])*75,control(decor,@"skewControl",distance),f.below,size.x,size.y));
@@ -1140,7 +1149,7 @@ void noteMoved(Runtime&r,P controlObject,bool hold){
 }
  float alpha=scalar(n[@"pmAlpha"],1)*control(d,@"alphaControl",distance);
  if(!std::isfinite(alpha)||alpha<0)alpha=0;if(alpha>1)alpha=1;
- if(start-now>scalar(n[@"pmVisible"],999999))alpha=0;
+ if(start-now>scalar(n[@"pmVisible"],999999)||(index>=0&&index<(int)lines.count&&sourceNotesHidden(lines[index],now)))alpha=0;
  if(hold&&std::fabs(yControlValue)<0.0001f)alpha=0;
  bool cover=d[@"isCover"]?[d[@"isCover"]boolValue]:true;
  if(n[@"pmRawSpeed"]&&rpeCovered(cover,now,start,scalar(n[@"floorPosition"]),currentFloor,scalar(n[@"pmRawSpeed"],1)))alpha=0;

@@ -58,7 +58,10 @@ NSDictionary*rpe(NSDictionary*input){
   NSArray*rotate=linear(cuts,[&](double now){auto p=poseAt(now);return std::array<double,2>{p[2],0};},.06);
   // Phira/ts parity: alpha comes purely from alphaEvents. attachUI is a
   // hint for external UI bindings, not a request to hide the judge line.
-  NSArray*alpha=linear(cuts,[&](double now){return std::array<double,2>{std::clamp(l.value(3,now)/255,0.,1.),0};},.002);
+  // Retain signed source alpha separately: zero hides only the line, negative
+  // alpha hides notes as well. Native Phigros alpha must remain clamped.
+  NSArray*signedAlpha=linear(cuts,[&](double now){return std::array<double,2>{l.value(3,now)/255,0};},.002);
+  NSMutableArray*alpha=[NSMutableArray new];for(NSDictionary*event in signedAlpha){NSMutableDictionary*safe=[event mutableCopy];safe[@"start"]=@(std::clamp(number(event[@"start"]),0.,1.));safe[@"end"]=@(std::clamp(number(event[@"end"]),0.,1.));[alpha addObject:safe];}
   std::set<double>speedCuts{0,bound};for(const auto&tr:l.layers[4])for(auto&e:tr.events)for(double x:{e.s,e.e})if(x>=0&&x<bound)speedCuts.insert(x);
   NSMutableArray*speeds=[NSMutableArray new];double previous=0,floor=0;
   for(double end:speedCuts){
@@ -100,6 +103,7 @@ NSDictionary*rpe(NSDictionary*input){
   decor[@"zOrder"]=o[@"zOrder"] ?: @0;
   decor[@"isCover"]=o[@"isCover"] ?: @1;
   decor[@"attachUI"]=o[@"attachUI"] ?: @"";
+  decor[@"sourceAlphaEvents"]=signedAlpha;
   [out addObject:@{ @"bpm":@120,@"notesAbove":above,@"notesBelow":below,@"speedEvents":speeds,@"judgeLineMoveEvents":move,@"judgeLineRotateEvents":rotate,@"judgeLineDisappearEvents":alpha,@"pmDecor":decor }];
  }
  return @{ @"formatVersion":@3,@"offset":@(number(input[@"META"][@"offset"])/1000),@"judgeLineList":out,@"blockAreaList":@[],@"pmFormat":@"RPE" };
