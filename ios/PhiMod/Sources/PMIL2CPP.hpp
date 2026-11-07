@@ -320,6 +320,15 @@ struct Runtime {
         return invokeOn(resolve(c,name,params,true),nullptr,args);
     }
     template<class T> T unbox(P obj) {if(!obj)throw std::runtime_error("Null boxed value");checkClass<T>(object_get_class(obj));T v{};P data=object_unbox(obj);if(!data)throw std::runtime_error("Unbox failed");memcpy(&v,data,sizeof(v));return v;}
+    // Enums are boxed as their declared enum type, never System.Int32.
+    int enumValue(P boxed,const char* expectedType) {
+        if(!boxed)throw std::runtime_error("Null boxed enum");
+        P c=object_get_class(boxed);uint32_t alignment=0;
+        if(!c||!class_is_valuetype(c)||class_value_size(c,&alignment)!=sizeof(int)||!typeIs(class_get_type(c),expectedType))
+            throw std::runtime_error(std::string("Enum type contract mismatch: ")+expectedType);
+        P data=object_unbox(boxed);if(!data)throw std::runtime_error("Enum unbox failed");
+        int value=0;memcpy(&value,data,sizeof(value));return value;
+    }
     NSString*string(P value){if(!value)return @"";int32_t n=string_length(value);if(n<0||n>300000000)throw std::runtime_error("Invalid managed string length");return [[NSString alloc]initWithCharacters:reinterpret_cast<const unichar*>(string_chars(value)) length:n] ?: @"";}
     P managedString(NSString*value){std::vector<unichar>chars(value.length);[value getCharacters:chars.data() range:NSMakeRange(0,value.length)];return string_new_utf16(reinterpret_cast<const char16_t*>(chars.data()),int32_t(chars.size()));}
     int count(P list){return list?unbox<int>(call(list,"get_Count")):0;}

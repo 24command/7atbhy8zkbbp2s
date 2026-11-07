@@ -272,7 +272,7 @@ void fitLockTip(Runtime&r,P tip,bool blocked){
   measuredText=nil;measuredWidth=measuredHeight=-1;
   restoreLockTip(r);
   lockTipFit=r.unbox<bool>(r.call(tip,"get_resizeTextForBestFit"));lockTipMin=r.unbox<int>(r.call(tip,"get_resizeTextMinSize"));lockTipMax=r.unbox<int>(r.call(tip,"get_resizeTextMaxSize"));
-  lockTipFont=r.unbox<int>(r.call(tip,"get_fontSize"));lockTipWrap=r.unbox<int>(r.call(tip,"get_horizontalOverflow"));lockTipVertical=r.unbox<int>(r.call(tip,"get_verticalOverflow"));
+  lockTipFont=r.unbox<int>(r.call(tip,"get_fontSize"));lockTipWrap=r.enumValue(r.call(tip,"get_horizontalOverflow"),"UnityEngine.HorizontalWrapMode");lockTipVertical=r.enumValue(r.call(tip,"get_verticalOverflow"),"UnityEngine.VerticalWrapMode");
   lockTipEnabled=r.unbox<bool>(r.call(tip,"get_enabled"));lockTipColor=r.unbox<TipColor>(r.call(tip,"get_color"));
   lockTipSize=r.unbox<TipSize>(r.call(r.call(tip,"get_rectTransform"),"get_sizeDelta"));lockTipRoot=r.gchandle_new(tip,false);
   logf("Song unlock single-line label configured: nativeFont=%d vertical=%d",lockTipFont,lockTipVertical);
@@ -281,8 +281,8 @@ void fitLockTip(Runtime&r,P tip,bool blocked){
  // Reassert only changed properties after native selector updates.
  bool fit=false,yes=true;int font=24,overflow=1;
  if(r.unbox<bool>(r.call(tip,"get_resizeTextForBestFit")))r.call(tip,"set_resizeTextForBestFit",{"System.Boolean"},{&fit});
- if(r.unbox<int>(r.call(tip,"get_horizontalOverflow"))!=overflow)r.call(tip,"set_horizontalOverflow",{"UnityEngine.HorizontalWrapMode"},{&overflow});
- if(r.unbox<int>(r.call(tip,"get_verticalOverflow"))!=overflow)r.call(tip,"set_verticalOverflow",{"UnityEngine.VerticalWrapMode"},{&overflow});
+ if(r.enumValue(r.call(tip,"get_horizontalOverflow"),"UnityEngine.HorizontalWrapMode")!=overflow)r.call(tip,"set_horizontalOverflow",{"UnityEngine.HorizontalWrapMode"},{&overflow});
+ if(r.enumValue(r.call(tip,"get_verticalOverflow"),"UnityEngine.VerticalWrapMode")!=overflow)r.call(tip,"set_verticalOverflow",{"UnityEngine.VerticalWrapMode"},{&overflow});
  if(!r.unbox<bool>(r.call(tip,"get_enabled")))r.call(tip,"set_enabled",{"System.Boolean"},{&yes});
  TipColor color=r.unbox<TipColor>(r.call(tip,"get_color"));if(color.a<1){color.a=1;r.call(tip,"set_color",{"UnityEngine.Color"},{&color});}
  P rect=r.call(tip,"get_rectTransform");struct Rect{float x,y,w,h;};Rect bounds=r.unbox<Rect>(r.call(rect,"get_rect"));

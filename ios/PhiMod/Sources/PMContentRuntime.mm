@@ -39,6 +39,7 @@ P extrasBoundChart=nullptr;
 std::map<std::string,std::map<int,NSDictionary*>>variants;std::map<P,NSDictionary*>extras;std::map<P,V3>noteScales,lineScales;std::map<int,uint32_t>decorText,decorImage;
 struct StoryVisual {P go=nullptr,tr=nullptr,graphic=nullptr,canvas=nullptr;bool text=false,visible=true;NSString*lastText=nil;};
 std::map<int,StoryVisual>storyVisuals;
+std::set<int>failedVisualLines;
 std::map<int,P>plainLineRenderers;std::map<int,double>storyRetry;std::set<int>storyReported;
 NSArray*storyFiles=nil;bool storyIndexed=false;P storyFrameCamera=nullptr;float storyFrameWidth=0;std::map<std::string,P>storySprites;P storyMaterial=nullptr;
 struct Fake{NSDictionary*note;int line;bool below;double start,end;};
@@ -191,7 +192,7 @@ P audio(Runtime&r,NSString*path){
  }catch(...){r.gchandle_free(clipRoot);throw;}
 }
 NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=[[key stringByReplacingOccurrencesOfString:id withString:@""]lowercaseString];*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":[lower containsString:@"blur"]?@"blur":@"image";return id;}
-void clearVisuals(Runtime&r){clearSkew(r);clearHud(r);restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();extrasBoundChart=nullptr;recoveredSourceNotes.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();plainLineRenderers.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();uiControlLines.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
+void clearVisuals(Runtime&r){clearSkew(r);clearHud(r);restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();extrasBoundChart=nullptr;recoveredSourceNotes.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();plainLineRenderers.clear();failedVisualLines.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();uiControlLines.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
 void applyCachedChapterCover(Runtime&r,P card,const char*codeField,const char*loaderField){
  NSString*code=r.string(r.get<P>(card,codeField));if(!code.length)return;auto found=assets.find(code.UTF8String);if(found==assets.end())return;P sprite=target(r,found->second);if(!r.alive(sprite))return;
  P loader=r.get<P>(card,loaderField);if(!r.alive(loader))return;bool changed=false;
@@ -815,6 +816,7 @@ void visuals(Runtime&r,P progress){
  }
  if(total<=0)return;
  for(int i=0;i<total;++i){
+  try{
   P line=r.at(lineList,i),renderer=r.get<P>(line,"_judgeLineSpriteRenderer");if(!r.alive(renderer))continue;
   // attachUI lines carry HUD animation data, not a drawable line/texture.
   // Keep the controller, transforms and indices; suppress only its visual.
@@ -865,8 +867,8 @@ void visuals(Runtime&r,P progress){
    P sourceSprite=r.call(renderer,"get_sprite");if(r.call(display,"get_sprite")!=sourceSprite)r.call(display,"set_sprite",{"UnityEngine.Sprite"},{sourceSprite});
    // A fresh renderer defaults to Simple; stock lines can use stretched/tiled
    // size independently of Sprite pixel bounds. Preserve that baseline on both axes.
-   int drawMode=r.unbox<int>(r.call(renderer,"get_drawMode"));
-   if(r.unbox<int>(r.call(display,"get_drawMode"))!=drawMode)r.call(display,"set_drawMode",{"UnityEngine.SpriteDrawMode"},{&drawMode});
+   int drawMode=r.enumValue(r.call(renderer,"get_drawMode"),"UnityEngine.SpriteDrawMode");
+   if(r.enumValue(r.call(display,"get_drawMode"),"UnityEngine.SpriteDrawMode")!=drawMode)r.call(display,"set_drawMode",{"UnityEngine.SpriteDrawMode"},{&drawMode});
    V2 sourceSize=r.unbox<V2>(r.call(renderer,"get_size")),displaySize=r.unbox<V2>(r.call(display,"get_size"));
    if(sourceSize.x!=displaySize.x||sourceSize.y!=displaySize.y)r.call(display,"set_size",{"UnityEngine.Vector2"},{&sourceSize});
    bool flipX=r.unbox<bool>(r.call(renderer,"get_flipX")),flipY=r.unbox<bool>(r.call(renderer,"get_flipY"));
@@ -877,6 +879,7 @@ void visuals(Runtime&r,P progress){
   }else{
   updateStory(r,i,line,renderer,d,data[i][@"judgeLineDisappearEvents"],scalar(data[i][@"bpm"],120),now,progress,color,order);
   }
+  }catch(const std::exception&e){if(failedVisualLines.insert(i).second)log([NSString stringWithFormat:@"Storyboard line update failed: line=%d reason=%s",i,e.what()]);}
  }
  // Fake notes are independent SpriteRenderers: never native score/judgement
  // controllers. Only the local 8-second window is allocated.
