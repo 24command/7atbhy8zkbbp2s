@@ -32,6 +32,7 @@ struct DeferredSelectorAsset {uint32_t root;std::string identifier;bool music;};
 std::map<P,DeferredSelectorAsset>selectorAssets;
 uint32_t loadingSelector=0;bool completingSelectorAsset=false;
 std::set<std::string>selectorSongIDs,selectedAssetIDs;
+P recordSelector=nullptr,recordItem=nullptr;int recordSlot=-1;NSUInteger recordRevision=NSUIntegerMax;
 NSUInteger selectorLibraryRevision=0;int loadingSong=-1,loadingSlot=-1;
 float loadingPosition=0;double selectionChangedAt=0;bool selectorDragging=true;
 std::set<P>recoveredSourceNotes;
@@ -417,6 +418,7 @@ void selectorLoadingFrame(Runtime&r,P selector){
  }
 }
 void selectorLoadingEnd(Runtime&r,bool finishSelected){
+ recordSelector=recordItem=nullptr;recordSlot=-1;recordRevision=NSUIntegerMax;
  if(finishSelected&&r.alive(target(r,loadingSelector)))observeSelector(r,target(r,loadingSelector));
  if(loadingSelector)r.gchandle_free(loadingSelector);loadingSelector=0;
  std::vector<P>remaining;for(auto&entry:selectorAssets)remaining.push_back(entry.first);
@@ -428,6 +430,29 @@ void selectorLoadingEnd(Runtime&r,bool finishSelected){
  }
  selectorSongIDs.clear();selectedAssetIDs.clear();loadingSong=-1;loadingSlot=-1;selectorDragging=true;
 }
+// Each difficulty keeps its own save identity. Populate the selector's record
+// list from the same per-chart ID used by levelInfo; never migrate/write saves.
+void refreshVariantRecords(Runtime&r,P selector,P item,NSString*group){
+ auto variantsForGroup=variants.find(group.UTF8String?:"");if(variantsForGroup==variants.end())return;
+ P records=r.get<P>(item,"records");if(!records)throw std::runtime_error("Merged song record list is missing");
+ P game=r.mainGame();
+ // Native normally provides four slots. Fill any missing slots through the
+ // official getter so sparse groups cannot shift slot indices.
+ for(int slot=r.count(records);slot<4;++slot){
+  NSString*id=group;auto member=variantsForGroup->second.find(slot);if(member!=variantsForGroup->second.end())id=member->second[@"id"];
+  NSString*level=@[@"EZ",@"HD",@"IN",@"AT"][slot];
+  P value=r.call(game,"GetSongRecord",{"System.String","System.String"},{r.managedString(id),r.managedString(level)});
+  r.call(records,"Add",{"LevelRecord"},{value});
+ }
+ for(auto&member:variantsForGroup->second){int slot=member.first;if(slot<0||slot>3)continue;
+  NSString*id=member.second[@"id"],*level=@[@"EZ",@"HD",@"IN",@"AT"][slot];
+  P value=r.call(game,"GetSongRecord",{"System.String","System.String"},{r.managedString(id),r.managedString(level)});
+  r.call(records,"set_Item",{"System.Int32","LevelRecord"},{&slot,value});
+ }
+ // Refresh native score/ACC/rating and both list rows without touching locks.
+ r.call(selector,"SetText");int selected=r.get<int>(selector,"nowLevel");
+ r.call(item,"SetText",{"System.Int32"},{&selected});
+}
 // Native difficulty bars assume a continuous EZ..AT prefix. Custom groups may be sparse.
 void selectorFrame(Runtime&r,P selector){
  static P lastSelector=nullptr,lastItem=nullptr;static int lastLevel=-1,lastMask=0;
@@ -438,6 +463,12 @@ void selectorFrame(Runtime&r,P selector){
  if(index<0||index>=n)return;
  P item=r.at(items,index),song=r.get<P>(item,"songInfo");NSString*identifier=r.string(r.get<P>(song,"songsId"));
  auto group=variants.find(identifier.UTF8String?:"");
+ if(group!=variants.end()&&!group->second.empty()){
+  int selected=r.get<int>(selector,"nowLevel");NSUInteger revision=PMContentStore.shared.revision;
+  if(recordSelector!=selector||recordItem!=item||recordSlot!=selected||recordRevision!=revision){
+   refreshVariantRecords(r,selector,item,identifier);recordSelector=selector;recordItem=item;recordSlot=selected;recordRevision=revision;
+  }
+ }
  if([identifier hasPrefix:@"pm_"]&&group!=variants.end()&&!group->second.empty()){
   int mask=0,extent=0;for(auto&entry:group->second)if(entry.first>=0&&entry.first<4){mask|=1<<entry.first;extent=std::max(extent,entry.first+1);}
   if(mask){
@@ -448,6 +479,7 @@ void selectorFrame(Runtime&r,P selector){
    // and AT uses the normal four-slot width, not the old two-slot width.
    int displayCount=std::max(3,extent),infoWidth=displayCount>=4?100:115;
    bool layoutChanged=r.get<int>(item,"<PlayableLevelCount>k__BackingField")!=displayCount||r.get<int>(item,"<SelectorTargetWidth>k__BackingField")!=infoWidth;
+   r.put(item,"<Unlocked>k__BackingField",true);
    r.put(item,"<PlayableLevelCount>k__BackingField",displayCount);
    r.put(item,"<SelectorTargetWidth>k__BackingField",infoWidth);
    r.put(selector,"levelNum",displayCount);
