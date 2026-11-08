@@ -7,6 +7,8 @@ bool beforeStart(pmbridge::Runtime&,void* selector,void (^resume)(void));
 void songInfo(pmbridge::Runtime&,void* song,int slot,void* value);
 void itemInfo(pmbridge::Runtime&,void* item,int slot,void* value);
 void chapterReady(pmbridge::Runtime&,void* selector);
+bool selectorAccess(pmbridge::Runtime&,void*selector);
+bool blockChallengeButton(pmbridge::Runtime&,void*button);
 void tick(pmbridge::Runtime&,void* selector);
 void clear(pmbridge::Runtime&);
 }

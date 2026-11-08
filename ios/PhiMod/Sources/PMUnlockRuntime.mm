@@ -75,6 +75,37 @@ bool opened(Runtime&r,NSString*id){
  NSError*error=nil;if(![progress open:id rule:rule error:&error]){logf("Unlock progress save failed: %s",error.localizedDescription.UTF8String);return false;}if(!newlyOpened)newlyOpened=[NSMutableSet new];[newlyOpened addObject:id];
  return true;
 }
+// A chapter requirement applies to its members in every aggregate selector.
+bool chapterBlocked(Runtime&r,NSString*group,NSDictionary*subject){
+ NSString*chapter=subject[@"targetChapter"];
+ if(chapter.length&&entity(chapter)&&!opened(r,chapter))return true;
+ for(NSDictionary*c in unlockLibrary()[@"chapters"]){
+  if(![c[@"unlock"][@"enabled"]boolValue])continue;
+  NSArray*members=c[@"songs"];if([members containsObject:group]||(subject&&[members containsObject:subject[@"id"]]))if(!opened(r,c[@"id"]))return true;
+ }
+ return false;
+}
+bool chartBlocked(Runtime&r,P item,int slot){
+ if(!item||slot<0||slot>3)return true;
+ P song=r.get<P>(item,"songInfo");NSString*group=r.string(r.get<P>(song,"songsId"));NSDictionary*subject=songEntity(group,slot);
+ return chapterBlocked(r,group,subject)||(subject&&!opened(r,subject[@"id"]));
+}
+bool hiddenByChapter(Runtime&r,P item){
+ P song=r.get<P>(item,"songInfo");NSString*group=r.string(r.get<P>(song,"songsId"));bool custom=false;
+ for(int slot=0;slot<4;++slot){NSDictionary*subject=songEntity(group,slot);if(!subject)continue;custom=true;if(!chapterBlocked(r,group,subject))return false;}
+ return custom||chapterBlocked(r,group,nil);
+}
+uint32_t aggregateOwner=0;double aggregateScan=0;NSUInteger aggregateRevision=NSUIntegerMax;
+std::map<P,std::pair<uint32_t,bool>>challengeButtonStates;
+void restoreChallengeButtons(Runtime&r){for(auto&entry:challengeButtonStates){P button=target(r,entry.second.first);bool enabled=entry.second.second;if(r.alive(button))r.call(button,"set_interactable",{"System.Boolean"},{&enabled});r.gchandle_free(entry.second.first);}challengeButtonStates.clear();}
+void disableChallengeButton(Runtime&r,P button){if(!r.alive(button))return;if(!challengeButtonStates.count(button))challengeButtonStates[button]={r.gchandle_new(button,false),r.unbox<bool>(r.call(button,"get_interactable"))};bool no=false;r.call(button,"set_interactable",{"System.Boolean"},{&no});}
+struct HiddenItem{uint32_t root;};std::vector<HiddenItem>chapterHiddenItems;
+void clearAggregate(Runtime&r){restoreChallengeButtons(r);for(auto&item:chapterHiddenItems)r.gchandle_free(item.root);chapterHiddenItems.clear();if(aggregateOwner)r.gchandle_free(aggregateOwner);aggregateOwner=0;aggregateScan=0;aggregateRevision=NSUIntegerMax;}
+void itemDisplay(Runtime&r,P item,bool visible){
+ r.put(item,"visible",visible);
+ for(const char*field:{"selectorItemUpside","selectorItemDownside","cover","backgroundImage","previewClipPlayer"}){P component=r.get<P>(item,field);if(r.alive(component)){P go=r.call(component,"get_gameObject");r.call(go,"SetActive",{"System.Boolean"},{&visible});}}
+ P mask=r.get<P>(item,"lockMask");if(!visible&&r.alive(mask))r.call(mask,"SetActive",{"System.Boolean"},{&visible});
+}
 void clearList(Runtime&r,P list){if(list)try{r.call(list,"Clear");}catch(...){} }
 void unlockSong(Runtime&r,P value,NSString*id,int slot){
  if(!value)return;
@@ -134,9 +165,9 @@ NSString*coverPath(Runtime&r,NSString*identifier){
 bool beforeStart(Runtime&r,void*selector,void(^resume)(void)){
  if(PMUnlockMediaBusy())return true;
  P owner=(P)selector;int index=r.get<int>(owner,"nowSong"),slot=r.get<int>(owner,"nowLevel");
- P items=r.call(owner,"get_SongItems");if(index<0||index>=r.count(items)||slot<0||slot>3)return false;
+ P items=r.call(owner,"get_SongItems");if(index<0||index>=r.count(items)||slot<0||slot>3)return true;
  P item=r.at(items,index),song=r.get<P>(item,"songInfo");NSString*group=r.string(r.get<P>(song,"songsId"));
- NSDictionary*subject=songEntity(group,slot);if(!subject)return false;
+ NSDictionary*subject=songEntity(group,slot);if(chapterBlocked(r,group,subject)){logf("Unlock start blocked by parent chapter");return true;}if(!subject)return false;
  NSString*id=subject[@"id"],*chapter=subject[@"targetChapter"];if(!opened(r,id)||(entity(chapter)&&!opened(r,chapter))){logf("Unlock start blocked: %s",id.UTF8String);return true;}
  NSDictionary*rule=subject[@"unlock"];if(![rule[@"enabled"] boolValue]||[rule[@"playTiming"] intValue]==0)return false;
  NSString*name=rule[@"animation"],*folder=[PMContentStore.shared asset:id],*signature=PMUnlockSignature(rule);
@@ -152,6 +183,12 @@ bool beforeStart(Runtime&r,void*selector,void(^resume)(void)){
  return true;
 }
 void validate(Runtime&r){
+ P challenge=r.type("Phigros2.SongSelector.Scripts","ChallengeSongSelectorControl");
+ for(const char*field:{"selectButton","playButton"})r.field(challenge,field,"UnityEngine.UI.Button",false);
+ r.field(challenge,"challengeSongItems","System.Collections.Generic.List<Phigros2.SongSelector.Scripts.ChallengeSongItem>",false);
+ P queued=r.type("Phigros2.SongSelector.Scripts","ChallengeSongItem");r.field(queued,"songInfo","SongSelectorItem",false);r.field(queued,"levelIndex","System.Int32",false);
+ r.resolve(r.klass("SongSelector"),"SortSong",{"System.Boolean"});
+
  P c9=r.type("Phigros2.Chapter9","Chapter9Phase1Control");
  r.field(c9,"upButton","UnityEngine.UI.Button",false);
  r.field(c9,"cameraUpTween","TweenInfo",false);
@@ -340,12 +377,50 @@ void songLockUI(Runtime&r,P selector,double now){
  for(const char*field:{"selectorItemUpside","selectorItemDownside"}){P row=r.get<P>(item,field);if(r.alive(row)){lockActive(r,r.get<P>(row,"locked"),blocked);lockComponent(r,r.get<P>(row,"difficulty"),!blocked);}}
 }
 }
+bool selectorAccess(Runtime&r,void*raw){
+ P selector=raw;if(!selector||r.get<bool>(selector,"exit"))return true;
+ restoreChallengeButtons(r);
+ if(target(r,aggregateOwner)!=selector){clearAggregate(r);aggregateOwner=r.gchandle_new(selector,false);}
+ P items=r.call(selector,"get_SongItems");if(!items)return true;
+ double now=NSDate.timeIntervalSinceReferenceDate;NSUInteger revision=PMContentStore.shared.revision;
+ if(now-aggregateScan>=1||aggregateRevision!=revision){
+  aggregateScan=now;aggregateRevision=revision;bool changed=false;
+  int selected=r.get<int>(selector,"nowSong");P selectedItem=selected>=0&&selected<r.count(items)?r.at(items,selected):nullptr;
+  for(auto it=chapterHiddenItems.begin();it!=chapterHiddenItems.end();){P item=target(r,it->root);if(item&&!hiddenByChapter(r,item)){r.call(items,"Add",{"SongSelectorItem"},{item});itemDisplay(r,item,true);r.gchandle_free(it->root);it=chapterHiddenItems.erase(it);changed=true;}else ++it;}
+  for(int i=r.count(items)-1;i>=0;--i){P item=r.at(items,i);if(!hiddenByChapter(r,item))continue;
+   chapterHiddenItems.push_back({r.gchandle_new(item,false)});itemDisplay(r,item,false);r.call(items,"RemoveAt",{"System.Int32"},{&i});changed=true;
+  }
+  if(changed&&r.count(items)>0){int next=0;for(int i=0;i<r.count(items);++i)if(r.at(items,i)==selectedItem){next=i;break;}
+   r.put(selector,"nowSong",next);r.put(selector,"targetSong",next);r.put(selector,"nowSongSelectorValue",float(next));bool instantiate=false;
+   r.call(selector,"SortSong",{"System.Boolean"},{&instantiate});r.call(selector,"SetText");
+  }
+ }
+ if(r.count(items)==0){
+  for(const char*field:{"startButton"}){P button=r.get<P>(selector,field);if(r.alive(button)){bool no=false;r.call(button,"set_interactable",{"System.Boolean"},{&no});}}
+  P challenge=r.get<P>(selector,"challengeSongSelectorControl");if(r.alive(challenge))for(const char*field:{"selectButton","playButton"}){P button=r.get<P>(challenge,field);if(r.alive(button)){bool no=false;r.call(button,"set_interactable",{"System.Boolean"},{&no});}}
+  return false;
+ }
+ return true;
+}
+bool blockChallengeButton(Runtime&r,void*raw){
+ P selector=target(r,aggregateOwner);if(!r.alive(selector))return false;
+ P challenge=r.get<P>(selector,"challengeSongSelectorControl");if(!r.alive(challenge))return false;
+ P button=raw;bool select=button==r.get<P>(challenge,"selectButton"),play=button==r.get<P>(challenge,"playButton");if(!select&&!play)return false;
+ if(select){P items=r.call(selector,"get_SongItems");int index=r.get<int>(selector,"nowSong");
+  if(index<0||index>=r.count(items)||chartBlocked(r,r.at(items,index),r.get<int>(selector,"nowLevel"))){return true;}
+ }
+ if(play){P queue=r.get<P>(challenge,"challengeSongItems");for(int i=0,n=r.count(queue);i<n;++i){P entry=r.at(queue,i);if(chartBlocked(r,r.get<P>(entry,"songInfo"),r.get<int>(entry,"levelIndex"))){return true;}}}
+ return false;
+}
 void tick(Runtime&r,void*selector){
  if(!selector||r.get<bool>((P)selector,"exit")){menuActive=false;return;}
  double now=NSDate.timeIntervalSinceReferenceDate;
+ try{P challenge=r.get<P>((P)selector,"challengeSongSelectorControl");if(r.alive(challenge)){
+  for(const char*field:{"selectButton","playButton"}){P button=r.get<P>(challenge,field);if(r.alive(button)&&blockChallengeButton(r,button))disableChallengeButton(r,button);}
+ }}catch(const std::exception&e){logf("Challenge access UI: %s",e.what());}
  try{songLockUI(r,(P)selector,now);}catch(const std::exception&e){if(now-lastScan>=1)logf("Song unlock UI failed: %s",e.what());}
  if(now-lastScan<1)return;lastScan=now;enqueueReveals(r);
 }
 
-void clear(Runtime&r){resetLockUI(r);menuActive=false;[menuTimer invalidate];menuTimer=nil;PMCancelUnlockMedia();[pending removeAllObjects];lastScan=0;(void)r;}
+void clear(Runtime&r){clearAggregate(r);resetLockUI(r);menuActive=false;[menuTimer invalidate];menuTimer=nil;PMCancelUnlockMedia();[pending removeAllObjects];lastScan=0;(void)r;}
 }

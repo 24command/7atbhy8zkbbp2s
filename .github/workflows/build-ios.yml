@@ -31,6 +31,7 @@ jobs:
           "$RUNNER_TEMP/judge-tests/bin/python" ios/tests/test_resume_integrity.py
           "$RUNNER_TEMP/judge-tests/bin/python" ios/tests/test_storyboard_failure_isolation.py
           "$RUNNER_TEMP/judge-tests/bin/python" ios/tests/test_merged_selector_records.py
+          "$RUNNER_TEMP/judge-tests/bin/python" ios/tests/test_challenge_unlock_access.py
       - name: Test chart conversion and safe archives
         run: bash ios/tests/run_content_tests.sh
       - name: Test iOS Metal shader presets
