@@ -35,6 +35,9 @@ NSDictionary*compactImportedSong(NSString*folder,NSString*chartSource,NSString*m
  // References from chart data, unlock metadata or extension text make a file
  // ineligible for deletion even when it is also a redundant import source.
  NSMutableString*references=[NSMutableString new];for(id object in @[chart,entityInfo?:@{}]){NSData*d=[NSJSONSerialization dataWithJSONObject:object options:0 error:nil];if(d)[references appendString:[[NSString alloc]initWithData:d encoding:NSUTF8StringEncoding]?:@""];}
+ // Original RPE may carry hitsound/resource references not yet represented
+ // by the converted chart. Respect them before removing a source asset.
+ NSString*originalReferences=[NSString stringWithContentsOfFile:keptChart encoding:NSUTF8StringEncoding error:nil];if(originalReferences)[references appendString:originalReferences];
  for(NSString*rel in [f subpathsOfDirectoryAtPath:[base stringByAppendingPathComponent:@"extensions"] error:nil])if([@[@"json",@"tsv",@"txt",@"yml",@"yaml",@"glsl"]containsObject:rel.pathExtension.lowercaseString]){NSString*text=[NSString stringWithContentsOfFile:[[base stringByAppendingPathComponent:@"extensions"]stringByAppendingPathComponent:rel] encoding:NSUTF8StringEncoding error:nil];if(text)[references appendString:text];}
  unsigned long long removed=0;for(NSString*path in [NSSet setWithArray:candidates]){
   if(!contained(path)||[references containsString:path.lastPathComponent])continue;
