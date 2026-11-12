@@ -83,13 +83,13 @@ NSDictionary*rpe(NSDictionary*input){
    double start=t.seconds(beat(n[@"startTime"])),end=t.seconds(beat(n[@"endTime"])),raw=number(n[@"speed"],1),size=number(n[@"size"],1);
    if(end<start)end=start;
    if(start<0||!std::isfinite(size)||std::fabs(size)>FLT_MAX)throw std::runtime_error("Invalid RPE note timing/size");
-   // Phira/ts parity: RPE treats negative alpha as "default visible" and
-   // non-positive visibleTime as "unbounded"; keeping them as-is makes the
-   // note permanently invisible under the render path.
+   // RPE visibleTime is a signed lead time, not a positive-only option.
+   // Zero hides the approach; negative values delay visibility beyond hit time.
+   // Algebra uses these for real judgement notes behind its fake-note artwork.
+   // Only an absent field receives the unbounded default (Android/Phira).
    double noteAlpha=number(n[@"alpha"],255);
    if(noteAlpha<0)noteAlpha=255;
    double noteVisible=number(n[@"visibleTime"],999999);
-   if(noteVisible<=0)noteVisible=999999;
    NSMutableDictionary*note=[@{ @"type":@(nativeType),@"time":@(llround(start*64)),@"holdTime":@(nativeType==3?(end-start)*64:0),@"positionX":@(number(n[@"positionX"])/75),@"speed":@(nativeType==3?raw*speedAt(speeds,std::round(start*64.0)/64.0):raw),@"floorPosition":@(floorAt(speeds,start)),@"pmTime":@(start),@"pmDuration":@(end-start),@"pmSize":@(size),@"pmFake":@([n[@"isFake"] boolValue]),@"pmAlpha":@(std::clamp(noteAlpha/255,0.,1.)),@"pmVisible":@(noteVisible),@"pmRawSpeed":@(raw),@"pmYOffset":@(number(n[@"yOffset"])),@"pmEndFloor":@(floorAt(speeds,end)) } mutableCopy];
    [(number(n[@"above"],1)==1?above:below) addObject:note];
   }

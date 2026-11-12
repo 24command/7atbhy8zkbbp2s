@@ -44,7 +44,7 @@ std::map<int,StoryVisual>storyVisuals;
 std::set<int>failedVisualLines;
 std::map<int,P>plainLineRenderers;std::map<int,double>storyRetry;std::set<int>storyReported;
 NSArray*storyFiles=nil;bool storyIndexed=false;P storyFrameCamera=nullptr;float storyFrameWidth=0;std::map<std::string,P>storySprites;P storyMaterial=nullptr;
-struct Fake{NSDictionary*note;int line;bool below;double start,end;};
+struct Fake{NSDictionary*note;int line;bool below;double start,end;bool chord;};
 struct FakeVisualCache{P transform=nullptr;P capTransforms[2]{};Bounds bounds{};bool shown=false;bool capShown[2]{false,false};bool colorSet=false,scaleSet=false;Color color{};V3 scale{};};
 std::map<size_t,FakeVisualCache>fakeVisualCache;
 std::vector<size_t>fakeSchedule;std::set<size_t>activeFakes;size_t fakeCursor=0;bool fakeScheduleReady=false;double fakeLastTime=0;
@@ -935,12 +935,17 @@ void visuals(Runtime&r,P progress){
  // Fake notes are independent SpriteRenderers: never native score/judgement
  // controllers. Only the local 8-second window is allocated.
  if(!fakeScheduleReady){
+  // Match Phira's float-time chord grouping across real AND fake notes.
+  // Build once, not in the per-frame sprite loop; fake notes never enter scoring.
+  std::map<float,unsigned>chordTimes;
+  for(NSDictionary*sourceLine in data)for(NSString*side in @[@"notesAbove",@"notesBelow"])for(NSDictionary*n in sourceLine[side])
+   ++chordTimes[(float)scalar(n[@"pmTime"],scalar(n[@"time"])/64)];
   for(NSUInteger li=0;li<data.count;++li)for(NSString*side in @[@"notesAbove",@"notesBelow"])for(NSDictionary*n in data[li][side])if([n[@"pmFake"] boolValue]){
    double start=scalar(n[@"pmTime"],scalar(n[@"time"])/64);
    double end=start+((int)scalar(n[@"type"])==3?scalar(n[@"pmDuration"]):0);
    NSDictionary*decor=data[li][@"pmDecor"];bool cover=decor[@"isCover"]?[decor[@"isCover"]boolValue]:true;
    if((int)scalar(n[@"type"])!=3&&!cover)end=std::numeric_limits<double>::infinity();
-   fakeSchedule.push_back(fakeNotes.size());fakeNotes.push_back({n,(int)li,[side isEqualToString:@"notesBelow"],start,end});
+   fakeSchedule.push_back(fakeNotes.size());fakeNotes.push_back({n,(int)li,[side isEqualToString:@"notesBelow"],start,end,chordTimes[(float)start]>1});
   }
   std::stable_sort(fakeSchedule.begin(),fakeSchedule.end(),[](size_t a,size_t b){return fakeNotes[a].start<fakeNotes[b].start;});
   fakeScheduleReady=true;
@@ -984,6 +989,15 @@ void visuals(Runtime&r,P progress){
     if(!images||r.array_length(images)<3)throw std::runtime_error("Hold prefab noteImages incomplete");
     sprites[0]=r.arrayAt(images,1);sprites[1]=r.arrayAt(images,0);sprites[2]=r.arrayAt(images,2);
    }else sprites[0]=r.get<P>(controller,"noteImage");
+   if(f.chord&&r.get<bool>(line,"chordSupport")){
+    if(type==3){
+     P head=r.get<P>(line,"HoldHL0"),body=r.get<P>(line,"HoldHL1");
+     if(r.alive(head))sprites[1]=head;if(r.alive(body))sprites[0]=body;
+    }else{
+     P highlighted=r.get<P>(line,type==2?"DragHL":type==4?"FlickHL":"ClickHL");
+     if(r.alive(highlighted))sprites[0]=highlighted;
+    }
+   }
    for(int k=0;k<(type==3?3:1);++k)if(!r.alive(sprites[k]))throw std::runtime_error("Native serialized note sprite is not ready");
    for(int k=0;k<(type==3?3:1);++k)sprites[k]=pmfeatures::noteSprite(r,type,k==0?1:k==1?0:2,sprites[k]);
    // CreateNote uses the prefab's actual scale, the user's noteScale and
@@ -1291,6 +1305,8 @@ void validate(Runtime&r){
  r.resolve(r.type("UnityEngine","AudioClip"),"SetData",{"System.Single[]","System.Int32"});
  // Fake note rendering needs these; missing fields fall through to fallback
  // chains inside visuals() rather than aborting the frame.
+ r.field(r.klass("JudgeLineControl"),"chordSupport","System.Boolean",false);
+ for(const char*name:{"ClickHL","DragHL","FlickHL","HoldHL0","HoldHL1"})r.field(r.klass("JudgeLineControl"),name,"UnityEngine.Sprite",false);
  for(const char*name:{"Click","Drag","Flick","Hold"})
   try{r.field(r.klass("JudgeLineControl"),name,"UnityEngine.GameObject",false);}catch(...){}
  for(const char*name:{"clickControls","dragControls","holdControls","flickControls"}){

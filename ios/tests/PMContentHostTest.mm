@@ -25,6 +25,26 @@ int main(int argc,const char**argv){@autoreleasepool{
  assert(hiddenChart);assert([hiddenChart[@"judgeLineList"][0][@"pmDecor"][@"sourceAlphaEvents"][0][@"start"]doubleValue]<0);
  assert([hiddenChart[@"judgeLineList"][0][@"judgeLineDisappearEvents"][0][@"start"]doubleValue]==0);
  assert(!PMNativeChart(hiddenChart)[@"judgeLineList"][0][@"pmDecor"]);
+ // Algebra hides real judgement notes behind fake-note artwork using signed
+ // visibleTime. Conversion must preserve it on both sides and on fake notes.
+ for(NSNumber*visible in @[@(-60),@(-10),@(-1),@0,@2.7119,@999999]){
+  NSMutableDictionary*fixture=[NSJSONSerialization JSONObjectWithData:[NSJSONSerialization dataWithJSONObject:source options:0 error:nil] options:NSJSONReadingMutableContainers error:nil];
+  NSArray*notes=fixture[@"judgeLineList"][0][@"notes"];
+  for(NSMutableDictionary*note in notes){note[@"visibleTime"]=visible;note[@"alpha"]=@0;}
+  error=nil;NSDictionary*converted=PMConvertChart([NSJSONSerialization dataWithJSONObject:fixture options:0 error:nil],&error);
+  assert(converted&&error==nil);
+  NSUInteger checked=0;for(NSString*side in @[@"notesAbove",@"notesBelow"])for(NSDictionary*note in converted[@"judgeLineList"][0][side]){
+   assert([note[@"pmVisible"]doubleValue]==visible.doubleValue);
+   assert([note[@"pmAlpha"]doubleValue]==0);++checked;
+   double start=[note[@"pmTime"]doubleValue],lead=[note[@"pmVisible"]doubleValue];
+   assert(start-(start-lead-.01)>lead); // still hidden just before its reveal
+   assert(!(start-(start-lead+.01)>lead));
+  }assert(checked==3);
+  NSDictionary*native=PMNativeChart(converted); // visibility never removes scoring notes
+  assert([native[@"judgeLineList"][0][@"notesAbove"]count]==1);
+  assert([native[@"judgeLineList"][0][@"notesBelow"]count]==1);
+ }
+ assert([lines[0][@"notesAbove"][0][@"pmVisible"]doubleValue]==999999);
  NSString*pec=@"175\nbp 0 120\ncp 0 0 1024 700\ncm 0 0 4 2048 1400 1\ncv 0 0 7\nn1 0 2 0 1 0 # 1.5 & 2\nn2 0 3 4 0 1 0\n";c=PMConvertChart([pec dataUsingEncoding:NSUTF8StringEncoding],&error);assert(c);assert([c[@"judgeLineList"][0][@"judgeLineMoveEvents"]count]>1);assert([c[@"judgeLineList"][0][@"notesAbove"][0][@"pmSize"]intValue]==2);assert([c[@"judgeLineList"][0][@"notesAbove"][0][@"speed"]doubleValue]==1.5);
  NSDictionary*clean=PMNativeChart(c);assert(clean[@"blockAreaList"]);assert(!clean[@"pmFormat"]);assert(!clean[@"judgeLineList"][0][@"notesAbove"][0][@"pmSize"]);
 
