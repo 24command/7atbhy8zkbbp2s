@@ -1,3 +1,4 @@
+#include "../Core/PMRPEVisibility.hpp"
 #include "../Core/PMFrameCache.hpp"
 #include "../Core/PMCoverGeometry.hpp"
 #include "PMContentRuntime.hpp"
@@ -40,6 +41,9 @@ P recordSelector=nullptr,recordItem=nullptr;int recordSlot=-1;NSUInteger recordR
 NSUInteger selectorLibraryRevision=0;int loadingSong=-1,loadingSlot=-1;
 float loadingPosition=0;double selectionChangedAt=0;bool selectorDragging=true;
 std::set<P>recoveredSourceNotes;
+struct SourceCandidate{P note;NSDictionary*source;int line,index,type;bool above;double start,end;float x;};
+std::vector<SourceCandidate>sourceCandidates;bool sourceCandidatesReady=false;
+
 P extrasBoundChart=nullptr;
 std::map<std::string,std::map<int,NSDictionary*>>variants;std::map<P,NSDictionary*>extras;std::map<P,V3>noteScales,lineScales;std::map<int,uint32_t>decorText,decorImage;
 struct StoryVisual {bool stateSet=false;V3 lastPosition{},lastScale{};std::array<float,4>lastRotation{};Color lastColor{};int lastOrder=0;P go=nullptr,tr=nullptr,graphic=nullptr,canvas=nullptr;bool text=false,visible=true;NSString*lastText=nil;};
@@ -207,7 +211,7 @@ P audio(Runtime&r,NSString*path){
  }catch(...){r.gchandle_free(clipRoot);throw;}
 }
 NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=[[key stringByReplacingOccurrencesOfString:id withString:@""]lowercaseString];*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":[lower containsString:@"blur"]?@"blur":@"image";return id;}
-void clearVisuals(Runtime&r){clearSkew(r);clearHud(r);restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();extrasBoundChart=nullptr;recoveredSourceNotes.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();plainLineRenderers.clear();failedVisualLines.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();sourceFloorFrame.clear();sourceAlphaFrame.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();uiControlLines.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
+void clearVisuals(Runtime&r){clearSkew(r);clearHud(r);restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();extrasBoundChart=nullptr;recoveredSourceNotes.clear();sourceCandidates.clear();sourceCandidatesReady=false;noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();plainLineRenderers.clear();failedVisualLines.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();sourceFloorFrame.clear();sourceAlphaFrame.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();uiControlLines.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
 struct ChapterCoverFit{P sprite=nullptr;uint32_t image=0;};std::map<P,ChapterCoverFit>chapterCoverFits;
 void fitExpandedChapterCover(Runtime&r,P loader){
  if(!r.alive(loader))return;P image=r.get<P>(loader,"_image");if(!r.alive(image))return;P sprite=r.call(image,"get_sprite");if(!r.alive(sprite))return;
@@ -644,7 +648,7 @@ void beforeInformation(Runtime&r,P level){
    }
   }
  }
- extras.swap(bound);extrasBoundChart=chart;
+ extras.swap(bound);extrasBoundChart=chart;sourceCandidates.clear();sourceCandidatesReady=false;
  log([NSString stringWithFormat:@"Content source binding: notes=%lu reordered=%lu (serialized identity, before mode edits)",(unsigned long)extras.size(),(unsigned long)reordered]);
 }
 
@@ -852,37 +856,58 @@ bool hasNoteController(Runtime&r,P line,int index,bool above){
  P progress=r.get<P>(line,"progressControl"),judge=r.get<P>(progress,"judgeControl"),manager=r.get<P>(judge,"noteUpdateManager");
  return findSourceController(r,manager,note)!=nullptr;
 }
+struct SourceFrameLine{P owner;phimod::RpePlanePose pose;double floor;NSDictionary*source;};
+SourceFrameLine sourceFrameLine(Runtime&r,P owner,NSDictionary*source,int index,P info,double now){
+ P tr=r.call(owner,"get_transform");V3 zero{0,0,0},x{1,0,0},y{0,1,0};
+ V3 origin=r.unbox<V3>(r.call(tr,"TransformPoint",{"UnityEngine.Vector3"},{&zero})),right=r.unbox<V3>(r.call(tr,"TransformPoint",{"UnityEngine.Vector3"},{&x})),up=r.unbox<V3>(r.call(tr,"TransformPoint",{"UnityEngine.Vector3"},{&y}));
+ return {owner,{origin.x,origin.y,right.x-origin.x,right.y-origin.y,up.x-origin.x,up.y-origin.y},sourceFloorFor(r,info,index,now),source};
+}
+bool sourceVisualNear(Runtime&r,const SourceFrameLine&line,NSDictionary*n,double now,double start,bool hold,bool below,float x,float world){
+ NSDictionary*d=line.source[@"pmDecor"];double raw=scalar(n[@"pmRawSpeed"],1),delta=scalar(n[@"floorPosition"])-line.floor;
+ if(start-now>scalar(n[@"pmVisible"],999999)||scalar(n[@"pmAlpha"],1)<=0||sourceNotesHidden(line.source,now))return false;
+ bool cover=d[@"isCover"]?[d[@"isCover"]boolValue]:true;
+ if(rpeCovered(cover,now,start,scalar(n[@"floorPosition"]),line.floor,raw))return false;
+ double distance=delta*rpeFloorToDistance+scalar(n[@"pmYOffset"]);
+ if(control(d,@"alphaControl",distance)<=0)return false;
+ auto geometry=rpeGeometry(delta,scalar(n[@"pmEndFloor"],scalar(n[@"floorPosition"]))-line.floor,0,raw,scalar(n[@"pmYOffset"]),control(d,@"yControl",distance),world,hold&&now>=start);
+ x=rpeHorizontalPosition(x,hold,control(d,@"posControl",distance),trackValue(d[@"inclineEvents"],now,0),geometry.head,notePerspectiveWidth(r,d,now));
+ double head=below?-geometry.head:geometry.head,tail=hold?(below?-geometry.tail:geometry.tail):head;
+ return phimod::rpeVisualNear(line.pose,x,head,tail,scalar(n[@"pmSize"],1)*control(d,@"sizeControl",distance));
+}
 void recoverSourceNotes(Runtime&r,P manager){
- // Build the controller index only when a source note actually needs it.
  if(!currentChart)return;P progress=r.get<P>(manager,"progressControl"),judge=r.get<P>(manager,"judgeControl"),info=r.get<P>(manager,"levelInformation");
  if(!r.get<bool>(info,"chartLoaded"))return;
  float now=r.get<float>(progress,"nowTime"),world=r.staticValue<float>(r.klass("LevelInformation"),"Speed","System.Single");
- std::map<P,P>existing;
- bool controlsIndexed=false;
- P notes=r.get<P>(judge,"chartNoteSortByTime"),lines=r.get<P>(judge,"judgeLineControls");int n=r.count(notes),lo=0,hi=n;
- while(lo<hi){int mid=(lo+hi)/2;if(r.get<float>(r.at(notes,mid),"realTime")<now-.25f)lo=mid+1;else hi=mid;}
- for(int i=lo;i<n;++i){P note=r.at(notes,i);float start=r.get<float>(note,"realTime");if(start>now+8)break;
-  auto extra=extras.find(note);if(extra==extras.end()||!extra->second[@"pmRawSpeed"])continue;
-  if(start-now>scalar(extra->second[@"pmVisible"],999999))continue;
-  int sourceIndex=r.get<int>(note,"judgeLineIndex")/2;NSArray*sourceLines=currentChart[@"judgeLineList"];
-  if(sourceIndex>=0&&sourceIndex<(int)sourceLines.count&&sourceNotesHidden(sourceLines[sourceIndex],now))continue;
-  int li=r.get<int>(note,"judgeLineIndex")/2;if(li<0||li>=r.count(lines))continue;P line=r.at(lines,li);
-  double current=sourceFloorFor(r,info,li,now),delta=scalar(extra->second[@"floorPosition"])-current;
-  if(std::fabs(delta*scalar(extra->second[@"pmRawSpeed"],1)*world)>30)continue;
+ P lines=r.get<P>(judge,"judgeLineControls");NSArray*sourceLines=currentChart[@"judgeLineList"];int count=r.count(lines);
+ // Immutable per-chart identities are captured once, after native note sorting.
+ // Do not stop at now+8: stopped scroll + an offscreen line can reveal notes
+ // much further in the future (MassacrE's 50.25..60.6 second performance).
+ if(!sourceCandidatesReady){
+  for(const auto&entry:extras){P note=entry.first;NSDictionary*n=entry.second;if(!n[@"pmRawSpeed"])continue;
+   int line=r.get<int>(note,"judgeLineIndex"),type=r.get<int>(note,"type");double start=r.get<float>(note,"realTime");
+   sourceCandidates.push_back({note,n,line/2,r.get<int>(note,"noteIndex"),type,line%2==0,start,start+(type==3?r.get<float>(note,"holdTime"):0),r.get<float>(note,"positionX")});
+  }
+  sourceCandidatesReady=true;
+ }
+ std::map<int,SourceFrameLine>poses;std::map<P,P>existing;bool controlsIndexed=false;
+ for(const auto&candidate:sourceCandidates){
+  if(candidate.end<now-.25||candidate.line<0||candidate.line>=count||candidate.line>=(int)sourceLines.count)continue;
+  bool due=now>=candidate.start-2&&now<=candidate.end+.25;
+  auto pose=poses.find(candidate.line);if(pose==poses.end())pose=poses.emplace(candidate.line,sourceFrameLine(r,r.at(lines,candidate.line),sourceLines[candidate.line],candidate.line,info,now)).first;
+  bool near=sourceVisualNear(r,pose->second,candidate.source,now,candidate.start,candidate.type==3,!candidate.above,candidate.x,world);
+  if(!near&&!due)continue;
   if(!controlsIndexed){for(const char*field:{"clickControls","dragControls","holdControls","flickControls"}){P list=r.get<P>(manager,field);for(int i=0,n=r.count(list);i<n;++i){P c=r.at(list,i);if(r.alive(c))existing[r.get<P>(c,"noteInfor")]=c;}}controlsIndexed=true;}
-  auto present=existing.find(note);P controlObject=present==existing.end()?nullptr:present->second;
-  if(!controlObject&&!r.get<bool>(note,"isJudged")&&start>=now-.001f){
-   bool above=(r.get<int>(note,"judgeLineIndex")%2)==0;int index=r.get<int>(note,"noteIndex");P side=r.get<P>(line,above?"notesAbove":"notesBelow");
+  P note=candidate.note;auto present=existing.find(note);P controlObject=present==existing.end()?nullptr:present->second;
+  if(!controlObject&&!r.get<bool>(note,"isJudged")&&candidate.start>=now-.001f){
+   int index=candidate.index;bool above=candidate.above;P line=pose->second.owner,side=r.get<P>(line,above?"notesAbove":"notesBelow");
    if(index<0||index>=r.count(side)||r.at(side,index)!=note)continue;
    r.call(line,"CreateNote",{"System.Int32","System.Boolean"},{&index,&above});controlObject=findSourceController(r,manager,note);
-   if(controlObject){recoveredSourceNotes.insert(note);r.call(controlObject,"Start");}
+   if(controlObject){recoveredSourceNotes.insert(note);existing[note]=controlObject;r.call(controlObject,"Start");}
   }
-  if(controlObject&&!r.get<bool>(controlObject,"isVisible")){
-   // Correct a native floor/visibility gate only while the source geometry is near.
-   r.put(controlObject,"isVisible",true);r.call(controlObject,"NoteMove");
-  }
+  if(controlObject&&near&&!r.get<bool>(controlObject,"isVisible")){r.put(controlObject,"isVisible",true);r.call(controlObject,"NoteMove");}
  }
 }
+
 void visuals(Runtime&r,P progress){
  storyFrameCamera=nullptr;storyFrameWidth=0;
  if(!currentChart)return;
@@ -965,7 +990,7 @@ void visuals(Runtime&r,P progress){
   }catch(const std::exception&e){if(failedVisualLines.insert(i).second)log([NSString stringWithFormat:@"Storyboard line update failed: line=%d reason=%s",i,e.what()]);}
  }
  // Fake notes are independent SpriteRenderers: never native score/judgement
- // controllers. Only the local 8-second window is allocated.
+ // controllers. Allocate when transformed source geometry reaches the viewport.
  if(!fakeScheduleReady){
   // Match Phira's float-time chord grouping across real AND fake notes.
   // Build once, not in the per-frame sprite loop; fake notes never enter scoring.
@@ -989,14 +1014,18 @@ void visuals(Runtime&r,P progress){
    P sr=target(r,k?ends->second.second:ends->second.first);r.call(sr,"set_enabled",{"System.Boolean"},{&no});visual->second.capShown[k]=false;
   }
  };
- // A practice seek/repeat rebuilds the window once; normal frames visit only
- // notes whose existing eight-second visibility window has begun.
- if(now<fakeLastTime){for(size_t i:activeFakes)hideFake(i);activeFakes.clear();fakeCursor=0;}
+ // Fake and real notes use the same transformed source-geometry visibility.
+ // No fixed time horizon: stopped/reversed lines can expose distant notes.
+ if(now<fakeLastTime){for(size_t i:activeFakes)hideFake(i);activeFakes.clear();}
  fakeLastTime=now;
- while(fakeCursor<fakeSchedule.size()&&fakeNotes[fakeSchedule[fakeCursor]].start-8<=now){size_t i=fakeSchedule[fakeCursor++];if(now<fakeNotes[i].end)activeFakes.insert(i);}
- for(auto it=activeFakes.begin();it!=activeFakes.end();){if(now>=fakeNotes[*it].end){hideFake(*it);it=activeFakes.erase(it);}else ++it;}
- if(activeFakes.empty())return;
  float worldSpeed=r.staticValue<float>(r.klass("LevelInformation"),"Speed","System.Single");
+ std::map<int,SourceFrameLine>fakePoses;
+ for(size_t i:fakeSchedule){auto&f=fakeNotes[i];if(f.line<0||f.line>=total||now>=f.end){if(activeFakes.erase(i))hideFake(i);continue;}
+  auto pose=fakePoses.find(f.line);if(pose==fakePoses.end())pose=fakePoses.emplace(f.line,sourceFrameLine(r,r.at(lineList,f.line),data[f.line],f.line,info,now)).first;
+  bool near=sourceVisualNear(r,pose->second,f.note,now,f.start,(int)scalar(f.note[@"type"])==3,f.below,scalar(f.note[@"positionX"]),worldSpeed);
+  if(near)activeFakes.insert(i);else if(activeFakes.erase(i))hideFake(i);
+ }
+ if(activeFakes.empty())return;
  double retryClock=NSDate.timeIntervalSinceReferenceDate;
  std::map<int,double>frameFloors;std::map<int,P>frameLines;
  for(size_t i:activeFakes){
@@ -1260,7 +1289,7 @@ void noteMoved(Runtime&r,P controlObject,bool hold){
   bool sourceGeometry=n[@"pmRawSpeed"]!=nil;
   // Android: native Hold fading/visibility is based on its constant-speed
   // geometry; do not let it flash a source-geometry Hold during its lifetime.
-  color.a=(sourceGeometry&&!controlMissed)?alpha:std::min(color.a,alpha);
+  color.a=(sourceGeometry&&!controlMissed&&(hold||now<=start))?alpha:std::min(color.a,alpha);
   if(sourceGeometry&&!controlMissed){
    bool show=alpha>0&&!(hold&&!strcmp(field,"_holdHeadSpriteRenderer")&&r.get<bool>(controlObject,"_holdHeadIsDestroyed"));
    // This branch is reached only while the control is alive and unjudged (or
