@@ -39,6 +39,7 @@ void openRequirementPopup(Runtime&r,NSString*text){
   try{
    P types=r.array_new(r.type("System","Type"),1);uint32_t typesRoot=r.gchandle_new(types,false);int zero=0;
    try{r.invokeOn(r.resolve(r.type("System","Array"),"SetValue",{"System.Object","System.Int32"}),types,{r.type_get_object(r.class_get_type(r.type("UnityEngine","RectTransform"))),&zero});r.call(go,".ctor",{"System.String","System.Type[]"},{r.string_new("PhiMod Unlock Scroll"),types});}catch(...){r.gchandle_free(typesRoot);throw;}r.gchandle_free(typesRoot);
+   int layer=r.unbox<int>(r.call(r.call(content,"get_gameObject"),"get_layer"));r.call(go,"set_layer",{"System.Int32"},{&layer});
    P view=r.call(go,"get_transform");r.call(view,"SetParent",{"UnityEngine.Transform","System.Boolean"},{parent,&no});
    for(const char*field:{"anchorMin","anchorMax","pivot","sizeDelta","anchoredPosition"}){std::string get=std::string("get_")+field,set=std::string("set_")+field;TipSize value=r.unbox<TipSize>(r.call(oldTr,get.c_str()));r.call(view,set.c_str(),{"UnityEngine.Vector2"},{&value});}
    r.call(go,"AddComponent",{"System.Type"},{r.type_get_object(r.class_get_type(r.type("UnityEngine.UI","RectMask2D")))});
