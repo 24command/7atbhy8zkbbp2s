@@ -50,7 +50,7 @@
  if(![self validateSnapshot:values error:error])return NO;
  // One dictionary replacement: Save cannot partially commit interdependent
  // fields. Cancel never writes NSUserDefaults in the first place.
- [self.store setObject:[values copy] forKey:@"phimod.ios.config.snapshot.v2"];return YES;
+ [self.store setObject:[values copy] forKey:@"phimod.ios.config.snapshot.v2"];dispatch_async(dispatch_get_main_queue(),^{[NSNotificationCenter.defaultCenter postNotificationName:@"PhiModConfigurationChanged" object:nil];});return YES;
 }
 - (BOOL)setValue:(id)value forKey:(NSString *)key error:(NSString **)error {
  NSMutableDictionary *candidate=[[self snapshot] mutableCopy];

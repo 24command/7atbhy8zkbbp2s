@@ -36,7 +36,8 @@
  for(NSDictionary*song in [db[@"songs"]copy])if([wanted containsObject:song[@"id"]]){
   NSString*id=song[@"id"],*from=[self asset:id],*token=[id stringByAppendingFormat:@"-%@",NSUUID.UUID.UUIDString],*to=[self trashPath:token];
   NSMutableArray*members=[NSMutableArray new];for(NSDictionary*c in db[@"chapters"])if([c[@"songs"]containsObject:id])[members addObject:c[@"id"]];
-  NSDictionary*meta=@{@"song":song,@"chapters":members,@"deletedAt":@(NSDate.timeIntervalSinceReferenceDate)};
+  NSMutableDictionary*selections=[NSMutableDictionary new];for(NSString*key in db[@"chartSelections"])if([db[@"chartSelections"][key]isEqual:id])selections[key]=id;
+  NSDictionary*meta=@{@"song":song,@"chapters":members,@"selections":selections,@"deletedAt":@(NSDate.timeIntervalSinceReferenceDate)};
   if(![f fileExistsAtPath:from]){if(error)*error=err(@"Chart resources missing; deletion cancelled");goto rollback;}
   if(!writeJSON(meta,[from stringByAppendingPathComponent:@"trash-entry.json"],error)||![f moveItemAtPath:from toPath:to error:error])goto rollback;
   [moved addObject:@{@"from":from,@"to":to}];[db[@"songs"]removeObject:song];
@@ -58,7 +59,8 @@
  BOOL parentExists=NO;for(NSDictionary*c in db[@"chapters"])if([c[@"id"]isEqual:song[@"targetChapter"]])parentExists=YES;
  if(!parentExists)song[@"targetChapter"]=@"pm_local";
  for(NSMutableDictionary*c in db[@"chapters"])if([meta[@"chapters"]containsObject:c[@"id"]]||[c[@"id"]isEqual:song[@"targetChapter"]])if(![c[@"songs"]containsObject:id])[c[@"songs"]addObject:id];
- [db[@"songs"]addObject:song];if(![f moveItemAtPath:folder toPath:target error:error])return NO;
+ [db[@"songs"]addObject:song];for(NSString*key in meta[@"selections"])if(!db[@"chartSelections"][key])db[@"chartSelections"][key]=id;
+ if(![f moveItemAtPath:folder toPath:target error:error])return NO;
  if(![self commit:db error:error]){[f moveItemAtPath:target toPath:folder error:nil];return NO;}
  [f removeItemAtPath:[target stringByAppendingPathComponent:@"trash-entry.json"] error:nil];return YES;
  }

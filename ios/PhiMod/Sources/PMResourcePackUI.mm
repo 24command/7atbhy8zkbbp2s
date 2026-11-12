@@ -114,7 +114,7 @@ static void PMImportResourcePack(UIView *source){
  [super viewDidLoad];self.title=@"\u97f3\u7b26\u76ae\u80a4";
  self.root=[NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject stringByAppendingPathComponent:@"PhiMod/resources"];
  self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc]initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
- self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc]initWithBarButtonSystemItem:UIBarButtonSystemItemAdd target:self action:@selector(importPack)];
+ self.navigationItem.rightBarButtonItems=@[[[UIBarButtonItem alloc]initWithBarButtonSystemItem:UIBarButtonSystemItemAdd target:self action:@selector(importPack)],self.editButtonItem];
 }
 - (void)viewWillAppear:(BOOL)animated {[super viewWillAppear:animated];[self reloadPacks];}
 - (void)reloadPacks {

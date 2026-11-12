@@ -25,7 +25,10 @@
 
 namespace pmfeatures {
 using pmbridge::P;
-void attach(pmbridge::Runtime&) {}
+void attach(pmbridge::Runtime&r){
+ r.field(r.klass("GameInformation"),"hitFxIsOn","System.Boolean",false);r.field(r.klass("GameInformation"),"HitFXVol","System.Single",false);
+ r.resolve(r.type("UnityEngine","AudioSource"),"PlayOneShot",{"UnityEngine.AudioClip","System.Single"});
+}
 
 using pmbridge::Runtime;
 struct V2 { float x,y; };
