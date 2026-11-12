@@ -71,6 +71,10 @@ inline constexpr ExpectedEntry expected[]={
  {0x14f12c8u,0xa9bc5ff8u}, // mainlinePhase1Start
  {0x14f60b4u,0xa9bd57f6u}, // mainlinePhase1ToPhase2
  {0x15157a4u,0xa9bd57f6u}, // mainlineApplyMapCover
+ {0x180d580u,0xa9bd57f6u}, // skinInstantiate
+ {0x14b38a8u,0xd10103ffu}, // skinSoundHit
+ {0x14b3a08u,0xd10103ffu}, // skinSoundNA
+ {0x14b3cdcu,0xa9bc5ff8u}, // skinSoundUnity
 };
 static_assert(sizeof(expected)/sizeof(expected[0])==Count,"Offline hook manifest must match callback protocol");
 }

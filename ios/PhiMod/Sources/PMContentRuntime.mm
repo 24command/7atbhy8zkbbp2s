@@ -295,6 +295,7 @@ void chapterReady(Runtime&r,P self){
  syncChapterCoverFallbacks(r);
  log(@"Content ChapterSelector.Start completed");
 }
+void*loadSkinAudio(Runtime&r,NSString*path){return audio(r,path);}
 void attach(Runtime&r){runtime=&r;}
 bool sourceHoldGeometry(Runtime&r,P control){
  P note=r.get<P>(control,"noteInfor");auto found=extras.find(note);
@@ -881,6 +882,7 @@ void visuals(Runtime&r,P progress){
   // Extended line scale is visual-only; never scale the note/controller parent.
   NSString*textureName=[d[@"Texture"] isKindOfClass:NSString.class]?d[@"Texture"]:nil;
   bool story=[d[@"textEvents"] count]>0||(textureName.length&&![textureName isEqualToString:@"line.png"]);
+  if(!story)pmfeatures::styleLine(r,renderer);
   Color color=story?Color{1,1,1,1}:r.unbox<Color>(r.call(renderer,"get_color"));
   if(!story&&[currentChart[@"pmFormat"]isEqualToString:@"RPE"]){
    float alpha=sourceLineAlpha(data[i][@"judgeLineDisappearEvents"],now,scalar(data[i][@"bpm"],120));

@@ -13,4 +13,10 @@
 - (BOOL)removeSongs:(NSArray<NSString*>*)identifiers error:(NSError**)error;
 - (BOOL)replaceImage:(NSURL*)url identifier:(NSString*)identifier error:(NSError**)error;
 - (BOOL)replaceImageData:(NSData*)data identifier:(NSString*)identifier error:(NSError**)error;
+- (void)cleanupExports:(NSArray<NSURL*>*)urls;
+- (NSArray<NSDictionary*>*)trashItems;
+- (BOOL)restoreTrash:(NSString*)token error:(NSError**)error;
+- (BOOL)deleteTrash:(NSString*)token error:(NSError**)error;
 @end
+
+FOUNDATION_EXPORT BOOL PMConvertAudioResource(NSString*source,NSString*destination,NSError**error);

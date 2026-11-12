@@ -1,3 +1,4 @@
+#import "PMResourcePackUI.h"
 #import "PMAvatarUI.h"
 #import "PMOfficialUI.h"
 #import "PMDiagnostics.h"
@@ -147,7 +148,7 @@ void projectTab(Runtime&r){P tab=target(r,tabRoot);if(!r.alive(tab))return;P txt
   [self addCards:@[[self modeCard:@"AutoPlay" detail:@"自动演示 · 不保存成绩" key:@"autoplay" page:4],[self modeCard:@"噪域" detail:@"噪域范围与 Hold 容错" key:@"noise" page:3],[self modeCard:@"去噪域" detail:@"清除原谱噪域 · 不保存成绩" key:@"clearOriginalNoise" page:0],[self modeCard:@"HP 生存" detail:@"生命规则与原生 HP 特效" key:@"hpEnabled" page:1],[self modeCard:@"全屏判定" detail:@"保留时间 / 键型判定 · 不保存成绩" key:@"fullScreen" page:0],[self modeCard:@"实时 ACC" detail:@"在当前分数下方显示即时准确率，不改变计分" key:@"accuracy" page:0],[self modeCard:@"去连击分" detail:@"按全谱 note 数计算 Perfect/Good 成绩 · 不保存记录" key:@"noCombo" page:0],[self modeCard:@"区间练习" detail:@"起止、循环、倒数与暂停预览" key:@"practiceMode" page:2],[self modeCard:@"音符流速 / 播放倍速" detail:@"0–5× · 区间练习内可调整" key:@"noteFlowEnabled" page:2]]];
   [self addChoice:@"unified" title:@"统一键型"];[self addChoice:@"challenge" title:@"自动重开挑战"];
  }else{
-  [self.body addArrangedSubview:[self button:@"\u81ea\u5b9a\u4e49\u5934\u50cf" action:@selector(avatarSettings)]];[self addToggle:@"mainlineUnlock" title:@"主线全解锁（官方原始条件不修改成绩）"];[self.body addArrangedSubview:[self label:@"仅解除 MainStory 章节、歌曲和难度的原版锁定；不会伪造成绩、RKS 或云存档。RPE video and global Metal shaders load automatically. Chart-only / targetRange shaders are not supported yet." size:12]];[self addToggle:@"showShortcuts" title:@"选曲页快捷模式按钮"];[self addNumber:@"opacity" title:@"浮窗透明度 0.15–1"];[self.body addArrangedSubview:[self button:@"复制诊断日志" action:@selector(copyDiagnostics)]];
+  [self.body addArrangedSubview:[self button:@"\u81ea\u5b9a\u4e49\u5934\u50cf" action:@selector(avatarSettings)]];[self addToggle:@"mainlineUnlock" title:@"主线全解锁（官方原始条件不修改成绩）"];[self.body addArrangedSubview:[self label:@"仅解除 MainStory 章节、歌曲和难度的原版锁定；不会伪造成绩、RKS 或云存档。RPE video and global Metal shaders load automatically. Chart-only / targetRange shaders are not supported yet." size:12]];[self addToggle:@"showShortcuts" title:@"选曲页快捷模式按钮"];[self addNumber:@"opacity" title:@"浮窗透明度 0–1"];[self.body addArrangedSubview:[self button:@"复制诊断日志" action:@selector(copyDiagnostics)]];
  }
  [self layoutEditor];
 }
@@ -168,7 +169,8 @@ void projectTab(Runtime&r){P tab=target(r,tabRoot);if(!r.alive(tab))return;P txt
 
 namespace pmscene {
 using namespace sceneimpl;
-void settingsLeave(Runtime&r){restore(r,hidden,"SetActive");restore(r,animations,"set_enabled");restore(r,mutes,"set_mute");modEditorOpen=false;[[PMModEditor shared] cancel];
+#include "PMNativeModSettings.inc"
+void settingsLeave(Runtime&r){clearNativeSettings(r);restore(r,hidden,"SetActive");restore(r,animations,"set_enabled");restore(r,mutes,"set_mute");modEditorOpen=false;[[PMModEditor shared] cancel];
  P owner=target(r,settingRoot);if(r.alive(owner)){P tabs=r.get<P>(owner,"tabAnimators");int index=r.get<int>(owner,"currentTab");if(tabs&&index>=0&&uintptr_t(index)<r.array_length(tabs)){P tr=transform(r,r.arrayAt(tabs,index)),slider=r.get<P>(owner,"sliderController");V2 pos=r.unbox<V2>(r.call(tr,"get_anchoredPosition")),size=r.unbox<V2>(r.call(tr,"get_sizeDelta"));if(slider)r.call(slider,"MoveTo",{"System.Single","System.Single"},{&pos.x,&size.x});}}
 }
 void selectorOff(Runtime&r){clearSelector(r);}
@@ -242,7 +244,8 @@ void settingsFrame(Runtime&r,P self){runtime=&r;
  }
  bool enabled=r.get<float>(self,"leaveTime")<=0;r.call(tabButton,"set_interactable",{"System.Boolean"},{&enabled});
  r.text(tabText,"MOD");
- PMModEditor*editor=[PMModEditor shared];if(modEditorOpen&&editor.hidden){settingsLeave(r);return;}
+ PMModEditor*editor=[PMModEditor shared];if(modEditorOpen&&editor.hidden&&!nativeSettingsRoot){settingsLeave(r);return;}
+ if(modEditorOpen&&nativeSettingsRoot)pollNativeSettings(r);
  if(!modEditorOpen)return;
  for(auto&entry:hidden){P obj=target(r,entry.first);if(r.alive(obj)&&r.unbox<bool>(r.call(obj,"get_activeSelf"))){bool no=false;r.call(obj,"SetActive",{"System.Boolean"},{&no});}}
  if(!r.unbox<bool>(r.call(go(r,self),"get_activeInHierarchy"))||r.get<float>(self,"leaveTime")>0){settingsLeave(r);return;}
@@ -252,17 +255,19 @@ void settingsFrame(Runtime&r,P self){runtime=&r;
  }
  projectTab(r);[editor layoutEditor];
 }
-bool ownsButton(P button){return button&&(buttons.count(button)||button==tabButton);}
-bool press(Runtime&r,P button){auto found=buttons.find(button);if(found!=buttons.end()){int i=found->second;P owner=target(r,selectorRoot);if(!r.alive(owner)||r.get<bool>(owner,"exit")||r.get<bool>(owner,"isMoving"))return true;NSString*key=keys[i];NSInteger old=[[[PMSettings shared] value:key] integerValue];NSNumber*value=i==2?@((old+1)%5):i==3?@((old+1)%3):@(!old);NSString*error=nil;[[PMSettings shared] setValue:value forKey:key error:&error];return true;}
+bool ownsButton(P button){return button&&(buttons.count(button)||button==tabButton||nativeActions.count(button));}
+bool press(Runtime&r,P button){if(pressNativeSetting(r,button))return true;auto found=buttons.find(button);if(found!=buttons.end()){int i=found->second;P owner=target(r,selectorRoot);if(!r.alive(owner)||r.get<bool>(owner,"exit")||r.get<bool>(owner,"isMoving"))return true;NSString*key=keys[i];NSInteger old=[[[PMSettings shared] value:key] integerValue];NSNumber*value=i==2?@((old+1)%5):i==3?@((old+1)%3):@(!old);NSString*error=nil;[[PMSettings shared] setValue:value forKey:key error:&error];return true;}
  if(button!=tabButton)return false;P self=target(r,settingRoot);if(!r.alive(self))return true;if(modEditorOpen)return true;
  modEditorOpen=true;
+ try{makeNativeSettings(r,self);
+ }catch(const std::exception&e){PMDiagnosticsWrite(e.what());}
  try{P tabs=r.get<P>(self,"tabAnimators");for(unsigned i=0;i<r.array_length(tabs);++i)stash(r,animations,r.arrayAt(tabs,int(i)),"get_enabled","set_enabled",false);
   P pages=r.get<P>(self,"tabScrollContents");for(uintptr_t i=0;pages&&i<r.array_length(pages);++i){P page=r.arrayAt(pages,(int)i);if(r.alive(page))stash(r,hidden,go(r,page),"get_activeSelf","SetActive",false);}
   P manager=r.get<P>(self,"settingItemsManager");if(r.alive(manager)){P holder=r.get<P>(manager,"itemsHolder");if(r.alive(holder))stash(r,hidden,go(r,holder),"get_activeSelf","SetActive",false);}
   P scroll=r.get<P>(self,"scrollRect"),preview=r.get<P>(self,"previewNoteHolder");for(P p:{scroll?go(r,scroll):nullptr,r.get<P>(self,"judgeLine"),r.get<P>(self,"clickPosition"),preview?go(r,preview):nullptr})if(p)stash(r,hidden,p,"get_activeSelf","SetActive",false);
   for(const char*name:{"audioSource1","audioSource2"}){P src=r.get<P>(self,name);if(src)stash(r,mutes,r.get<P>(src,"audioSource"),"get_mute","set_mute",true);}
   P slider=r.get<P>(self,"sliderController"),tr=transform(r,target(r,tabRoot));V2 pos=r.unbox<V2>(r.call(tr,"get_anchoredPosition")),size=r.unbox<V2>(r.call(tr,"get_sizeDelta"));r.call(slider,"MoveTo",{"System.Single","System.Single"},{&pos.x,&size.x});
-  projectTab(r);[[PMModEditor shared] begin];[PMModEditor shared].hidden=NO;
+  projectTab(r);if(!nativeSettingsRoot){[[PMModEditor shared] begin];[PMModEditor shared].hidden=NO;}
  }catch(...){settingsLeave(r);throw;}return true;
 }
 namespace {uint32_t recoveryRoot=0;UIAlertController*recoveryAlert=nil;}

@@ -1,6 +1,7 @@
 #pragma once
 #include "PMIL2CPP.hpp"
 namespace pmcontent {
+void* loadSkinAudio(pmbridge::Runtime&,NSString*path);
 void attach(pmbridge::Runtime&);void pulse();void refreshMainlineAccess(pmbridge::Runtime&);
 void chapterPrepare(pmbridge::Runtime&,void*);void chapterReady(pmbridge::Runtime&,void*);
 bool sourceHoldGeometry(pmbridge::Runtime&,void*control);

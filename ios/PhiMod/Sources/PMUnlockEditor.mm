@@ -32,7 +32,10 @@
 }
 - (void)tableView:(UITableView*)table didSelectRowAtIndexPath:(NSIndexPath*)index{
  NSDictionary*entry=self.filtered[index.row];void(^completion)(NSDictionary*)=self.selected;self.selected=nil;
- [self dismissViewControllerAnimated:YES completion:^{if(completion)completion(entry);}];
+ // Dismiss the containing picker navigation controller, not UISearchController.
+ UIViewController*container=self.navigationController?:self;UIViewController*presenter=container.presentingViewController;
+ [self.search.searchBar resignFirstResponder];self.search.active=NO;
+ [presenter dismissViewControllerAnimated:YES completion:^{if(completion)completion(entry);}];
 }
 @end
 @interface PMUnlockEditor : UITableViewController

@@ -74,6 +74,10 @@ enum Index : std::uint32_t {
  mainlinePhase1Start=65,
  mainlinePhase1ToPhase2=66,
  mainlineApplyMapCover=67,
+ skinInstantiate=68,
+ skinSoundHit=69,
+ skinSoundNA=70,
+ skinSoundUnity=71,
  Count
 };
 struct Entry {std::uint32_t site,original;std::uint64_t gateway;};

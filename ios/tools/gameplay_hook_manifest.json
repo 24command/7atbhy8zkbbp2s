@@ -542,5 +542,37 @@
     "args": "",
     "bytes": "f657bda9",
     "instruction": "stp x22, x21, [sp, #-0x30]!"
+  },
+  {
+    "id": "skinInstantiate",
+    "name": "UnityEngine.Object.Instantiate<object>",
+    "rva": 25220480,
+    "args": "T",
+    "bytes": "f657bda9",
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
+  },
+  {
+    "id": "skinSoundHit",
+    "name": "SEPlayer.PlayHit",
+    "rva": 21706920,
+    "args": "int",
+    "bytes": "ff0301d1",
+    "instruction": "sub sp, sp, #0x40"
+  },
+  {
+    "id": "skinSoundNA",
+    "name": "SEPlayer.PlayNA",
+    "rva": 21707272,
+    "args": "int",
+    "bytes": "ff0301d1",
+    "instruction": "sub sp, sp, #0x40"
+  },
+  {
+    "id": "skinSoundUnity",
+    "name": "SEPlayer.PlayUnityFx",
+    "rva": 21707996,
+    "args": "int",
+    "bytes": "f85fbca9",
+    "instruction": "stp x24, x23, [sp, #-0x40]!"
   }
 ]

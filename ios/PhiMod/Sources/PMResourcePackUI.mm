@@ -52,11 +52,11 @@
   NSString*destination=nil;BOOL previousEnabled=PMSettingBool("skinEnabled");BOOL settingsChanged=NO;
   // runtime application is gated separately by skinEnabled and the next level lifecycle.
   if(ok){
-   NSSet*allowed=[NSSet setWithArray:@[@"click.png",@"click_mh.png",@"drag.png",@"drag_mh.png",@"flick.png",@"flick_mh.png",@"hold.png",@"hold_mh.png",@"hit_fx.png",@"info.yml",@"info.yaml",@"click.wav",@"click.ogg",@"click.mp3",@"click.flac",@"drag.wav",@"drag.ogg",@"drag.mp3",@"drag.flac",@"flick.wav",@"flick.ogg",@"flick.mp3",@"flick.flac",@"ending.wav",@"ending.ogg",@"ending.mp3",@"ending.flac"]];
+   NSSet*allowed=[NSSet setWithArray:@[@"line.png",@"judgeline.png",@"click.m4a",@"drag.m4a",@"flick.m4a",@"click.png",@"click_mh.png",@"drag.png",@"drag_mh.png",@"flick.png",@"flick_mh.png",@"hold.png",@"hold_mh.png",@"hit_fx.png",@"info.yml",@"info.yaml",@"click.wav",@"click.ogg",@"click.mp3",@"click.flac",@"drag.wav",@"drag.ogg",@"drag.mp3",@"drag.flac",@"flick.wav",@"flick.ogg",@"flick.mp3",@"flick.flac",@"ending.wav",@"ending.ogg",@"ending.mp3",@"ending.flac"]];
    NSMutableDictionary*selected=[NSMutableDictionary new];unsigned long long total=0;
    for(NSString*path in files){
     NSString*name=path.lastPathComponent.lowercaseString;
-    if([name isEqualToString:@"tap.png"])name=@"click.png";else if([name isEqualToString:@"tap_mh.png"])name=@"click_mh.png";else if([name isEqualToString:@"hit.png"]||[name isEqualToString:@"hit-fx.png"])name=@"hit_fx.png";
+    if([name isEqualToString:@"judgeline.png"])name=@"line.png";else if([name isEqualToString:@"tap.png"])name=@"click.png";else if([name isEqualToString:@"tap_mh.png"])name=@"click_mh.png";else if([name isEqualToString:@"hit.png"]||[name isEqualToString:@"hit-fx.png"])name=@"hit_fx.png";
     if(![allowed containsObject:name])continue;
     if(selected[name]){ok=NO;error=[NSError errorWithDomain:@"PhiMod.ResourcePack" code:2 userInfo:@{NSLocalizedDescriptionKey:@"Archive contains duplicate resource names."}];break;}
     NSDictionary*attributes=[fm attributesOfItemAtPath:path error:&error];unsigned long long bytes=[attributes[NSFileSize] unsignedLongLongValue];
@@ -75,6 +75,9 @@
     destination=[root stringByAppendingPathComponent:[NSString stringWithFormat:@"%@-%@",NSUUID.UUID.UUIDString,name]];
     if(ok)ok=[fm createDirectoryAtPath:destination withIntermediateDirectories:NO attributes:nil error:&error];
     for(NSString*key in selected){if(!ok)break;if(![fm copyItemAtPath:selected[key] toPath:[destination stringByAppendingPathComponent:key] error:&error])ok=NO;}
+   }
+   if(ok)for(NSString*kind in @[@"click",@"drag",@"flick"]){NSString*out=[destination stringByAppendingPathComponent:[kind stringByAppendingString:@".m4a"]];if([fm fileExistsAtPath:out])continue;
+    for(NSString*ext in @[@"wav",@"ogg",@"mp3",@"flac"]){NSString*input=[destination stringByAppendingPathComponent:[kind stringByAppendingFormat:@".%@",ext]];if([fm fileExistsAtPath:input]){ok=PMConvertAudioResource(input,out,&error);break;}}if(!ok)break;
    }
    if(ok)ok=[fm copyItemAtPath:temp toPath:[destination stringByAppendingPathComponent:@"resource-pack.zip"] error:&error];
    if(ok){NSString*settingsError=nil;[[PMSettings shared] setValue:@YES forKey:@"skinEnabled" error:&settingsError];if(settingsError.length){ok=NO;error=[NSError errorWithDomain:@"PhiMod.ResourcePack" code:5 userInfo:@{NSLocalizedDescriptionKey:settingsError}];}else settingsChanged=YES;}
@@ -137,6 +140,18 @@ static void PMImportResourcePack(UIView *source){
  cell.textLabel.text=name?display:@"\u539f\u7248\u6837\u5f0f";cell.detailTextLabel.text=name;
  cell.accessoryType=(!name?!self.enabled:(self.enabled&&[name isEqualToString:self.selected]))?UITableViewCellAccessoryCheckmark:UITableViewCellAccessoryNone;
  return cell;
+}
+- (BOOL)tableView:(UITableView*)tableView canEditRowAtIndexPath:(NSIndexPath*)indexPath{return indexPath.row>0;}
+- (void)tableView:(UITableView*)tableView commitEditingStyle:(UITableViewCellEditingStyle)style forRowAtIndexPath:(NSIndexPath*)indexPath{
+ if(style!=UITableViewCellEditingStyleDelete||indexPath.row==0)return;NSString*name=self.packs[indexPath.row-1];
+ UIAlertController*a=[UIAlertController alertControllerWithTitle:@"\u5220\u9664\u76ae\u80a4" message:name preferredStyle:UIAlertControllerStyleAlert];
+ [a addAction:[UIAlertAction actionWithTitle:@"\u53d6\u6d88" style:UIAlertActionStyleCancel handler:nil]];
+ [a addAction:[UIAlertAction actionWithTitle:@"\u5220\u9664" style:UIAlertActionStyleDestructive handler:^(UIAlertAction*x){
+  NSString*base=self.root.stringByResolvingSymlinksInPath,*path=[[base stringByAppendingPathComponent:name]stringByResolvingSymlinksInPath];NSError*error=nil;
+  if(![path.stringByDeletingLastPathComponent isEqual:base])return;
+  if([name isEqual:self.selected]){NSString*settingsError=nil;if(![[PMSettings shared]setValue:@NO forKey:@"skinEnabled" error:&settingsError])return;[NSFileManager.defaultManager removeItemAtPath:[base stringByAppendingPathComponent:@"active.txt"] error:nil];}
+  if(![NSFileManager.defaultManager removeItemAtPath:path error:&error]){UIAlertController*e=[UIAlertController alertControllerWithTitle:@"Error" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];[e addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[self presentViewController:e animated:YES completion:nil];}[self reloadPacks];
+ }]];[self presentViewController:a animated:YES completion:nil];
 }
 - (void)tableView:(UITableView*)tableView didSelectRowAtIndexPath:(NSIndexPath*)indexPath {
  [tableView deselectRowAtIndexPath:indexPath animated:YES];
