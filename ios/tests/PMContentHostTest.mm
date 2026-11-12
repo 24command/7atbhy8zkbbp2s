@@ -30,6 +30,28 @@ int main(int argc,const char**argv){@autoreleasepool{
  NSData*beforeInvalid=[NSJSONSerialization dataWithJSONObject:editing options:NSJSONWritingSortedKeys error:nil];
  assert(!PMAssignChapterSongs(editing,officialLibrary,@[@"pm_a",@"missing"],@"pm_two",YES,nil));
  assert([beforeInvalid isEqual:[NSJSONSerialization dataWithJSONObject:editing options:NSJSONWritingSortedKeys error:nil]]);
+ // Exact failure: a literal custom chapter's songInfo cannot accept a new
+ // songs array. Exercise production construction + all nested write paths.
+ NSDictionary*immutableEntry=@{@"songsId":@"official-a",@"unlockType":@1,@"unlockInfo":@[@{@"value":@95}],@"secretInfo":@[]};
+ NSArray*immutableSongs=@[immutableEntry];
+ NSMutableDictionary*chapter=PMNativeChapter(@"pm_new",@"Custom",@"subtitle",nil,immutableSongs);
+ assert([chapter isKindOfClass:NSMutableDictionary.class]);
+ assert([chapter[@"songInfo"]isKindOfClass:NSMutableDictionary.class]);
+ assert([chapter[@"songInfo"][@"songs"]isKindOfClass:NSMutableArray.class]);
+ chapter[@"songInfo"][@"title"]=@"Edited";
+ chapter[@"songInfo"][@"songs"][0][@"unlockType"]=@(-1);
+ chapter[@"songInfo"][@"songs"][0][@"unlockInfo"][0][@"value"]=@99;
+ [chapter[@"songInfo"][@"songs"] addObject:PMMutableContentTree(@{@"songsId":@"pm_a",@"unlockInfo":@[]})];
+ chapter[@"songInfo"][@"songs"]=[NSMutableArray arrayWithArray:chapter[@"songInfo"][@"songs"]];
+ chapter[@"unlockInfo"][@"unlockMode"]=@1;
+ assert([immutableEntry[@"unlockType"]intValue]==1);
+ assert([immutableEntry[@"unlockInfo"][0][@"value"]intValue]==95);
+ assert(immutableSongs.count==1);
+ assert([NSJSONSerialization isValidJSONObject:chapter]);
+ NSMutableDictionary*copied=PMMutableContentTree(@{@"chapters":@[chapter],@"mainSongs":@[@{@"unlockInfo":@[@{@"unlockType":@1}]}]});
+ copied[@"mainSongs"][0][@"unlockInfo"][0][@"unlockType"]=@(-1);
+ copied[@"chapters"][0][@"songInfo"][@"banner"]=@"Changed";
+ assert(![chapter[@"songInfo"][@"banner"]isEqual:@"Changed"]);
  assert(PMUnlockValidationError(nil)==nil);
  assert(PMUnlockValidationError(@{@"enabled":@YES,@"conditions":@[]})!=nil);
  NSDictionary *rks=@{@"type":@"rks",@"value":@15};

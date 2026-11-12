@@ -537,10 +537,17 @@ void onLevelInformation(P self,P mi){
 void onAssetCtor(P self,P key,P mi){try{if(pmcontent::assetConstructor(R(),self,key))return;}catch(const std::exception&e){diagf("Content ctor: %s",e.what());}orig<void(*)(P,P,P)>(h::assetCtor)(self,key,mi);}
 void onAssetRelease(P self,P mi){try{if(pmcontent::assetRelease(R(),self))return;}catch(const std::exception&e){diagf("Content release: %s",e.what());return;}orig<VoidFn>(h::assetRelease)(self,mi);}
 void onAssetReleaseResource(P self,P mi){try{if(pmcontent::assetRelease(R(),self,true))return;}catch(const std::exception&e){diagf("Content ReleaseResource: %s",e.what());return;}orig<VoidFn>(h::assetReleaseResource)(self,mi);}
+template<class F>bool contentBoundary(const char*stage,F&&work){
+ @try{try{work();return true;}catch(const std::exception&e){lastError=std::string(stage)+": "+e.what();diagf("%s",lastError.c_str());}}
+ @catch(NSException*e){lastError=std::string(stage)+": "+(e.reason.UTF8String?:e.name.UTF8String);diagf("%s (%s)",lastError.c_str(),e.name.UTF8String);}
+ return false;
+}
 void onChapterStart(P self,P mi){
- try{pmscene::settingsLeave(R());pmcontent::chapterPrepare(R(),self);}catch(const std::exception&e){diagf("Content chapter prepare failed: %s",e.what());}
+ // A MOD data failure must not prevent Unity's original chapter UI from starting.
+ bool prepared=contentBoundary("Content chapter prepare failed",[&]{pmscene::settingsLeave(R());pmcontent::chapterPrepare(R(),self);});
  orig<VoidFn>(h::chapterStart)(self,mi);
- try{pmcontent::chapterReady(R(),self);pmunlock::chapterReady(R(),self);}catch(const std::exception&e){diagf("Content chapter layout failed: %s",e.what());}
+ if(prepared)contentBoundary("Content chapter layout failed",[&]{pmcontent::chapterReady(R(),self);});
+ contentBoundary("Chapter unlock layout failed",[&]{pmunlock::chapterReady(R(),self);});
 }
 P onSongInfo(P self,int slot,P mi){P value=orig<P(*)(P,int,P)>(h::songInfo)(self,slot,mi);try{pmcontent::levelInfo(R(),self,slot,value);pmunlock::songInfo(R(),self,slot,value);}catch(const std::exception&e){diagf("Content level info: %s",e.what());}return value;}
 P onItemInfo(P self,int slot,P mi){P value=orig<P(*)(P,int,P)>(h::itemInfo)(self,slot,mi);try{pmcontent::levelInfo(R(),R().get<P>(self,"songInfo"),slot,value);pmunlock::itemInfo(R(),self,slot,value);}catch(const std::exception&e){diagf("Content item info: %s",e.what());}return value;}
@@ -564,7 +571,11 @@ void onNoteManager(P self,P mi){
  try{pmcontent::recoverSourceNotes(R(),self);}catch(const std::exception&e){static std::string previous;if(previous!=e.what()){previous=e.what();diagf("Source note recovery failed: %s",e.what());}}
  try{auto&r=R();pmcontent::visuals(r,r.get<P>(self,"progressControl"));}catch(const std::exception&e){static std::string previous;if(previous!=e.what()){previous=e.what();diagf("Post-note-manager visuals failed: %s",e.what());}}
 }
-P onSkinInstantiate(P original,P mi){P clone=orig<P(*)(P,P)>(h::skinInstantiate)(original,mi);if(ready&&!broken&&[NSThread isMainThread])try{pmfeatures::skinEffectCreated(R(),original,clone,diagnosticJudgeControl);}catch(const std::exception&e){diagf("Skin hit effect: %s",e.what());}return clone;}
+P onSkinInstantiate(P original,P mi){P clone=orig<P(*)(P,P)>(h::skinInstantiate)(original,mi);
+ // Shared generic Instantiate is also used by title/chapters and can run on
+ // worker threads. Custom hit effects belong only to a scoped note update.
+ if(ready&&!broken&&[NSThread isMainThread]&&diagnosticJudgeControl)contentBoundary("Skin hit effect",[&]{pmfeatures::skinEffectCreated(R(),original,clone,diagnosticJudgeControl);});return clone;
+}
 template<h::Index I>void onSkinSound(P self,int index,P mi){if(ready&&!broken&&[NSThread isMainThread])try{if(pmfeatures::playSkinSound(R(),self,index))return;}catch(const std::exception&e){diagf("Skin hitsound: %s",e.what());}orig<void(*)(P,int,P)>(I)(self,index,mi);}
 bool onBlocking(P self,V2 point,P*out,P mi){
  if(applying())try{bool handled=false;bool value=pmmodes::blocking(R(),{point.x,point.y},out,handled);if(handled)return value;}catch(const std::exception&e){fault(e);}
@@ -629,7 +640,15 @@ void onMainlineApplyMapCover(P self,P mi){
  try{pmunlock::mainlineApplyMapCover(R(),self);}catch(const std::exception&e){diagf("Mainline Chapter9 map cover failed: %s",e.what());}
 }
 
-void onSelector(P self,P mi){try{if(!pmunlock::selectorAccess(R(),self))return;}catch(const std::exception&e){diagf("Selector chapter access: %s",e.what());return;}try{pmcontent::prepareSelectorItems(R(),self);pmcontent::selectorLoadingBegin(R(),self);}catch(const std::exception&e){diagf("Selector loading begin: %s",e.what());}orig<VoidFn>(h::selector)(self,mi);try{pmscene::selectorFrame(R(),self);pmcontent::selectorFrame(R(),self);pmunlock::tick(R(),self);pmcontent::selectorLoadingFrame(R(),self);}catch(const std::exception&e){lastError=e.what();}}
+void onSelector(P self,P mi){
+ bool access=false;if(!contentBoundary("Selector chapter access",[&]{access=pmunlock::selectorAccess(R(),self);})||!access)return;
+ contentBoundary("Selector content prepare",[&]{pmcontent::prepareSelectorItems(R(),self);pmcontent::selectorLoadingBegin(R(),self);});
+ orig<VoidFn>(h::selector)(self,mi);
+ contentBoundary("Selector shortcuts",[&]{pmscene::selectorFrame(R(),self);});
+ contentBoundary("Selector content",[&]{pmcontent::selectorFrame(R(),self);});
+ contentBoundary("Selector unlock",[&]{pmunlock::tick(R(),self);});
+ contentBoundary("Selector loading",[&]{pmcontent::selectorLoadingFrame(R(),self);});
+}
 void onSelectorOff(P self,P mi){try{pmcontent::selectorLoadingEnd(R(),false);pmscene::selectorOff(R());pmunlock::clear(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::selectorOff)(self,mi);}
 void onSetting(P self,P mi){orig<VoidFn>(h::setting)(self,mi);try{pmunlock::clear(R());pmscene::settingsFrame(R(),self);}catch(const std::exception&e){lastError=e.what();}}
 void onSettingTab(P self,int index,P mi){try{pmscene::settingsLeave(R());}catch(const std::exception&e){lastError=e.what();}orig<void(*)(P,int,P)>(h::settingTab)(self,index,mi);}
@@ -682,7 +701,7 @@ void onCheckFlick(P s,int f,P m){onCheck(s,f,m,h::checkFlick);}
  if(ready)return [self status];
  ++installAttempts;
  if(installAttempts<=3||installAttempts%10==0)diagf("PMHookBackend.install attempt=%u",installAttempts);
- try{
+ @try{try{
   auto candidate=std::make_unique<Runtime>();candidate->open();candidate->mainGame();auto &r=*candidate;
   const section_64 *code=nullptr,*data=nullptr;auto cursor=reinterpret_cast<const uint8_t*>(r.imageHeader+1);auto end=cursor+r.imageHeader->sizeofcmds;
   for(uint32_t i=0;i<r.imageHeader->ncmds;++i){if(cursor+8>end)throw std::runtime_error("Invalid hook load commands");auto cmd=reinterpret_cast<const load_command*>(cursor);
@@ -849,6 +868,7 @@ void onCheckFlick(P s,int f,P m){onCheck(s,f,m,h::checkFlick);}
   for(uint32_t i=0;i<h::Count;++i)__atomic_store_n(&slots[i].callback,reinterpret_cast<uint64_t>(callbacks[i]),__ATOMIC_RELEASE);
   ready=true;lastError="72 offline entry hooks v2 installed; verify on device";diagf("PMHookBackend.install success hooks=%u judgeUpdate=1 audioUpdate=1",h::Count);return [self status];
  }catch(const std::exception&e){lastError=e.what();if(installAttempts<=3||installAttempts%10==0)diagf("PMHookBackend.install failed: %s",e.what());return [self status];}
+ }@catch(NSException*e){lastError=std::string("Initialization exception: ")+(e.reason.UTF8String?:e.name.UTF8String);if(installAttempts<=3||installAttempts%10==0)diagf("PMHookBackend.install failed: %s",lastError.c_str());return [self status];}
 }
 + (BOOL)protectJudgeChange {
  if(!ready||broken)return NO;

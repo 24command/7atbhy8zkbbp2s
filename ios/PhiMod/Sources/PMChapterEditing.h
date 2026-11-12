@@ -29,3 +29,14 @@ inline BOOL PMAssignChapterSongs(NSMutableDictionary*db,NSDictionary*official,NS
  }
  db[@"chapterOverrides"]=overrides;db[@"officialMoves"]=moves;return YES;
 }
+
+// Build an independent mutable JSON tree. mutableCopy alone is shallow and
+// leaves songInfo/unlockInfo and dictionary literals inside arrays immutable.
+inline id PMMutableContentTree(id value){
+ if([value isKindOfClass:NSDictionary.class]){NSMutableDictionary*out=[NSMutableDictionary dictionaryWithCapacity:[value count]];for(id key in value)out[key]=PMMutableContentTree(value[key]);return out;}
+ if([value isKindOfClass:NSArray.class]){NSMutableArray*out=[NSMutableArray arrayWithCapacity:[value count]];for(id child in value)[out addObject:PMMutableContentTree(child)];return out;}
+ return value;
+}
+inline NSMutableDictionary* PMNativeChapter(NSString*identifier,NSString*name,NSString*subtitle,NSString*banner,NSArray*songs){
+ return PMMutableContentTree(@{@"chapterCode":identifier,@"songInfo":@{@"title":name?:@"",@"subTitle":subtitle?:@"",@"banner":banner?:@"Custom Chapter - Local Practice",@"songs":songs?:@[]},@"unlockInfo":@{@"unlockMode":@0,@"unlockFlag":@"",@"unlockTip":@"",@"fakeCoverFlag":@"",@"fakeCoverCode":@"",@"fakeCoverBlurCode":@""}});
+}
