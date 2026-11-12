@@ -170,7 +170,7 @@ void projectTab(Runtime&r){P tab=target(r,tabRoot);if(!r.alive(tab))return;P txt
 namespace pmscene {
 using namespace sceneimpl;
 #include "PMNativeModSettings.inc"
-void settingsLeave(Runtime&r){clearNativeSettings(r);restore(r,hidden,"SetActive");restore(r,animations,"set_enabled");restore(r,mutes,"set_mute");modEditorOpen=false;[[PMModEditor shared] cancel];
+void settingsLeave(Runtime&r){if(nativeTabSwitch)return;restore(r,hidden,"SetActive");clearNativeSettings(r);restore(r,animations,"set_enabled");restore(r,mutes,"set_mute");modEditorOpen=false;[[PMModEditor shared] cancel];
  P owner=target(r,settingRoot);if(r.alive(owner)){P tabs=r.get<P>(owner,"tabAnimators");int index=r.get<int>(owner,"currentTab");if(tabs&&index>=0&&uintptr_t(index)<r.array_length(tabs)){P tr=transform(r,r.arrayAt(tabs,index)),slider=r.get<P>(owner,"sliderController");V2 pos=r.unbox<V2>(r.call(tr,"get_anchoredPosition")),size=r.unbox<V2>(r.call(tr,"get_sizeDelta"));if(slider)r.call(slider,"MoveTo",{"System.Single","System.Single"},{&pos.x,&size.x});}}
 }
 void selectorOff(Runtime&r){clearSelector(r);}
@@ -215,7 +215,7 @@ void settingsFrame(Runtime&r,P self){runtime=&r;
    P source=r.arrayAt(tabs,2),tr=transform(r,source),parent=r.call(tr,"get_parent");
    P obj=clone(r,go(r,source),parent,tabRoot);active(r,obj,false);
    P anim=r.component(obj,r.type("UnityEngine","Animator"));
-   if(anim){bool no=false;r.call(anim,"set_enabled",{"System.Boolean"},{&no});}
+   if(anim){bool yes=true;r.call(anim,"set_enabled",{"System.Boolean"},{&yes});}
    P own=transform(r,obj);
    V2 pos=r.unbox<V2>(r.call(tr,"get_anchoredPosition")),size=r.unbox<V2>(r.call(tr,"get_sizeDelta"));
    V2 prev=r.unbox<V2>(r.call(transform(r,r.arrayAt(tabs,1)),"get_anchoredPosition"));
@@ -238,7 +238,7 @@ void settingsFrame(Runtime&r,P self){runtime=&r;
  P sourceGroups=r.children(go(r,source),r.type("UnityEngine","CanvasGroup"));
  for(unsigned i=0;ownGroups&&i<r.array_length(ownGroups);++i){
   P group=r.arrayAt(ownGroups,int(i));P from=sourceGroups&&i<r.array_length(sourceGroups)?r.arrayAt(sourceGroups,int(i)):nullptr;
-  float alpha=from?r.unbox<float>(r.call(from,"get_alpha")):1;
+  float alpha=1; (void)from;
   bool yes=true;r.call(group,"set_alpha",{"System.Single"},{&alpha});
   r.call(group,"set_interactable",{"System.Boolean"},{&yes});r.call(group,"set_blocksRaycasts",{"System.Boolean"},{&yes});
  }
@@ -259,17 +259,17 @@ bool ownsButton(P button){return button&&(buttons.count(button)||button==tabButt
 bool press(Runtime&r,P button){if(pressNativeSetting(r,button))return true;auto found=buttons.find(button);if(found!=buttons.end()){int i=found->second;P owner=target(r,selectorRoot);if(!r.alive(owner)||r.get<bool>(owner,"exit")||r.get<bool>(owner,"isMoving"))return true;NSString*key=keys[i];NSInteger old=[[[PMSettings shared] value:key] integerValue];NSNumber*value=i==2?@((old+1)%5):i==3?@((old+1)%3):@(!old);NSString*error=nil;[[PMSettings shared] setValue:value forKey:key error:&error];return true;}
  if(button!=tabButton)return false;P self=target(r,settingRoot);if(!r.alive(self))return true;if(modEditorOpen)return true;
  modEditorOpen=true;
- try{makeNativeSettings(r,self);
- }catch(const std::exception&e){PMDiagnosticsWrite(e.what());}
- try{P tabs=r.get<P>(self,"tabAnimators");for(unsigned i=0;i<r.array_length(tabs);++i)stash(r,animations,r.arrayAt(tabs,int(i)),"get_enabled","set_enabled",false);
-  P pages=r.get<P>(self,"tabScrollContents");for(uintptr_t i=0;pages&&i<r.array_length(pages);++i){P page=r.arrayAt(pages,(int)i);if(r.alive(page))stash(r,hidden,go(r,page),"get_activeSelf","SetActive",false);}
-  P manager=r.get<P>(self,"settingItemsManager");if(r.alive(manager)){P holder=r.get<P>(manager,"itemsHolder");if(r.alive(holder))stash(r,hidden,go(r,holder),"get_activeSelf","SetActive",false);}
-  P scroll=r.get<P>(self,"scrollRect"),preview=r.get<P>(self,"previewNoteHolder");for(P p:{scroll?go(r,scroll):nullptr,r.get<P>(self,"judgeLine"),r.get<P>(self,"clickPosition"),preview?go(r,preview):nullptr})if(p)stash(r,hidden,p,"get_activeSelf","SetActive",false);
+ @try{try{
+  makeNativeSettings(r,self);
+  // Native ChangeTab updates all tab animations and slider. Hide entire old
+  // frames so Misc footer/social links cannot remain below the MOD page.
+  P frames=target(r,originalFrames);for(int i=0;frames&&i<(int)r.array_length(frames);++i)stash(r,hidden,go(r,r.arrayAt(frames,i)),"get_activeSelf","SetActive",false);
   for(const char*name:{"audioSource1","audioSource2"}){P src=r.get<P>(self,name);if(src)stash(r,mutes,r.get<P>(src,"audioSource"),"get_mute","set_mute",true);}
-  P slider=r.get<P>(self,"sliderController"),tr=transform(r,target(r,tabRoot));V2 pos=r.unbox<V2>(r.call(tr,"get_anchoredPosition")),size=r.unbox<V2>(r.call(tr,"get_sizeDelta"));r.call(slider,"MoveTo",{"System.Single","System.Single"},{&pos.x,&size.x});
-  projectTab(r);if(!nativeSettingsRoot){[[PMModEditor shared] begin];[PMModEditor shared].hidden=NO;}
- }catch(...){settingsLeave(r);throw;}return true;
+  projectTab(r);
+ }catch(const std::exception&e){PMDiagnosticsWrite(e.what());settingsLeave(r);throw;}}
+ @catch(NSException*e){PMDiagnosticsWrite([NSString stringWithFormat:@"MOD settings creation exception: %@",e.reason].UTF8String);settingsLeave(r);throw std::runtime_error(e.reason.UTF8String?:"MOD settings creation failed");}return true;
 }
+
 namespace {uint32_t recoveryRoot=0;UIAlertController*recoveryAlert=nil;}
 void clearRecovery(Runtime&r){if(recoveryAlert)[recoveryAlert dismissViewControllerAnimated:NO completion:nil];recoveryAlert=nil;if(recoveryRoot){r.gchandle_free(recoveryRoot);recoveryRoot=0;}}
 void resultRecovery(Runtime&r,P owner,const std::string&message){

@@ -34,6 +34,8 @@ jobs:
           "$RUNNER_TEMP/judge-tests/bin/python" ios/tests/test_challenge_unlock_access.py
           "$RUNNER_TEMP/judge-tests/bin/python" ios/tests/test_selector_access_details.py
           "$RUNNER_TEMP/judge-tests/bin/python" ios/tests/test_management_resource_contracts.py
+          "$RUNNER_TEMP/judge-tests/bin/python" ios/tests/test_native_settings_tab.py
+          "$RUNNER_TEMP/judge-tests/bin/python" ios/tests/test_unlock_editor_entry.py
       - name: Test chart conversion and safe archives
         run: bash ios/tests/run_content_tests.sh
       - name: Test iOS Metal shader presets

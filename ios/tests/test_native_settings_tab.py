@@ -1,0 +1,34 @@
+from pathlib import Path
+import unittest
+R=Path(__file__).resolve().parents[1]/'PhiMod/Sources'
+class NativeSettingsTab(unittest.TestCase):
+ def test_preserves_native_hierarchy(self):
+  s=(R/'PMNativeModSettings.inc').read_text(encoding='utf8')
+  self.assertIn('clone(r,go(r,sourceFrame),parent,nativeSettingsRoot)',s)
+  for field in ('viewport','content','itemsHolder'):
+   self.assertIn('mappedTransform(r,sourceTransform,cloneTransform,r.get<P>(original,"'+field+'"))',s)
+  self.assertIn('"itemsHolder",holder',s)
+  self.assertNotIn('"itemsHolder",content',s)
+  self.assertIn('content==holder||viewport==holder',s)
+  self.assertIn('get_childCount',s)
+  self.assertNotIn('keepWorld',s)
+ def test_registers_native_fourth_tab(self):
+  s=(R/'PMNativeModSettings.inc').read_text(encoding='utf8')
+  for field in ('frameAnimators','tabAnimators','tabScrollContents'):
+   self.assertIn('r.put(setting,"'+field+'",appendSettingArray',s)
+  self.assertIn('changeNativeTab(r,setting,nativeTabIndex)',s)
+  self.assertIn('"RefreshPosition"',s)
+  self.assertIn('"RefreshItems"',s)
+ def test_exit_restores_original_arrays_before_destroy(self):
+  s=(R/'PMNativeModSettings.inc').read_text(encoding='utf8')
+  block=s.split('void clearNativeSettings(',1)[1].split('bool childPath(',1)[0]
+  self.assertLess(block.index('changeNativeTab(r,setting,nativePreviousTab)'),block.index('r.put(setting,"frameAnimators"'))
+  self.assertLess(block.index('r.put(setting,"tabScrollContents"'),block.index('dispose(r,nativeSettingsRoot,true)'))
+  scene=(R/'PMSceneUI.mm').read_text(encoding='utf8')
+  self.assertIn('if(nativeTabSwitch)return;',scene)
+  self.assertIn('target(r,originalFrames)',scene)
+  self.assertIn('restore(r,hidden,"SetActive");clearNativeSettings(r)',scene)
+ def test_paths_resolved_before_removing_template_children(self):
+  s=(R/'PMNativeModSettings.inc').read_text(encoding='utf8')
+  self.assertLess(s.index('for(const char*field:{"previewNoteHolder"'),s.index('r.call(holder,"get_childCount")'))
+if __name__=='__main__':unittest.main()
