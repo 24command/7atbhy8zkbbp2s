@@ -359,7 +359,7 @@ bool isMainlineSong(NSString*songID){if(!officialCache)pulse();if(![songID isKin
 void refreshMainlineAccess(Runtime&r){if(playing||!baseline)return;bool desired=PMSettingBool("mainlineUnlock");if(desired!=appliedMainline)apply(r);}
 NSDictionary*officialSnapshot(){pulse();return @{@"songBase":baseline ?: @{},@"chapters":originalChapters ?: @[],@"applied":@(applied),@"revision":@(PMContentStore.shared.revision),@"playing":@(playing)};}
 NSDictionary*command(NSString*action,NSString*identifier,int slot){
- if(!runtime)return @{ @"ok":@NO,@"message":@"璇峰厛绛夊緟娓告垙鍔犺浇瀹屾垚"};
+ if(!runtime)return @{ @"ok":@NO,@"message":@"PhiMod backend is not initialized. Check PMHookBackend.install failed in diagnostics." };
  if(playing)return @{ @"ok":@NO,@"message":@"Cannot change chart library or chapter during gameplay."};
   if(![NSThread isMainThread])return @{ @"ok":@NO,@"message":@"Submit this operation on the main thread."};
  if(![@[@"apply",@"chapter",@"play"] containsObject:action])return @{ @"ok":@NO,@"message":@"Unknown chart-library action."};

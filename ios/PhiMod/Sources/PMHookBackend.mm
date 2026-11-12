@@ -692,7 +692,11 @@ void onCheckFlick(P s,int f,P m){onCheck(s,f,m,h::checkFlick);}
      if(c||d){if((c&&seg->initprot!=5)||(d&&seg->initprot!=3))throw std::runtime_error("Expected RX hook/RW state");if(sec->addr<seg->vmaddr||sec->size>seg->vmsize||sec->addr-seg->vmaddr>seg->vmsize-sec->size)throw std::runtime_error("Hook section outside segment");if(c)code=sec;else data=sec;}
     }}cursor+=cmd->cmdsize;
   }
-  if(!code||!data||code->size!=32+(sizeof(h::Entry)+48)*h::Count||data->size!=sizeof(h::Slot)*h::Count)throw std::runtime_error("Gameplay hooks absent: compile and repackage with NEW tools");
+  if(!code||!data)throw std::runtime_error("UnityFramework has no PhiMod gameplay patches. Repackage from the original iOS 4.0.3 IPA with current tools; replacing PhiMod alone cannot install hooks.");
+  if(code->size!=32+(sizeof(h::Entry)+48)*h::Count||data->size!=sizeof(h::Slot)*h::Count){
+   uint64_t installed=code->size>=32?(code->size-32)/(sizeof(h::Entry)+48):0;
+   throw std::runtime_error("UnityFramework/PhiMod hook mismatch: IPA has "+std::to_string(installed)+", framework requires "+std::to_string(h::Count)+". Repackage from original iOS 4.0.3 with current tools; do not replace only PhiMod.");
+  }
   auto base=reinterpret_cast<const uint8_t*>(r.imageHeader);auto desc=base+code->addr;uint32_t ver,count;uint64_t state;
   memcpy(&ver,desc+16,4);memcpy(&count,desc+20,4);memcpy(&state,desc+24,8);
   if(memcmp(desc,PMGameplayProtocol,16)||ver!=h::version||count!=h::Count||state!=data->addr)throw std::runtime_error("Gameplay protocol mismatch");
@@ -867,7 +871,16 @@ void onCheckFlick(P s,int f,P m){onCheck(s,f,m,h::checkFlick);}
  catch(const std::exception&e){return @{ @"ok":@NO,@"message":[NSString stringWithUTF8String:e.what()] ?: @"Practice status failed" };}
 }
 + (NSDictionary*)contentSnapshot {return pmcontent::officialSnapshot();}
-+ (NSDictionary*)contentCommand:(NSString*)action identifier:(NSString*)identifier slot:(NSInteger)slot {return pmcontent::command(action,identifier,(int)slot);}
++ (NSDictionary*)contentCommand:(NSString*)action identifier:(NSString*)identifier slot:(NSInteger)slot {
+ if(!ready){[self install];}
+ if(!ready||broken||!rt){
+  NSString*reason=[NSString stringWithUTF8String:lastError.c_str()]?:@"Unknown backend initialization error";
+  NSString*message=[NSString stringWithFormat:@"PhiMod backend unavailable.\n\n%@\n\nSee PhiMod diagnostics for PMHookBackend.install failed. If the hook counts differ, rebuild the IPA with the current packaging tools, including UnityFramework.",reason];
+  diagf("Content command rejected (%s): %s",action.UTF8String,lastError.c_str());
+  return @{@"ok":@NO,@"message":message,@"backendReady":@(ready),@"expectedHookCount":@(h::Count)};
+ }
+ return pmcontent::command(action,identifier,(int)slot);
+}
 + (void)contentPulse {pmcontent::pulse();}
 + (NSDictionary *)status {
  NSString*practice=@"unavailable";if(ready&&rt&&[NSThread isMainThread])try{practice=[NSString stringWithUTF8String:pmpractice::status(R()).c_str()] ?: @"unavailable";}catch(...){}
