@@ -12,5 +12,7 @@ bool blockChallengeButton(pmbridge::Runtime&,void*button);
 bool ownsRequirementButton(void*button);
 bool pressRequirement(pmbridge::Runtime&,void*button);
 void tick(pmbridge::Runtime&,void* selector);
+void resultStarted(pmbridge::Runtime&,void* owner);
+bool beforeResultContinue(pmbridge::Runtime&,void* button);
 void clear(pmbridge::Runtime&);
 }

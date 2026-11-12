@@ -6,6 +6,12 @@
 #include <cassert>
 #include <cmath>
 int main(int argc,const char**argv){@autoreleasepool{
+ NSArray*merged=@[@{@"id":@"song-in",@"groupId":@"song-in",@"level":@"IN"},@{@"id":@"song-at",@"groupId":@"song-in",@"level":@"AT"}];
+ assert([PMUnlockReferenceSongs(merged,@"song-in")count]==1);
+ assert([PMUnlockReferenceSongs(merged,@"song-at")[0][@"level"]isEqual:@"AT"]);
+ assert([PMUnlockReferenceSongs(merged,@"missing")count]==0);
+ NSArray*separateGroup=@[@{@"id":@"in",@"groupId":@"group"},@{@"id":@"at",@"groupId":@"group"}];
+ assert([PMUnlockReferenceSongs(separateGroup,@"group")count]==2);
  assert(PMUnlockValidationError(nil)==nil);
  assert(PMUnlockValidationError(@{@"enabled":@YES,@"conditions":@[]})!=nil);
  NSDictionary *rks=@{@"type":@"rks",@"value":@15};

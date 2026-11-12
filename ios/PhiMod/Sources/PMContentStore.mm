@@ -342,6 +342,24 @@ NSArray*remapSongOrder(NSArray*source,NSDictionary*songMap,NSSet*official,NSErro
  for(NSString*name in [f contentsOfDirectoryAtPath:[self.root stringByAppendingPathComponent:@"exports"] error:nil])if([name.pathExtension.lowercaseString isEqualToString:@"zip"])[self cleanupExports:@[[NSURL fileURLWithPath:[[self.root stringByAppendingPathComponent:@"exports"]stringByAppendingPathComponent:name]]]];
  recoverChapterImports(self.root,self.db);self.revision=1;}return self;}
 - (NSDictionary*)snapshot{@synchronized(self){return clone(self.db);}}
+- (BOOL)saveUnlockRule:(NSDictionary*)rule animationURL:(NSURL*)url identifier:(NSString*)identifier error:(NSError**)error{
+ @synchronized(self){
+  NSMutableDictionary*db=clone([self snapshot]),*subject=nil;
+  for(NSString*key in @[@"songs",@"chapters"])for(NSMutableDictionary*e in db[key])if([e[@"id"]isEqual:identifier])subject=e;
+  if(!subject){if(error)*error=err(@"Entity was deleted; changes not saved");return NO;}
+  NSMutableDictionary*updated=[rule mutableCopy];NSString*invalid=PMUnlockValidationError(updated);if(invalid){if(error)*error=err(invalid);return NO;}
+  NSString*copied=nil;NSFileManager*f=NSFileManager.defaultManager;
+  if(url){
+   NSString*ext=url.pathExtension.lowercaseString;if(![@[@"mp4",@"gif"]containsObject:ext]){if(error)*error=err(@"Select MP4 or GIF");return NO;}
+   NSString*folder=[self asset:identifier];if(![f createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:error])return NO;
+   NSString*name=[NSString stringWithFormat:@"unlock-%@.%@",NSUUID.UUID.UUIDString,ext];copied=[folder stringByAppendingPathComponent:name];
+   if(![f copyItemAtURL:url toURL:[NSURL fileURLWithPath:copied] error:error])return NO;updated[@"animation"]=name;
+  }
+  subject[@"unlock"]=updated;[subject removeObjectForKey:@"unlockProgress"];
+  if(!validateUnlockMedia(subject,[self asset:identifier],error)||![self commit:db error:error]){if(copied)[f removeItemAtPath:copied error:nil];return NO;}
+  return YES;
+ }
+}
 - (NSString*)asset:(NSString*)identifier{return safeID(identifier)?[[self.root stringByAppendingPathComponent:@"assets"]stringByAppendingPathComponent:identifier]:nil;}
 - (BOOL)commit:(NSDictionary*)value error:(NSError**)error{@synchronized(self){if(![value[@"songs"] isKindOfClass:NSArray.class]||![value[@"chapters"] isKindOfClass:NSArray.class]){if(error)*error=err(@"曲库结构无效");return NO;}NSMutableSet*ids=[NSMutableSet new];for(NSDictionary*s in value[@"songs"]){NSString*i=s[@"id"];if(!safeID(i)||[ids containsObject:i]){if(error)*error=err(@"谱面 ID 重复或不合法");return NO;}[ids addObject:i];}NSMutableSet*chapterIDs=[NSMutableSet new];for(NSDictionary*c in value[@"chapters"]){if(!safeID(c[@"id"])||[chapterIDs containsObject:c[@"id"]]||![c[@"name"] length]){if(error)*error=err(@"章节 ID 或名称无效");return NO;}[chapterIDs addObject:c[@"id"]];}NSString*p=[self.root stringByAppendingPathComponent:@"library.json"];if([NSFileManager.defaultManager fileExistsAtPath:p]&&![[NSData dataWithContentsOfFile:p] writeToFile:[self.root stringByAppendingPathComponent:@"library.backup.json"] options:NSDataWritingAtomic error:error])return NO;if(!writeJSON(value,p,error))return NO;self.db=clone(value);self.revision++;return YES;}}
 - (BOOL)replaceImage:(NSURL*)url identifier:(NSString*)identifier error:(NSError**)error{NSData*data=[NSData dataWithContentsOfURL:url];if(!data){if(error)*error=err(@"Unable to read image data.");return NO;}return [self replaceImageData:data identifier:identifier error:error];}

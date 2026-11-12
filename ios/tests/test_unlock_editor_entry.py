@@ -9,7 +9,13 @@ class EditorEntry(unittest.TestCase):
   for kind in ('score','acc','fc','phi','rks','chapter'):self.assertIn('@"'+kind+'"',e)
   self.assertIn('PMUnlockValidationError(self.rule)',e)
   self.assertIn('snapshot',e)
-  self.assertIn('commit:db',e)
+  self.assertIn('saveUnlockRule:self.rule animationURL:self.animationDraft identifier:self.identifier',e)
+  store=(R/'PMContentStore.mm').read_text(encoding='utf-8')
+  save=store.split('- (BOOL)saveUnlockRule:',1)[1].split('- (NSString*)asset:',1)[0]
+  self.assertIn('validateUnlockMedia(subject',save)
+  self.assertIn('commit:db',save)
+  self.assertIn('if(copied)[f removeItemAtPath:copied',save)
+  self.assertIn('UTTypeMPEG4Movie,UTTypeGIF',e)
  def test_native_pages_hidden_and_previous_tab_kept(self):
   s=(R/'PMSceneUI.mm').read_text(encoding='utf-8')
   press=s[s.index('bool press('):]

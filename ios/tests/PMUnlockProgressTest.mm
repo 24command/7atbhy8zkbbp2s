@@ -22,5 +22,11 @@ int main(){@autoreleasepool{
  NSDictionary*changed=@{@"enabled":@YES,@"conditions":@[@{@"type":@"score",@"ref":@"pm_song",@"value":@900000}]};assert(![p isOpen:@"pm_chapter" rule:changed]);
  [@"broken json" writeToFile:[root stringByAppendingPathComponent:@"unlock-progress.json"] atomically:YES encoding:NSUTF8StringEncoding error:nil];p=[[PMUnlockProgress alloc]initWithRoot:root];assert([p isOpen:@"pm_chapter" rule:rule]);assert(![p isSeen:@"pm_chapter" rule:rule]);
  assert([p open:@"pm_chapter" rule:changed error:&error]);assert([p isOpen:@"pm_chapter" rule:changed]);assert(![p isSeen:@"pm_chapter" rule:changed]);
+ // Equal rules/media in a merged group must still use independent entity IDs.
+ assert([p open:@"merged-in" rule:rule error:&error]);
+ assert(![p isOpen:@"merged-at" rule:rule]);
+ assert([p open:@"merged-at" rule:rule error:&error]);
+ assert([p seen:@"merged-in" signature:PMUnlockSignature(rule) error:&error]);
+ assert(![p isSeen:@"merged-at" rule:rule]);
  [f removeItemAtPath:root error:nil];puts("PASS unlock progress persistence, semantic changes, stale completion and backup recovery");
 }}

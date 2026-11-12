@@ -455,6 +455,7 @@ void renderPracticeResult(P self){
  lastError=warnings.empty()?"Practice result displayed; saves remain blocked":warnings;
 }
 P onResultStart(P self,P mi){
+  try{pmunlock::resultStarted(R(),self);}catch(const std::exception&e){diagf("Unlock result owner: %s",e.what());}
   // Keep Unity's real <Start>d__43 coroutine. It owns result-canvas setup,
   // result audio and the save/unlock ordering; only the protected data path is
   // intercepted by the persistence hooks below.
@@ -634,6 +635,7 @@ void onSetting(P self,P mi){orig<VoidFn>(h::setting)(self,mi);try{pmunlock::clea
 void onSettingTab(P self,int index,P mi){try{pmscene::settingsLeave(R());}catch(const std::exception&e){lastError=e.what();}orig<void(*)(P,int,P)>(h::settingTab)(self,index,mi);}
 void onSettingBack(P self,P mi){try{pmscene::settingsLeave(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::settingBack)(self,mi);}
 bool dispatchModButton(P self){
+ try{if(pmunlock::beforeResultContinue(R(),self))return true;}catch(const std::exception&e){diagf("Unlock result Continue: %s",e.what());}
  try{if(pmunlock::pressRequirement(R(),self))return true;}catch(const std::exception&e){diagf("Unlock details button: %s",e.what());return true;}
  try{if(pmunlock::blockChallengeButton(R(),self))return true;}catch(const std::exception&e){diagf("Challenge access guard: %s",e.what());return true;}
  if(!pmscene::ownsButton(self))return false;

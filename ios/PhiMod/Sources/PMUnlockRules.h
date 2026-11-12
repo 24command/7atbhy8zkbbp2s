@@ -70,3 +70,10 @@ inline NSString *PMUnlockValidationError(id raw) {
  if([chain[@"enabled"] boolValue]&&(![chain[@"song"] isKindOfClass:NSString.class]||![chain[@"song"] length]||![chain[@"slot"] isKindOfClass:NSNumber.class]||[chain[@"slot"] integerValue]<0||[chain[@"slot"] integerValue]>3))return @"Invalid unlock chain song or difficulty";
  return nil;
 }
+
+// A selected custom chart is a difficulty-specific identity. A group ID is a
+// fallback only when it is not itself an existing chart ID.
+inline NSArray* PMUnlockReferenceSongs(NSArray*songs,NSString*reference){
+ for(NSDictionary*song in songs)if([song[@"id"]isEqualToString:reference])return @[song];
+ NSMutableArray*group=[NSMutableArray new];for(NSDictionary*song in songs)if([song[@"groupId"]isEqualToString:reference])[group addObject:song];return group;
+}
