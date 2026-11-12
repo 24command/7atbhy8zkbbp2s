@@ -40,3 +40,23 @@ inline id PMMutableContentTree(id value){
 inline NSMutableDictionary* PMNativeChapter(NSString*identifier,NSString*name,NSString*subtitle,NSString*banner,NSArray*songs){
  return PMMutableContentTree(@{@"chapterCode":identifier,@"songInfo":@{@"title":name?:@"",@"subTitle":subtitle?:@"",@"banner":banner?:@"Custom Chapter - Local Practice",@"songs":songs?:@[]},@"unlockInfo":@{@"unlockMode":@0,@"unlockFlag":@"",@"unlockTip":@"",@"fakeCoverFlag":@"",@"fakeCoverCode":@"",@"fakeCoverBlurCode":@""}});
 }
+
+// Android OfficialPlacement.entries uses native chapter rows, not every entry
+// in SongBase (which can contain unplaced/internal tracks).
+inline NSDictionary* PMOfficialChapterEntries(NSDictionary*official){
+ NSMutableDictionary*out=[NSMutableDictionary new];for(NSDictionary*c in official[@"chapters"])for(NSDictionary*row in c[@"songInfo"][@"songs"]){NSString*id=row[@"songsId"];if([id isKindOfClass:NSString.class]&&id.length&&!out[id])out[id]=row;}return out;
+}
+inline NSArray* PMChapterOfficialReferences(id raw,NSDictionary*available,NSError**error){
+ if(!raw)return @[];
+ NSString*problem=nil;
+ if(![raw isKindOfClass:NSArray.class])problem=@"officialSongs must be an array";
+ else if([raw count]>2000)problem=@"Too many official song references";
+ NSMutableSet*seen=[NSMutableSet new];NSMutableArray*order=[NSMutableArray new];
+ if(!problem)for(id entry in raw){
+  if(![entry isKindOfClass:NSDictionary.class]){problem=@"Invalid officialSongs entry";break;}
+  NSString*id=entry[@"id"];
+  if(![id isKindOfClass:NSString.class]||![id length]||[id hasPrefix:@"pm_"]||[seen containsObject:id]||!available[id]){problem=@"Duplicate, custom or unavailable official song reference";break;}
+  [seen addObject:id];[order addObject:id];
+ }
+ if(problem){if(error)*error=[NSError errorWithDomain:@"PhiMod.Chapter" code:1 userInfo:@{NSLocalizedDescriptionKey:problem}];return nil;}return order;
+}
