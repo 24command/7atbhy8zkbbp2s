@@ -1,0 +1,21 @@
+from pathlib import Path
+import unittest
+ROOT=Path(__file__).resolve().parents[1]
+class SelectorDetails(unittest.TestCase):
+ def test_initialize_all_before_native_update(self):
+  s=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text(encoding='utf-8')
+  block=s[s.index('void prepareSelectorItems('):s.index('// Native difficulty bars assume')]
+  for text in ('for(int i=0;i<count;++i)','entry.first+1','<PlayableLevelCount>k__BackingField','<SelectorTargetWidth>k__BackingField','"SortSong"'):self.assertIn(text,block)
+  hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf-8');block=hook[hook.index('void onSelector('):hook.index('void onSelectorOff(')]
+  self.assertLess(block.index('prepareSelectorItems'),block.index('orig<VoidFn>'))
+ def test_update_offscreen_lock_icons(self):
+  s=(ROOT/'PhiMod/Sources/PMUnlockRuntime.mm').read_text(encoding='utf-8')
+  block=s[s.index('void refreshListLocks('):s.index('void tick(')]
+  for text in ('lastSlot!=slot','for(int i=0;i<count;++i)','"lockMask"','"selectorItemUpside"','"selectorItemDownside"','"unlockType",blocked?0:-1'):self.assertIn(text,block)
+ def test_native_scroll_popup_and_isolated_click(self):
+  s=(ROOT/'PhiMod/Sources/PMUnlockDetails.inc').read_text(encoding='utf-8')
+  for text in ('"CreateMessageBox"','"ScrollRect"','"RectMask2D"','"set_content"','"set_verticalNormalizedPosition"','"set_onClick"','"Cancel"'):self.assertIn(text,s)
+  self.assertNotIn('UIAlertController',s)
+  u=(ROOT/'PhiMod/Sources/PMUnlockRuntime.mm').read_text(encoding='utf-8');self.assertIn('showRequirementButton(r,tip,details)',u)
+  self.assertIn('lockUIDetails=[tips componentsJoinedByString:@"\\n\\n"]',u)
+if __name__=='__main__':unittest.main()

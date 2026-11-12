@@ -266,7 +266,7 @@ def main():
  dump = args.dump.read_text(encoding='utf-8-sig')
  manifest = json.loads((ROOT/'tools/gameplay_hook_manifest.json').read_text(encoding='utf-8'))
  count = verify(dump,manifest)
- sources = [(ROOT/"PhiMod/Sources"/name).read_text(encoding="utf-8") for name in ("PMChartModes.mm", "PMHPLife.mm", "PMPractice.mm", "PMPracticePreview.mm", "PMContentRuntime.mm", "PMRPEHudRuntime.inc", "PMRPESkewRuntime.inc", "PMHookBackend.mm", "PMSceneUI.mm", "PMRuntime.mm", "PMUnlockRuntime.mm")]
+ sources = [(ROOT/"PhiMod/Sources"/name).read_text(encoding="utf-8") for name in ("PMChartModes.mm", "PMHPLife.mm", "PMPractice.mm", "PMPracticePreview.mm", "PMContentRuntime.mm", "PMRPEHudRuntime.inc", "PMRPESkewRuntime.inc", "PMHookBackend.mm", "PMSceneUI.mm", "PMRuntime.mm", "PMUnlockRuntime.mm", "PMUnlockDetails.inc")]
  source_count = verify_sources(dump,sources)
  for old,new in [('public ChartNote noteInfor;', 'public ChartNote noteInfo;'),
                  ('public float timeOfJudge;', 'public double timeOfJudge;'),

@@ -84,3 +84,14 @@ python ios/tools/verify_gameplay_contracts.py /path/to/dump.cs
 The emulator tests require `unicorn==2.1.4`. They also accept `--unity` to audit
 the local original UnityFramework without altering it. Dump verification checks
 metadata/ABI and source lookup contracts, not in-game execution.
+
+## 2026-11-12：合并难度与解锁详情
+
+- 列表初始化时为所有自制歌曲补齐难度数量、AT 槽位及每格宽度，不再要求先选中过歌曲才能显示 AT。
+- 切换全局难度后，刷新列表中各首合并歌曲的锁标记和曲绘锁定遮罩；锁定 AT 不应残留到已解锁 IN。
+- 简短解锁条件继续单行显示；按现有框体测量后若需缩小到 20 号以下，则改为“查看解锁要求”按钮。
+- 详情复用游戏原生 PhigrosUI / MsgBox，内容使用 28 号字、支持纵向滑动；保留原生确认关闭按钮，不调用云存档同步逻辑。
+- 不改存档 ID、成绩记录或解锁规则。已有谱面无需重新导入。
+
+测试重点：未访问歌曲直接切 AT；锁定 AT → 切其他歌曲 → 切 IN 返回；超长条件点击、滚动、关闭后再次打开；章节锁与课题限制仍有效。
+本次源码检查已通过，实际设备布局和触摸仍需验证。iOS 源码的当前本地位置为 G:\phimod项目\Phimod-ios\ios。

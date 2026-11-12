@@ -183,6 +183,9 @@ bool beforeStart(Runtime&r,void*selector,void(^resume)(void)){
  return true;
 }
 void validate(Runtime&r){
+ r.resolve(r.klass("PhigrosUI"),"CreateMessageBox",{"System.String","System.String","System.Boolean"},true);
+ P message=r.type("Phigros.UI","MsgBox");r.field(message,"content","UnityEngine.UI.Text",false);r.field(message,"isShowing","System.Boolean",false);r.resolve(message,"Show");r.resolve(message,"Cancel");r.resolve(message,"RefreshElements");
+
  P challenge=r.type("Phigros2.SongSelector.Scripts","ChallengeSongSelectorControl");
  for(const char*field:{"selectButton","playButton"})r.field(challenge,field,"UnityEngine.UI.Button",false);
  r.field(challenge,"challengeSongItems","System.Collections.Generic.List<Phigros2.SongSelector.Scripts.ChallengeSongItem>",false);
@@ -285,7 +288,7 @@ void chapterReady(Runtime&r,void*selector){
 }
 namespace {
 uint32_t lockUIOwner=0;P lockUIItem=nullptr;int lockUISlot=-1;NSUInteger lockUIRevision=0;
-bool lockUIManaged=false,lockUIBlocked=false;NSString*lockUIRequirement=nil;double lockUIEvaluate=0;
+bool lockUIManaged=false,lockUIBlocked=false;NSString*lockUIRequirement=nil,*lockUIDetails=nil;double lockUIEvaluate=0;
 void lockActive(Runtime&r,P object,bool active){if(r.alive(object)&&r.unbox<bool>(r.call(object,"get_activeSelf"))!=active)r.call(object,"SetActive",{"System.Boolean"},{&active});}
 void lockComponent(Runtime&r,P component,bool active){if(r.alive(component))lockActive(r,r.call(component,"get_gameObject"),active);}
 struct TipSize{float x,y;};struct TipColor{float r,g,b,a;};
@@ -336,7 +339,8 @@ void fitLockTip(Runtime&r,P tip,bool blocked){
  }
  if(r.unbox<int>(r.call(tip,"get_fontSize"))!=fittedFont)r.call(tip,"set_fontSize",{"System.Int32"},{&fittedFont});
 }
-void resetLockUI(Runtime&r){restoreLockTip(r);if(lockUIOwner)r.gchandle_free(lockUIOwner);lockUIOwner=0;lockUIItem=nullptr;lockUISlot=-1;lockUIManaged=false;lockUIRequirement=nil;lockUIEvaluate=0;}
+#include "PMUnlockDetails.inc"
+void resetLockUI(Runtime&r){clearRequirementUI(r);restoreLockTip(r);if(lockUIOwner)r.gchandle_free(lockUIOwner);lockUIOwner=0;lockUIItem=nullptr;lockUISlot=-1;lockUIManaged=false;lockUIRequirement=nil;lockUIEvaluate=0;}
 void songLockUI(Runtime&r,P selector,double now){
  P items=r.call(selector,"get_SongItems");int index=r.get<int>(selector,"nowSong"),slot=r.get<int>(selector,"nowLevel");
  if(index<0||index>=r.count(items)||slot<0||slot>3)return;
@@ -345,10 +349,10 @@ void songLockUI(Runtime&r,P selector,double now){
  if(changed||now-lockUIEvaluate>=1){
   P song=r.get<P>(item,"songInfo");NSString*group=r.string(r.get<P>(song,"songsId"));NSDictionary*subject=songEntity(group,slot);
   bool wasManaged=lockUIManaged;
-  lockUIManaged=subject!=nil;lockUIBlocked=false;lockUIRequirement=nil;
+  lockUIManaged=subject!=nil;lockUIBlocked=false;lockUIRequirement=nil;lockUIDetails=nil;
   if(subject){NSString*sid=subject[@"id"],*chapter=subject[@"targetChapter"];bool songOpen=opened(r,sid),chapterOpen=!entity(chapter)||opened(r,chapter);
    lockUIBlocked=!songOpen||!chapterOpen;
-   if(lockUIBlocked){NSMutableArray*tips=[NSMutableArray new];if(!songOpen)[tips addObject:chapterRequirements(ruleFor(sid))];if(!chapterOpen)[tips addObject:chapterRequirements(ruleFor(chapter))];NSMutableArray*singleLine=[NSMutableArray new];for(NSString*tip in tips){NSArray*rows=[tip componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];NSMutableArray*parts=[NSMutableArray new];for(NSString*row in rows){NSString*part=[row stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];if(part.length)[parts addObject:part];}if(parts.count>1){NSString*heading=parts.firstObject;[parts removeObjectAtIndex:0];[singleLine addObject:[NSString stringWithFormat:@"%@：%@",heading,[parts componentsJoinedByString:@"；"]]];}else if(parts.count)[singleLine addObject:parts.firstObject];}lockUIRequirement=[singleLine componentsJoinedByString:@"；"];}
+   if(lockUIBlocked){NSMutableArray*tips=[NSMutableArray new];if(!songOpen)[tips addObject:chapterRequirements(ruleFor(sid))];if(!chapterOpen)[tips addObject:chapterRequirements(ruleFor(chapter))];lockUIDetails=[tips componentsJoinedByString:@"\n\n"];NSMutableArray*singleLine=[NSMutableArray new];for(NSString*tip in tips){NSArray*rows=[tip componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];NSMutableArray*parts=[NSMutableArray new];for(NSString*row in rows){NSString*part=[row stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];if(part.length)[parts addObject:part];}if(parts.count>1){NSString*heading=parts.firstObject;[parts removeObjectAtIndex:0];[singleLine addObject:[NSString stringWithFormat:@"%@：%@",heading,[parts componentsJoinedByString:@"；"]]];}else if(parts.count)[singleLine addObject:parts.firstObject];}lockUIRequirement=[singleLine componentsJoinedByString:@"；"];}
    // Native SetLevel refuses changes when the entire item is marked locked.
    // Keep custom groups navigable; per-chart lock UI and beforeStart enforce access.
    r.put(item,"<Unlocked>k__BackingField",true);
@@ -362,7 +366,7 @@ void songLockUI(Runtime&r,P selector,double now){
   if(target(r,lockUIOwner)!=selector){if(lockUIOwner)r.gchandle_free(lockUIOwner);lockUIOwner=r.gchandle_new(selector,false);}
   lockUIItem=item;lockUISlot=slot;lockUIRevision=revision;lockUIEvaluate=now;
  }
- if(!lockUIManaged)return;
+ if(!lockUIManaged){showRequirementButton(r,nullptr,false);return;}
  bool blocked=lockUIBlocked,playable=!blocked;
  P mask=r.get<P>(item,"lockMask");
  if(!r.alive(mask)&&blocked){P prefab=r.get<P>(selector,"lockMaskPrefab"),parent=r.get<P>(item,"coverRect");if(r.alive(prefab)&&r.alive(parent)){bool world=false;mask=r.stat(r.type("UnityEngine","Object"),"Instantiate",{"UnityEngine.Object","UnityEngine.Transform","System.Boolean"},{prefab,parent,&world});r.put(item,"lockMask",mask);}}
@@ -372,6 +376,10 @@ void songLockUI(Runtime&r,P selector,double now){
   P parent=r.call(r.call(tip,"get_transform"),"get_parent");lockComponent(r,parent,blocked);lockComponent(r,tip,blocked);
   NSString*text=blocked?lockUIRequirement:@"";if(![r.string(r.call(tip,"get_text"))isEqualToString:text])r.call(tip,"set_text",{"System.String"},{r.managedString(text?:@"")});
   fitLockTip(r,tip,blocked);
+  bool details=blocked&&r.unbox<int>(r.call(tip,"get_fontSize"))<20;
+  showRequirementButton(r,tip,details);
+
+
  }
  P button=r.get<P>(selector,"startButton");if(r.alive(button)&&r.unbox<bool>(r.call(button,"get_interactable"))!=playable)r.call(button,"set_interactable",{"System.Boolean"},{&playable});
  for(const char*field:{"selectorItemUpside","selectorItemDownside"}){P row=r.get<P>(item,field);if(r.alive(row)){lockActive(r,r.get<P>(row,"locked"),blocked);lockComponent(r,r.get<P>(row,"difficulty"),!blocked);}}
@@ -412,13 +420,29 @@ bool blockChallengeButton(Runtime&r,void*raw){
  if(play){P queue=r.get<P>(challenge,"challengeSongItems");for(int i=0,n=r.count(queue);i<n;++i){P entry=r.at(queue,i);if(chartBlocked(r,r.get<P>(entry,"songInfo"),r.get<int>(entry,"levelIndex"))){return true;}}}
  return false;
 }
+bool ownsRequirementButton(void*button){return button&&button==requirementButton;}
+bool pressRequirement(Runtime&r,void*button){if(!ownsRequirementButton(button))return false;if(lockUIBlocked&&lockUIDetails.length)openRequirementPopup(r,lockUIDetails);return true;}
+void refreshListLocks(Runtime&r,P selector){
+ static P last=nullptr;static int lastSlot=-1,lastCount=-1;static NSUInteger lastRev=NSUIntegerMax;static double lastTime=0;static std::map<P,std::pair<bool,bool>>cache;
+ P items=r.call(selector,"get_SongItems");int slot=r.get<int>(selector,"nowLevel");if(slot<0||slot>3)return;
+ int count=r.count(items);double time=NSDate.timeIntervalSinceReferenceDate;NSUInteger rev=PMContentStore.shared.revision;
+ if(last!=selector||lastSlot!=slot||lastCount!=count||lastRev!=rev||time-lastTime>=1){cache.clear();last=selector;lastSlot=slot;lastCount=count;lastRev=rev;lastTime=time;
+  for(int i=0;i<count;++i){P item=r.at(items,i),song=r.get<P>(item,"songInfo");NSString*group=r.string(r.get<P>(song,"songsId"));NSDictionary*subject=songEntity(group,slot);if(subject)cache[item]={chartBlocked(r,item,slot),[subject[@"secret"]boolValue]};}
+ }
+ for(int i=0;i<count;++i){P item=r.at(items,i);auto entry=cache.find(item);if(entry==cache.end())continue;
+  bool blocked=entry->second.first;r.put(item,"<Unlocked>k__BackingField",true);
+  r.put(item,"unlockType",blocked?0:-1);r.put(item,"<InfoHidden>k__BackingField",blocked&&entry->second.second);
+  P mask=r.get<P>(item,"lockMask");if(r.alive(mask))lockActive(r,mask,blocked);
+  for(const char*field:{"selectorItemUpside","selectorItemDownside"}){P row=r.get<P>(item,field);if(r.alive(row)){lockActive(r,r.get<P>(row,"locked"),blocked);lockComponent(r,r.get<P>(row,"difficulty"),!blocked);}}
+ }
+}
 void tick(Runtime&r,void*selector){
  if(!selector||r.get<bool>((P)selector,"exit")){menuActive=false;return;}
  double now=NSDate.timeIntervalSinceReferenceDate;
  try{P challenge=r.get<P>((P)selector,"challengeSongSelectorControl");if(r.alive(challenge)){
   for(const char*field:{"selectButton","playButton"}){P button=r.get<P>(challenge,field);if(r.alive(button)&&blockChallengeButton(r,button))disableChallengeButton(r,button);}
  }}catch(const std::exception&e){logf("Challenge access UI: %s",e.what());}
- try{songLockUI(r,(P)selector,now);}catch(const std::exception&e){if(now-lastScan>=1)logf("Song unlock UI failed: %s",e.what());}
+ try{refreshListLocks(r,(P)selector);songLockUI(r,(P)selector,now);}catch(const std::exception&e){if(now-lastScan>=1)logf("Song unlock UI failed: %s",e.what());}
  if(now-lastScan<1)return;lastScan=now;enqueueReveals(r);
 }
 

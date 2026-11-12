@@ -32,6 +32,7 @@ struct DeferredSelectorAsset {uint32_t root;std::string identifier;bool music;};
 std::map<P,DeferredSelectorAsset>selectorAssets;
 uint32_t loadingSelector=0;bool completingSelectorAsset=false;
 std::set<std::string>selectorSongIDs,selectedAssetIDs;
+P initializedSelector=nullptr;int initializedCount=-1,initializedSlot=-1;NSUInteger initializedRevision=NSUIntegerMax;
 P recordSelector=nullptr,recordItem=nullptr;int recordSlot=-1;NSUInteger recordRevision=NSUIntegerMax;
 NSUInteger selectorLibraryRevision=0;int loadingSong=-1,loadingSlot=-1;
 float loadingPosition=0;double selectionChangedAt=0;bool selectorDragging=true;
@@ -418,6 +419,7 @@ void selectorLoadingFrame(Runtime&r,P selector){
  }
 }
 void selectorLoadingEnd(Runtime&r,bool finishSelected){
+ initializedSelector=nullptr;initializedCount=initializedSlot=-1;initializedRevision=NSUIntegerMax;
  recordSelector=recordItem=nullptr;recordSlot=-1;recordRevision=NSUIntegerMax;
  if(finishSelected&&r.alive(target(r,loadingSelector)))observeSelector(r,target(r,loadingSelector));
  if(loadingSelector)r.gchandle_free(loadingSelector);loadingSelector=0;
@@ -452,6 +454,21 @@ void refreshVariantRecords(Runtime&r,P selector,P item,NSString*group){
  // Refresh native score/ACC/rating and both list rows without touching locks.
  r.call(selector,"SetText");int selected=r.get<int>(selector,"nowLevel");
  r.call(item,"SetText",{"System.Int32"},{&selected});
+}
+void prepareSelectorItems(Runtime&r,P selector){
+ if(r.get<bool>(selector,"exit"))return;P items=r.call(selector,"get_SongItems");int count=r.count(items),slot=r.get<int>(selector,"nowLevel");NSUInteger revision=PMContentStore.shared.revision;
+ if(initializedSelector==selector&&initializedCount==count&&initializedSlot==slot&&initializedRevision==revision)return;
+ bool changed=false;int maxLevel=0;
+ for(int i=0;i<count;++i){P item=r.at(items,i),song=r.get<P>(item,"songInfo");NSString*id=r.string(r.get<P>(song,"songsId"));auto group=variants.find(id.UTF8String?:"");
+  int levels=r.get<int>(item,"<PlayableLevelCount>k__BackingField");
+  if(group!=variants.end()&&[id hasPrefix:@"pm_"]){int required=3;for(auto&entry:group->second)required=std::max(required,entry.first+1);int width=required>=4?100:115;
+   changed|=levels!=required||r.get<int>(item,"<SelectorTargetWidth>k__BackingField")!=width;levels=required;
+   r.put(item,"<PlayableLevelCount>k__BackingField",levels);r.put(item,"<SelectorTargetWidth>k__BackingField",width);r.put(item,"<Unlocked>k__BackingField",true);
+  }
+  maxLevel=std::max(maxLevel,levels);
+ }
+ if(changed){r.put(selector,"levelNum",std::max(r.get<int>(selector,"levelNum"),maxLevel));bool instantiate=false;r.call(selector,"SortSong",{"System.Boolean"},{&instantiate});}
+ initializedSelector=selector;initializedCount=count;initializedSlot=slot;initializedRevision=revision;
 }
 // Native difficulty bars assume a continuous EZ..AT prefix. Custom groups may be sparse.
 void selectorFrame(Runtime&r,P selector){

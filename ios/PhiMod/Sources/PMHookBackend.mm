@@ -625,12 +625,13 @@ void onMainlineApplyMapCover(P self,P mi){
  try{pmunlock::mainlineApplyMapCover(R(),self);}catch(const std::exception&e){diagf("Mainline Chapter9 map cover failed: %s",e.what());}
 }
 
-void onSelector(P self,P mi){try{if(!pmunlock::selectorAccess(R(),self))return;}catch(const std::exception&e){diagf("Selector chapter access: %s",e.what());return;}try{pmcontent::selectorLoadingBegin(R(),self);}catch(const std::exception&e){diagf("Selector loading begin: %s",e.what());}orig<VoidFn>(h::selector)(self,mi);try{pmscene::selectorFrame(R(),self);pmcontent::selectorFrame(R(),self);pmunlock::tick(R(),self);pmcontent::selectorLoadingFrame(R(),self);}catch(const std::exception&e){lastError=e.what();}}
+void onSelector(P self,P mi){try{if(!pmunlock::selectorAccess(R(),self))return;}catch(const std::exception&e){diagf("Selector chapter access: %s",e.what());return;}try{pmcontent::prepareSelectorItems(R(),self);pmcontent::selectorLoadingBegin(R(),self);}catch(const std::exception&e){diagf("Selector loading begin: %s",e.what());}orig<VoidFn>(h::selector)(self,mi);try{pmscene::selectorFrame(R(),self);pmcontent::selectorFrame(R(),self);pmunlock::tick(R(),self);pmcontent::selectorLoadingFrame(R(),self);}catch(const std::exception&e){lastError=e.what();}}
 void onSelectorOff(P self,P mi){try{pmcontent::selectorLoadingEnd(R(),false);pmscene::selectorOff(R());pmunlock::clear(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::selectorOff)(self,mi);}
 void onSetting(P self,P mi){orig<VoidFn>(h::setting)(self,mi);try{pmunlock::clear(R());pmscene::settingsFrame(R(),self);}catch(const std::exception&e){lastError=e.what();}}
 void onSettingTab(P self,int index,P mi){try{pmscene::settingsLeave(R());}catch(const std::exception&e){lastError=e.what();}orig<void(*)(P,int,P)>(h::settingTab)(self,index,mi);}
 void onSettingBack(P self,P mi){try{pmscene::settingsLeave(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::settingBack)(self,mi);}
 bool dispatchModButton(P self){
+ try{if(pmunlock::pressRequirement(R(),self))return true;}catch(const std::exception&e){diagf("Unlock details button: %s",e.what());return true;}
  try{if(pmunlock::blockChallengeButton(R(),self))return true;}catch(const std::exception&e){diagf("Challenge access guard: %s",e.what());return true;}
  if(!pmscene::ownsButton(self))return false;
  try{auto&r=R();if(!r.unbox<bool>(r.call(self,"IsActive"))||!r.unbox<bool>(r.call(self,"IsInteractable")))return true;pmscene::press(r,self);}
@@ -639,6 +640,7 @@ bool dispatchModButton(P self){
 }
 void onPress(P self,P mi){if(!dispatchModButton(self))orig<VoidFn>(h::button)(self,mi);}
 void onPointerClick(P self,P event,P mi){
+ if(pmunlock::ownsRequirementButton(self)){try{if(R().enumValue(R().call(event,"get_button"),"UnityEngine.EventSystems.PointerEventData.InputButton")==0)pmunlock::pressRequirement(R(),self);}catch(const std::exception&e){diagf("Unlock details click: %s",e.what());}return;}
  try{if(pmunlock::blockChallengeButton(R(),self))return;}catch(const std::exception&e){diagf("Challenge click guard: %s",e.what());return;}
  if(pmscene::ownsButton(self)){
   try{P value=R().call(event,"get_button");int button=0;P raw=R().object_unbox(value);if(!raw)throw std::runtime_error("Invalid pointer button");memcpy(&button,raw,sizeof(button));if(button==0)dispatchModButton(self);}

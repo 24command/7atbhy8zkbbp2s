@@ -11,6 +11,7 @@ void levelInfo(pmbridge::Runtime&,void*song,int slot,void*info);
 void selectorLoadingBegin(pmbridge::Runtime&,void*selector);
 void selectorLoadingFrame(pmbridge::Runtime&,void*selector);
 void selectorLoadingEnd(pmbridge::Runtime&,bool finishSelected);
+void prepareSelectorItems(pmbridge::Runtime&,void*selector);
 void selectorFrame(pmbridge::Runtime&,void*selector);
 NSDictionary*officialSnapshot();NSDictionary*cachedOfficialSnapshot();NSDictionary*command(NSString*action,NSString*identifier,int slot);
 void beforeInformation(pmbridge::Runtime&,void*level);
