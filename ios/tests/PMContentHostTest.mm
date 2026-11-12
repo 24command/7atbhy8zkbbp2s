@@ -2,6 +2,7 @@
 #import "../PhiMod/Sources/PMChartConvert.h"
 #import "../PhiMod/Sources/PMArchive.h"
 #import "../PhiMod/Sources/PMUnlockRules.h"
+#import "../PhiMod/Sources/PMChapterEditing.h"
 #include "../PhiMod/Vendor/miniz/miniz.h"
 #include <cassert>
 #include <cmath>
@@ -12,6 +13,23 @@ int main(int argc,const char**argv){@autoreleasepool{
  assert([PMUnlockReferenceSongs(merged,@"missing")count]==0);
  NSArray*separateGroup=@[@{@"id":@"in",@"groupId":@"group"},@{@"id":@"at",@"groupId":@"group"}];
  assert([PMUnlockReferenceSongs(separateGroup,@"group")count]==2);
+ NSDictionary*officialLibrary=@{@"songBase":@{@"mainSongs":@[@{@"songsId":@"official-a"},@{@"songsId":@"official-b"}]},@"chapters":@[@{@"chapterCode":@"Main",@"songInfo":@{@"songs":@[@{@"songsId":@"official-a"},@{@"songsId":@"official-b"}]}}]};
+ NSDictionary*library=@{@"songs":@[@{@"id":@"pm_a",@"targetChapter":@"pm_one"},@{@"id":@"pm_b",@"targetChapter":@"pm_one"}],@"chapters":@[@{@"id":@"pm_one",@"songs":@[@"pm_a",@"pm_b"]},@{@"id":@"pm_two",@"songs":@[]}],@"chapterOverrides":@{@"Main":@{@"title":@"Keep title"}}};
+ NSMutableDictionary*editing=[NSJSONSerialization JSONObjectWithData:[NSJSONSerialization dataWithJSONObject:library options:0 error:nil] options:NSJSONReadingMutableContainers error:nil];
+ assert(PMAssignChapterSongs(editing,officialLibrary,@[@"pm_a",@"pm_b"],@"pm_two",YES,nil));
+ assert([PMChapterSongIDs(editing,officialLibrary,@"pm_one")count]==0);
+ assert([PMChapterSongIDs(editing,officialLibrary,@"pm_two")count]==2);
+ assert(PMAssignChapterSongs(editing,officialLibrary,@[@"official-a"],@"pm_two",NO,nil));
+ assert([PMChapterSongIDs(editing,officialLibrary,@"Main")containsObject:@"official-a"]);
+ assert(PMAssignChapterSongs(editing,officialLibrary,@[@"official-a"],@"pm_two",YES,nil));
+ assert(![PMChapterSongIDs(editing,officialLibrary,@"Main")containsObject:@"official-a"]);
+ assert(PMAssignChapterSongs(editing,officialLibrary,@[@"official-a"],@"Main",YES,nil));
+ assert([PMChapterSongIDs(editing,officialLibrary,@"Main")containsObject:@"official-a"]);
+ assert(![PMChapterSongIDs(editing,officialLibrary,@"pm_two")containsObject:@"official-a"]);
+ assert([editing[@"chapterOverrides"][@"Main"][@"title"]isEqual:@"Keep title"]);
+ NSData*beforeInvalid=[NSJSONSerialization dataWithJSONObject:editing options:NSJSONWritingSortedKeys error:nil];
+ assert(!PMAssignChapterSongs(editing,officialLibrary,@[@"pm_a",@"missing"],@"pm_two",YES,nil));
+ assert([beforeInvalid isEqual:[NSJSONSerialization dataWithJSONObject:editing options:NSJSONWritingSortedKeys error:nil]]);
  assert(PMUnlockValidationError(nil)==nil);
  assert(PMUnlockValidationError(@{@"enabled":@YES,@"conditions":@[]})!=nil);
  NSDictionary *rks=@{@"type":@"rks",@"value":@15};
@@ -57,6 +75,13 @@ int main(int argc,const char**argv){@autoreleasepool{
  NSString*deepPEC=@"175\nbp 0 120\nbp 4 60\nn1 0 3 10 1 0 # 1.5 & 2\nn2 0 3 5 20 1 0\nn3 0 5 30 0 0\nn4 0 6 40 1 0\ncv 0 0 7\ncv 0 4 14\ncp 0 2 1024 700\ncm 0 0 4 2048 1400 1\n";error=nil;NSDictionary*deep=PMConvertChart([deepPEC dataUsingEncoding:NSUTF8StringEncoding],&error);assert(deep&&error==nil);NSArray*deepLines=deep[@"judgeLineList"];assert(deepLines.count==1);NSArray*deepAbove=deepLines[0][@"notesAbove"],*deepBelow=deepLines[0][@"notesBelow"];assert(deepAbove.count==3&&deepBelow.count==1);assert([deepAbove[0][@"type"]intValue]==1&&[deepAbove[1][@"type"]intValue]==3&&[deepAbove[2][@"type"]intValue]==2);assert([deepBelow[0][@"type"]intValue]==4);assert(std::fabs([deepAbove[0][@"speed"]doubleValue]-1.5)<1e-9&&[deepAbove[0][@"pmSize"]doubleValue]==2);assert([deepAbove[1][@"time"]longLongValue]==96&&[deepAbove[1][@"holdTime"]longLongValue]==96);assert(std::fabs([deepAbove[1][@"floorPosition"]doubleValue]-1.5)<1e-9&&std::fabs([deepAbove[1][@"pmEndFloor"]doubleValue]-4)<1e-9);assert([deepBelow[0][@"time"]longLongValue]==192&&[deepAbove[2][@"time"]longLongValue]==256);assert(deepLines[0][@"judgeLineMoveEvents"]&&[deepLines[0][@"judgeLineMoveEvents"]count]>2);
  NSString*temp=[NSTemporaryDirectory()stringByAppendingPathComponent:NSUUID.UUID.UUIDString];NSFileManager*f=NSFileManager.defaultManager;[f createDirectoryAtPath:temp withIntermediateDirectories:YES attributes:nil error:nil];NSString*folder=[temp stringByAppendingPathComponent:@"source"],*zip=[temp stringByAppendingPathComponent:@"valid.zip"];[f createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil];[@"chart test" writeToFile:[folder stringByAppendingPathComponent:@"test.txt"] atomically:YES encoding:NSUTF8StringEncoding error:nil];if(!PMCreateArchive(folder,zip,&error)){fprintf(stderr,"Archive creation failed: %s\n",error.localizedDescription.UTF8String);return 1;}NSArray*files=PMExtractArchive(zip,[temp stringByAppendingPathComponent:@"target"],&error);assert(files.count==1);
  NSString*bad=[temp stringByAppendingPathComponent:@"bad.zip"];mz_zip_archive archive{};assert(mz_zip_writer_init_file(&archive,bad.fileSystemRepresentation,0));assert(mz_zip_writer_add_mem(&archive,"../escape.txt","bad",3,0));assert(mz_zip_writer_finalize_archive(&archive));mz_zip_writer_end(&archive);error=nil;assert(PMExtractArchive(bad,[temp stringByAppendingPathComponent:@"unsafe"],&error)==nil);assert(error);assert(![f fileExistsAtPath:[temp stringByAppendingPathComponent:@"escape.txt"]]);if(argc>1){error=nil;NSString*sample=[NSString stringWithUTF8String:argv[1]];NSArray*extracted=PMExtractArchive(sample,[temp stringByAppendingPathComponent:@"sample"],&error);assert(extracted&&error==nil);NSString*chartPath=nil;for(NSString*file in extracted)if([file.lastPathComponent isEqualToString:@"14072798.json"])chartPath=file;assert(chartPath);NSDictionary*sampleChart=PMConvertChart([NSData dataWithContentsOfFile:chartPath],&error);assert(sampleChart&&error==nil);assert([sampleChart[@"pmFormat"]isEqualToString:@"PEC"]);NSDictionary*sampleNative=PMNativeChart(sampleChart);assert([NSJSONSerialization isValidJSONObject:sampleNative]);NSUInteger notes=0;for(NSDictionary*line in sampleNative[@"judgeLineList"])notes+=[line[@"notesAbove"]count]+[line[@"notesBelow"]count];assert(notes>0);printf("PASS supplied PEC archive: %lu notes\n",(unsigned long)notes);}
+ // A chapter manifest is compact and appears first for streaming importers.
+ NSDictionary*bundle=@{@"format":@"phigros-phi-chapter",@"version":@3,@"chapter":@{@"id":@"pm_test",@"songs":@[]},@"songs":@[],@"files":@[]};
+ NSData*manifest=[NSJSONSerialization dataWithJSONObject:bundle options:0 error:&error];
+ assert([manifest writeToFile:[folder stringByAppendingPathComponent:@"chapter.json"] atomically:YES]);
+ NSString*bundleZip=[temp stringByAppendingPathComponent:@"manifest.phi-chapter.zip"];
+ assert(PMCreateArchive(folder,bundleZip,&error));mz_zip_archive inspect{};assert(mz_zip_reader_init_file(&inspect,bundleZip.fileSystemRepresentation,0));mz_zip_archive_file_stat first{};assert(mz_zip_reader_file_stat(&inspect,0,&first));assert(strcmp(first.m_filename,"chapter.json")==0);mz_zip_reader_end(&inspect);
+ [f removeItemAtPath:[folder stringByAppendingPathComponent:@"chapter.json"] error:nil];
  // A root alias is supported; symlinks inside the archive remain rejected.
  NSString*alias=[temp stringByAppendingPathComponent:@"source-alias"];
  assert([f createSymbolicLinkAtPath:alias withDestinationPath:folder error:&error]);

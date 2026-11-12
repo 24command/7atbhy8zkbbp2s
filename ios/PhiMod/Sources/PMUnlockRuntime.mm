@@ -168,7 +168,7 @@ void enqueueReveals(Runtime&r,bool activateMenu=true){
 }
 }
 NSString*coverPath(Runtime&r,NSString*identifier){
- NSString*folder=[PMContentStore.shared asset:identifier];NSDictionary*subject=entity(identifier);NSString*variant=@"image";
+ NSString*folder=[PMContentStore.shared coverFolder:identifier];NSDictionary*subject=entity(identifier);NSString*variant=@"image";
  if(subject){BOOL locked=!opened(r,identifier),special=NO;NSDictionary*config=subject[@"coverSwitch"];NSString*mode=config[@"mode"]?:@"none";
   if(![@[@"none",@"unlock"] containsObject:mode]){NSMutableDictionary*c=[config mutableCopy];[c removeObjectForKey:@"mode"];c[@"type"]=mode;NSDictionary*rule=@{@"enabled":@YES,@"conditions":@[c]};
    if(!PMUnlockValidationError(rule)){if(!progress)progress=[[PMUnlockProgress alloc]initWithRoot:PMContentStore.shared.root];NSString*key=[@"cover:" stringByAppendingString:identifier];special=[progress isOpen:key rule:rule];if(!special&&passes(r,rule)){NSError*error=nil;special=[progress open:key rule:rule error:&error];if(error)logf("Cover progress save failed: %s",error.localizedDescription.UTF8String);}}

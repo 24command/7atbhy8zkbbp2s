@@ -30,7 +30,9 @@ BOOL PMCreateArchive(NSString*folder,NSString*output,NSError**error){
  NSString*prefix=[folder stringByAppendingString:@"/"];
  mz_zip_archive zip{};if(!mz_zip_writer_init_file(&zip,output.fileSystemRepresentation,0)){if(error)*error=PMArchiveError(@"无法创建导出文件");return NO;}BOOL ok=YES;
  NSDirectoryEnumerator*entries=[NSFileManager.defaultManager enumeratorAtURL:[NSURL fileURLWithPath:folder] includingPropertiesForKeys:@[NSURLIsRegularFileKey,NSURLIsSymbolicLinkKey] options:NSDirectoryEnumerationSkipsHiddenFiles errorHandler:nil];
- for(NSURL*url in entries){NSNumber*file=nil,*symlink=nil;[url getResourceValue:&file forKey:NSURLIsRegularFileKey error:nil];[url getResourceValue:&symlink forKey:NSURLIsSymbolicLinkKey error:nil];if(symlink.boolValue){ok=NO;break;}if(!file.boolValue)continue;NSString*path=url.path.stringByStandardizingPath.stringByResolvingSymlinksInPath;
+ NSMutableArray<NSURL*>*ordered=[NSMutableArray new];for(NSURL*url in entries)[ordered addObject:url];
+ [ordered sortUsingComparator:^NSComparisonResult(NSURL*a,NSURL*b){BOOL am=[a.path isEqualToString:[folder stringByAppendingPathComponent:@"chapter.json"]],bm=[b.path isEqualToString:[folder stringByAppendingPathComponent:@"chapter.json"]];if(am!=bm)return am?NSOrderedAscending:NSOrderedDescending;return [a.path compare:b.path];}];
+ for(NSURL*url in ordered){NSNumber*file=nil,*symlink=nil;[url getResourceValue:&file forKey:NSURLIsRegularFileKey error:nil];[url getResourceValue:&symlink forKey:NSURLIsSymbolicLinkKey error:nil];if(symlink.boolValue){ok=NO;break;}if(!file.boolValue)continue;NSString*path=url.path.stringByStandardizingPath.stringByResolvingSymlinksInPath;
  if(![path hasPrefix:prefix]){ok=NO;break;}
  NSString*name=[path substringFromIndex:prefix.length];if(!mz_zip_writer_add_file(&zip,name.UTF8String,url.fileSystemRepresentation,nullptr,0,MZ_BEST_SPEED)){ok=NO;break;}}
  if(ok)ok=mz_zip_writer_finalize_archive(&zip);mz_zip_writer_end(&zip);if(!ok&&error)*error=PMArchiveError(@"导出压缩包失败");return ok;

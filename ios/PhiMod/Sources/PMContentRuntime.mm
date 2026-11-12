@@ -1,7 +1,10 @@
+#include "../Core/PMFrameCache.hpp"
+#include "../Core/PMCoverGeometry.hpp"
 #include "PMContentRuntime.hpp"
 #include "PMUnlockRuntime.hpp"
 #include "PMRuntimeFeatures.hpp"
 #import "PMContentStore.h"
+#import "PMChapterEditing.h"
 #import "PMChartConvert.h"
 #import "PMDiagnostics.h"
 #import "PMSettings.h"
@@ -39,17 +42,18 @@ float loadingPosition=0;double selectionChangedAt=0;bool selectorDragging=true;
 std::set<P>recoveredSourceNotes;
 P extrasBoundChart=nullptr;
 std::map<std::string,std::map<int,NSDictionary*>>variants;std::map<P,NSDictionary*>extras;std::map<P,V3>noteScales,lineScales;std::map<int,uint32_t>decorText,decorImage;
-struct StoryVisual {P go=nullptr,tr=nullptr,graphic=nullptr,canvas=nullptr;bool text=false,visible=true;NSString*lastText=nil;};
+struct StoryVisual {bool stateSet=false;V3 lastPosition{},lastScale{};std::array<float,4>lastRotation{};Color lastColor{};int lastOrder=0;P go=nullptr,tr=nullptr,graphic=nullptr,canvas=nullptr;bool text=false,visible=true;NSString*lastText=nil;};
 std::map<int,StoryVisual>storyVisuals;
 std::set<int>failedVisualLines;
 std::map<int,P>plainLineRenderers;std::map<int,double>storyRetry;std::set<int>storyReported;
 NSArray*storyFiles=nil;bool storyIndexed=false;P storyFrameCamera=nullptr;float storyFrameWidth=0;std::map<std::string,P>storySprites;P storyMaterial=nullptr;
 struct Fake{NSDictionary*note;int line;bool below;double start,end;bool chord;};
-struct FakeVisualCache{P transform=nullptr;P capTransforms[2]{};Bounds bounds{};bool shown=false;bool capShown[2]{false,false};bool colorSet=false,scaleSet=false;Color color{};V3 scale{};};
+struct FakeVisualCache{P transform=nullptr;P capTransforms[2]{};Bounds bounds{};bool shown=false;bool capShown[2]{false,false};bool colorSet=false,scaleSet=false,positionSet=false;Color color{};V3 scale{},position{};};
 std::map<size_t,FakeVisualCache>fakeVisualCache;
 std::vector<size_t>fakeSchedule;std::set<size_t>activeFakes;size_t fakeCursor=0;bool fakeScheduleReady=false;double fakeLastTime=0;
 struct ControlPoint{double x,value;int easing;};
 std::map<NSArray*,std::vector<ControlPoint>>controlCache;
+phimod::FrameCache<int,double>sourceFloorFrame;phimod::FrameCache<NSDictionary*,bool>sourceAlphaFrame;
 std::vector<Fake>fakeNotes;std::map<int,std::vector<phimod::RpeFloorSegment>>sourceFloors;std::map<size_t,std::pair<uint32_t,uint32_t>>fakeHoldEnds;std::map<size_t,uint32_t>fakeRenderers;std::map<size_t,V3>fakeScales;std::map<size_t,double>fakeRetryAt;std::set<size_t>failedFakes;std::vector<uint32_t>visualRoots;
 // Engine-provided baseline sortingOrder per judge line, so pmDecor.zOrder=0
 // never sinks a custom-chart line behind the background.
@@ -96,6 +100,14 @@ void apply(Runtime&r){capture(r);if(!baseline||playing)return;NSDictionary*db=[P
    for(NSString*key in @[@"mainSongs",@"extraSongs",@"sideStorySongs",@"otherSongs"])for(NSMutableDictionary*song in songBase[key])if([mainlineGroups containsObject:song[@"songsId"]])for(NSMutableDictionary*u in song[@"unlockInfo"]){u[@"unlockType"]=@(-1);u[@"unlockInfo"]=[NSMutableArray new];}
    log(@"Mainline unlock applied to official MainStory chapters only");
   }
+ // Keep official songs as references to the game's assets and save identities.
+ NSMutableDictionary*officialEntries=[NSMutableDictionary new];for(NSDictionary*c in originalChapters)for(NSDictionary*entry in c[@"songInfo"][@"songs"])if(!officialEntries[entry[@"songsId"]])officialEntries[entry[@"songsId"]]=entry;
+ for(NSMutableDictionary*c in chapters){NSString*chapter=c[@"chapterCode"];NSMutableArray*entries=[NSMutableArray new];NSMutableSet*seen=[NSMutableSet new];
+  for(NSDictionary*entry in c[@"songInfo"][@"songs"]){NSString*id=entry[@"songsId"],*moved=db[@"officialMoves"][id];if(moved&&![moved isEqual:chapter])continue;
+   NSDictionary*value=[chapter hasPrefix:@"pm_"]&&officialEntries[id]?officialEntries[id]:entry;[entries addObject:[value mutableCopy]];[seen addObject:id];}
+  for(NSString*ref in PMChapterSongIDs(db,officialCache,chapter)){NSString*id=groupFor(ref);if([seen containsObject:id])continue;[seen addObject:id];NSDictionary*entry=officialEntries[id]?:@{@"songsId":id,@"unlockType":@(-1),@"secretType":@0,@"unlockInfo":@[],@"secretInfo":@[]};[entries addObject:[entry mutableCopy]];}
+  c[@"songInfo"][@"songs"]=entries;
+ }
  for(NSMutableDictionary*c in chapters){NSString*id=c[@"chapterCode"];NSDictionary*patch=db[@"chapterOverrides"][id];for(NSString*k in @[@"title",@"subTitle",@"banner"])if(patch[k])c[@"songInfo"][k]=patch[k];}
  for(NSDictionary*c in db[@"chapters"]){NSString*before=c[@"before"];if(!before.length)continue;NSUInteger from=NSNotFound,to=NSNotFound;for(NSUInteger i=0;i<chapters.count;++i){if([chapters[i][@"chapterCode"] isEqualToString:c[@"id"]])from=i;if([chapters[i][@"chapterCode"] isEqualToString:before])to=i;}if(from!=NSNotFound&&to!=NSNotFound&&from!=to){id v=chapters[from];[chapters removeObjectAtIndex:from];if(from<to)--to;[chapters insertObject:v atIndex:to];}}
  P gi=r.mainGame(),newBase=decode(r,songBase,"SongBase");uint32_t baseHandle=r.gchandle_new(newBase,false);P arr=r.array_new(r.klass("Chapter"),chapters.count);uint32_t arrHandle=r.gchandle_new(arr,false);try{for(NSUInteger i=0;i<chapters.count;++i){P c=decode(r,chapters[i],"Chapter");uint32_t h=r.gchandle_new(c,false);P info=r.get<P>(c,"songInfo");r.put(info,"<songsBypassLimited>k__BackingField",r.get<P>(info,"songs"));int index=(int)i;r.invokeOn(r.resolve(r.type("System","Array"),"SetValue",{"System.Object","System.Int32"}),arr,{c,&index});r.gchandle_free(h);}r.call(newBase,"MarkDirty");r.put(gi,"song",newBase);r.put(gi,"chapters",arr);}catch(...){r.gchandle_free(arrHandle);r.gchandle_free(baseHandle);throw;}r.gchandle_free(arrHandle);r.gchandle_free(baseHandle);applied=PMContentStore.shared.revision;appliedMainline=PMSettingBool("mainlineUnlock");log([NSString stringWithFormat:@"Content applied: %lu groups, %lu chapters",(unsigned long)variants.size(),(unsigned long)chapters.count]);}
@@ -194,19 +206,29 @@ P audio(Runtime&r,NSString*path){
  }catch(...){r.gchandle_free(clipRoot);throw;}
 }
 NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=[[key stringByReplacingOccurrencesOfString:id withString:@""]lowercaseString];*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":[lower containsString:@"blur"]?@"blur":@"image";return id;}
-void clearVisuals(Runtime&r){clearSkew(r);clearHud(r);restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();extrasBoundChart=nullptr;recoveredSourceNotes.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();plainLineRenderers.clear();failedVisualLines.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();uiControlLines.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
+void clearVisuals(Runtime&r){clearSkew(r);clearHud(r);restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();extrasBoundChart=nullptr;recoveredSourceNotes.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();plainLineRenderers.clear();failedVisualLines.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();sourceFloorFrame.clear();sourceAlphaFrame.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();uiControlLines.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
+struct ChapterCoverFit{P sprite=nullptr;uint32_t image=0;};std::map<P,ChapterCoverFit>chapterCoverFits;
+void fitExpandedChapterCover(Runtime&r,P loader){
+ if(!r.alive(loader))return;P image=r.get<P>(loader,"_image");if(!r.alive(image))return;P sprite=r.call(image,"get_sprite");if(!r.alive(sprite))return;
+ auto found=chapterCoverFits.find(image);if(found!=chapterCoverFits.end()&&target(r,found->second.image)==image&&found->second.sprite==sprite)return;
+ struct Rect{float x,y,w,h;};Rect rect=r.unbox<Rect>(r.call(sprite,"get_rect"));if(rect.w<=0||rect.h<=0)return;
+ P tr=r.call(image,"get_rectTransform");auto bounds=pmcover::fit(rect.w,rect.h,1085,800,true);V2 center{.5f,.5f},zero{0,0},size{(float)bounds.w,(float)bounds.h};bool yes=true;
+ r.call(tr,"set_anchorMin",{"UnityEngine.Vector2"},{&center});r.call(tr,"set_anchorMax",{"UnityEngine.Vector2"},{&center});r.call(tr,"set_pivot",{"UnityEngine.Vector2"},{&center});r.call(tr,"set_sizeDelta",{"UnityEngine.Vector2"},{&size});r.call(tr,"set_anchoredPosition",{"UnityEngine.Vector2"},{&zero});r.call(image,"set_preserveAspect",{"System.Boolean"},{&yes});
+ if(found!=chapterCoverFits.end())r.gchandle_free(found->second.image);chapterCoverFits[image]={sprite,r.gchandle_new(image,false)};
+}
 void applyCachedChapterCover(Runtime&r,P card,const char*codeField,const char*loaderField){
  NSString*code=r.string(r.get<P>(card,codeField));if(!code.length)return;auto found=assets.find(code.UTF8String);if(found==assets.end())return;P sprite=target(r,found->second);if(!r.alive(sprite))return;
  P loader=r.get<P>(card,loaderField);if(!r.alive(loader))return;bool changed=false;
  P imageComponent=r.get<P>(loader,"_image");if(r.alive(imageComponent)&&r.call(imageComponent,"get_sprite")!=sprite){r.call(imageComponent,"set_sprite",{"UnityEngine.Sprite"},{sprite});changed=true;}
  P spriteRenderer=r.get<P>(loader,"_sprite");if(r.alive(spriteRenderer)&&r.call(spriteRenderer,"get_sprite")!=sprite){r.call(spriteRenderer,"set_sprite",{"UnityEngine.Sprite"},{sprite});changed=true;}
+ if(!strcmp(loaderField,"cover")){fitExpandedChapterCover(r,loader);P next=r.get<P>(loader,"newImage");if(r.alive(next))fitExpandedChapterCover(r,next);}
  if(changed)log([NSString stringWithFormat:@"Content chapter cover fallback assigned: %@",r.string(r.get<P>(card,"chapterCode"))]);
 }
 void syncChapterCoverFallbacks(Runtime&r){P selector=chapterSelectorRoot?r.gchandle_get_target(chapterSelectorRoot):nullptr;if(!r.alive(selector))return;P cards=r.get<P>(selector,"_chapterInfos");for(uintptr_t i=0;cards&&i<r.array_length(cards);++i){P card=r.arrayAt(cards,(int)i);if(r.alive(card)){applyCachedChapterCover(r,card,"coverAssetCode","cover");applyCachedChapterCover(r,card,"coverBlurAssetCode","coverBlur");}}}
 }
 // Match Android prepareChapterCards: clone before hiding the active template,
 // then publish the ordered ChapterInfo array before native Start wires buttons.
-void chapterPrepare(Runtime&r,P self){selectorLoadingEnd(r,false);
+void chapterPrepare(Runtime&r,P self){selectorLoadingEnd(r,false);for(auto&entry:chapterCoverFits)r.gchandle_free(entry.second.image);chapterCoverFits.clear();
  if(playing)throw std::runtime_error("Chapter prepare during gameplay");
  capture(r);if(!baseline)throw std::runtime_error("Chapter library is not ready");hiddenChapterCards=0;
  if(applied!=PMContentStore.shared.revision||appliedMainline!=PMSettingBool("mainlineUnlock"))apply(r);
@@ -264,7 +286,7 @@ void chapterPrepare(Runtime&r,P self){selectorLoadingEnd(r,false);
 }
 void chapterReady(Runtime&r,P self){
  P cards=r.get<P>(self,"_chapterInfos");
- for(uintptr_t i=0;cards&&i<r.array_length(cards);++i){P card=r.arrayAt(cards,(int)i);NSString*id=r.string(r.get<P>(card,"chapterCode"));if(![id hasPrefix:@"pm_"])continue;
+ for(uintptr_t i=0;cards&&i<r.array_length(cards);++i){P card=r.arrayAt(cards,(int)i);NSString*id=r.string(r.get<P>(card,"chapterCode"));if(![id hasPrefix:@"pm_"]&&![NSFileManager.defaultManager fileExistsAtPath:[[PMContentStore.shared coverFolder:id]stringByAppendingPathComponent:@"image.png"]])continue;
   P chapter=r.call(r.mainGame(),"GetChapterWithCode",{"System.String"},{r.managedString(id)});if(!chapter)continue;
   P info=r.get<P>(chapter,"songInfo");NSString*variant=pmunlock::coverPath(r,id).lastPathComponent;NSString*imageKey=[NSString stringWithFormat:@"PM/%@/image@%lu_%@",id,(unsigned long)applied,variant];NSString*blurKey=[NSString stringWithFormat:@"PM/%@/blur@%lu_%@",id,(unsigned long)applied,variant];
   P cover=r.get<P>(card,"cover"),blur=r.get<P>(card,"coverBlur");
@@ -279,8 +301,8 @@ void chapterReady(Runtime&r,P self){
    }
   }
   if(r.alive(blur)&&![r.string(r.call(blur,"get_Code"))isEqualToString:blurKey])r.call(blur,"set_Code",{"System.String"},{r.managedString(blurKey)});
-  bool no=false;r.call(r.get<P>(card,"locked"),"SetActive",{"System.Boolean"},{&no});
-  bool hasSongs=r.count(r.get<P>(info,"songs"))>0;r.call(r.get<P>(card,"play"),"set_interactable",{"System.Boolean"},{&hasSongs});
+  if([id hasPrefix:@"pm_"]){bool no=false;r.call(r.get<P>(card,"locked"),"SetActive",{"System.Boolean"},{&no});}
+  if([id hasPrefix:@"pm_"]){bool hasSongs=r.count(r.get<P>(info,"songs"))>0;r.call(r.get<P>(card,"play"),"set_interactable",{"System.Boolean"},{&hasSongs});}
   log([NSString stringWithFormat:@"Content custom chapter cover primed: %@ key=%@",id,imageKey]);
  }
  r.stat(r.type("UnityEngine.UI","LayoutRebuilder"),"ForceRebuildLayoutImmediate",{"UnityEngine.RectTransform"},{r.get<P>(self,"chapterPanel")});
@@ -461,6 +483,7 @@ void prepareSelectorItems(Runtime&r,P selector){
  if(initializedSelector==selector&&initializedCount==count&&initializedSlot==slot&&initializedRevision==revision)return;
  bool changed=false;int maxLevel=0;
  for(int i=0;i<count;++i){P item=r.at(items,i),song=r.get<P>(item,"songInfo");NSString*id=r.string(r.get<P>(song,"songsId"));auto group=variants.find(id.UTF8String?:"");
+  if(![id hasPrefix:@"pm_"]){NSString*cover=[[PMContentStore.shared coverFolder:id]stringByAppendingPathComponent:@"image.png"];if(cover&&[NSFileManager.defaultManager fileExistsAtPath:cover]){NSString*key=[NSString stringWithFormat:@"PM/%@/image@%lu",id,(unsigned long)revision],*blur=[NSString stringWithFormat:@"PM/%@/blur@%lu",id,(unsigned long)revision];r.put(item,"coverAssetCode",r.managedString(key));r.put(item,"coverBlurAssetCode",r.managedString(blur));}}
   int levels=r.get<int>(item,"<PlayableLevelCount>k__BackingField");
   if(group!=variants.end()&&[id hasPrefix:@"pm_"]){int required=3;for(auto&entry:group->second)required=std::max(required,entry.first+1);int width=required>=4?100:115;
    changed|=levels!=required||r.get<int>(item,"<SelectorTargetWidth>k__BackingField")!=width;levels=required;
@@ -547,7 +570,7 @@ bool assetRelease(Runtime&r,P self,bool force){
  if(contents&&r.unbox<bool>(r.call(contents,"ContainsKey",{"System.String"},{key}))&&r.call(contents,"get_Item",{"System.String"},{key})==self)r.call(contents,"Remove",{"System.String"},{key});
  log([NSString stringWithFormat:@"Content custom release (%@): %@",force?@"ReleaseResource":@"Release",r.string(key)]);return true;
 }
-void levelInfo(Runtime&r,P song,int slot,P info){NSString*id=r.string(r.get<P>(song,"songsId"));NSDictionary*custom=songFor(id,slot);if(!custom||!info)return;NSString*identifier=custom[@"id"];for(const auto&entry:std::vector<std::pair<const char*,NSString*>>{{"songsId",identifier},{"songsName",custom[@"title"] ?: @""},{"composer",custom[@"composer"] ?: @""},{"charter",custom[@"charter"] ?: @""},{"illustrator",custom[@"illustrator"] ?: @""},{"songsDifficulty",[custom[@"difficulty"] description]}})r.put(info,entry.first,r.managedString(entry.second));for(auto pair:std::vector<std::pair<const char*,const char*>>{{"musicAddressableKey","music"},{"chartAddressableKey","chart"},{"illustrationKey","image"}}){NSString*k=[NSString stringWithFormat:@"PM/%@/%s@%lu",identifier,pair.second,(unsigned long)PMContentStore.shared.revision];r.put(info,pair.first,r.managedString(k));}}
+void levelInfo(Runtime&r,P song,int slot,P info){NSString*id=r.string(r.get<P>(song,"songsId"));NSDictionary*custom=songFor(id,slot);if(!info)return;if(!custom){NSString*cover=[[PMContentStore.shared coverFolder:id]stringByAppendingPathComponent:@"image.png"];if(cover&&[NSFileManager.defaultManager fileExistsAtPath:cover]){NSString*key=[NSString stringWithFormat:@"PM/%@/image@%lu",id,(unsigned long)PMContentStore.shared.revision];r.put(info,"illustrationKey",r.managedString(key));}return;}NSString*identifier=custom[@"id"];for(const auto&entry:std::vector<std::pair<const char*,NSString*>>{{"songsId",identifier},{"songsName",custom[@"title"] ?: @""},{"composer",custom[@"composer"] ?: @""},{"charter",custom[@"charter"] ?: @""},{"illustrator",custom[@"illustrator"] ?: @""},{"songsDifficulty",[custom[@"difficulty"] description]}})r.put(info,entry.first,r.managedString(entry.second));for(auto pair:std::vector<std::pair<const char*,const char*>>{{"musicAddressableKey","music"},{"chartAddressableKey","chart"},{"illustrationKey","image"}}){NSString*k=[NSString stringWithFormat:@"PM/%@/%s@%lu",identifier,pair.second,(unsigned long)PMContentStore.shared.revision];r.put(info,pair.first,r.managedString(k));}}
 void beforeChart(Runtime&r,P level){if(!levelID.length)return;NSString*path=[[PMContentStore.shared asset:levelID]stringByAppendingPathComponent:@"chart.json"];NSData*d=[NSData dataWithContentsOfFile:path];currentChart=d?[NSJSONSerialization JSONObjectWithData:d options:0 error:nil]:nil;if(!currentChart)throw std::runtime_error("Custom visual chart missing");resourceSubdir=@"";for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"]isEqualToString:levelID])resourceSubdir=s[@"resourceRoot"] ?: @"";beforeInformation(r,level);}
 void afterChart(Runtime&r,P level){clearHud(r);if(!currentChart)return;hudLevel=r.gchandle_new(level,false);
  // Match Android's zOrder/index ranking instead of treating zOrder as a
@@ -566,7 +589,7 @@ void afterChart(Runtime&r,P level){clearHud(r);if(!currentChart)return;hudLevel=
   // Keep every native line and its index: invisible lines can still be parents
   // or note lanes. Only skip redundant MOD sprite/scale/color work for empty,
   // permanently transparent standard-line visuals (no storyboard/text content).
-  bool inert=decor&&![source[@"notesAbove"]count]&&![source[@"notesBelow"]count]&&![decor[@"textEvents"]count]&&![decor[@"scaleXEvents"]count]&&![decor[@"scaleYEvents"]count]&&![decor[@"colorEvents"]count]&&(!texture.length||[texture isEqualToString:@"line.png"])&&alpha.count;
+  bool inert=decor&&![decor[@"textEvents"]count]&&(!texture.length||[texture isEqualToString:@"line.png"])&&alpha.count;
   if(inert)for(NSDictionary*event in alpha){double a=[event[@"start"]doubleValue],b=[event[@"end"]doubleValue];if(!std::isfinite(a)||!std::isfinite(b)||a>0||b>0){inert=false;break;}}
   if(inert)inertLineVisuals.insert((int)i);
  }
@@ -575,13 +598,14 @@ void afterChart(Runtime&r,P level){clearHud(r);if(!currentChart)return;hudLevel=
  storyOrders.resize(ordered.size());
  for(size_t rank=0;rank<ordered.size();++rank)storyOrders[ordered[rank]]=3+int(rank)*2;
  storyHoldOrder=std::max(1028,5+int(ordered.size())*2);storyNoteOrder=storyHoldOrder+2;
-sourceFloors.clear();int sourceIndex=0;
+sourceFloors.clear();sourceFloorFrame.clear();sourceAlphaFrame.clear();int sourceIndex=0;
  for(NSDictionary*sourceLine in currentChart[@"judgeLineList"]){
   double secondsPerTick=60.0/(32.0*[sourceLine[@"bpm"] doubleValue]);
   auto&track=sourceFloors[sourceIndex++];
   if(!std::isfinite(secondsPerTick)||secondsPerTick<=0)continue;
   for(NSDictionary*event in sourceLine[@"speedEvents"])track.push_back({[event[@"startTime"] doubleValue]*secondsPerTick,[event[@"endTime"] doubleValue]*secondsPerTick,[event[@"value"] doubleValue],[event[@"floorPosition"] doubleValue]});
   std::stable_sort(track.begin(),track.end(),[](const auto&a,const auto&b){return a.start<b.start;});
+
  }
 // Native SetInformation may reorder note lists. Bind before that call and
 // restore timing by object identity, never by its post-sort array position.
@@ -642,11 +666,12 @@ float sourceLineAlpha(NSArray*events,double now,double bpm){
  return std::isfinite(value)?float(std::clamp(value,0.,1.)):0.f;
 }
 bool sourceNotesHidden(NSDictionary*line,double now){
+ return sourceAlphaFrame.get(line,now,[&]{
  NSArray*events=line[@"pmDecor"][@"sourceAlphaEvents"];if(![events isKindOfClass:NSArray.class]||!events.count)return false;
  double unit=60./(32.*scalar(line[@"bpm"],120));NSDictionary*event=eventAt(events,now,unit);if(!event)return false;
  double start=scalar(event[@"startTime"])*unit,end=scalar(event[@"endTime"])*unit;
  double q=end>start?std::clamp((now-start)/(end-start),0.,1.):1.;
- return scalar(event[@"start"])+(scalar(event[@"end"])-scalar(event[@"start"]))*q<0;
+ return scalar(event[@"start"])+(scalar(event[@"end"])-scalar(event[@"start"]))*q<0;});
 }
 double trackValue(NSArray*a,double now,double fallback,int channel=-1){NSDictionary*last=eventAt(a,now);return last?visualEvent(last,channel).value(now):fallback;}
 
@@ -681,7 +706,9 @@ double control(NSDictionary*d,NSString*key,double distance){
 P addComponent(Runtime&r,P go,P type){return r.call(go,"AddComponent",{"System.Type"},{r.type_get_object(r.class_get_type(type))});}
 P graphic(Runtime&r,P go){P list=r.children(go,r.type("UnityEngine","SpriteRenderer"));return list&&r.array_length(list)?r.arrayAt(list,0):nullptr;}
 float floor(Runtime&r,P info,int index){P a=r.get<P>(info,"floorPositions");return a&&index>=0&&uintptr_t(index)<r.array_length(a)?r.unbox<float>(r.arrayAt(a,index)):0;}
-double sourceFloor(int index,double now,double fallback){auto it=sourceFloors.find(index);return it==sourceFloors.end()?fallback:phimod::rpeFloor(it->second,now,fallback);}
+double sourceFloor(int index,double now,double fallback){auto it=sourceFloors.find(index);if(it==sourceFloors.end()||it->second.empty())return fallback;return sourceFloorFrame.get(index,now,[&]{return phimod::rpeFloor(it->second,now,fallback);});}
+double sourceFloorFor(Runtime&r,P info,int index,double now){auto it=sourceFloors.find(index);return it!=sourceFloors.end()&&!it->second.empty()?sourceFloor(index,now,0):floor(r,info,index);}
+
 
 NSString*storyTexturePath(NSString*name){
  if(![name isKindOfClass:NSString.class]||!name.length)return nil;
@@ -780,18 +807,20 @@ void updateStory(Runtime&r,int index,P line,P nativeRenderer,NSDictionary*d,NSAr
  if(!v.visible){bool yes=true;r.call(v.go,"SetActive",{"System.Boolean"},{&yes});v.visible=true;}
  P tr=r.call(line,"get_transform");float width=storyFrameWidth;
  struct Q{float x,y,z,w;};V3 pos=r.unbox<V3>(r.call(tr,"get_position"));Q rot=r.unbox<Q>(r.call(tr,"get_rotation"));
- r.call(v.tr,"set_position",{"UnityEngine.Vector3"},{&pos});r.call(v.tr,"set_rotation",{"UnityEngine.Quaternion"},{&rot});
+ if(!v.stateSet||memcmp(&v.lastPosition,&pos,sizeof(pos)))r.call(v.tr,"set_position",{"UnityEngine.Vector3"},{&pos});
+ if(!v.stateSet||memcmp(v.lastRotation.data(),&rot,sizeof(rot)))r.call(v.tr,"set_rotation",{"UnityEngine.Quaternion"},{&rot});
+ v.lastPosition=pos;memcpy(v.lastRotation.data(),&rot,sizeof(rot));
  float factor=v.text?width*.04f/48.f:100.f*width/1350.f;
  V3 scale{factor*(float)trackValue(d[@"scaleXEvents"],now,1),factor*(float)trackValue(d[@"scaleYEvents"],now,1),1};
- r.call(v.tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});
+ if(!v.stateSet||memcmp(&v.lastScale,&scale,sizeof(scale)))r.call(v.tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});v.lastScale=scale;
  if(v.text){
   NSDictionary*event=eventAt(d[@"textEvents"],now);
   NSString*value=@"";
   if(event){NSString*a=[event[@"start"] description]?:@"",*b=[event[@"end"] description]?:@"";
    double begin=scalar(event[@"startTime"]),end=scalar(event[@"endTime"]);
    float q=end>begin?float(std::clamp((now-begin)/(end-begin),0.,1.)):1.f;
-   std::string text=rpeTextTween(a.UTF8String?:"",b.UTF8String?:"",q);
-   value=[[NSString alloc]initWithBytes:text.data() length:text.size() encoding:NSUTF8StringEncoding]?:@"";
+   if([a isEqualToString:b])value=a;else{std::string text=rpeTextTween(a.UTF8String?:"",b.UTF8String?:"",q);
+   value=[[NSString alloc]initWithBytes:text.data() length:text.size() encoding:NSUTF8StringEncoding]?:@"";}
   }
   if(![v.lastText isEqualToString:value]){
    r.call(v.graphic,"set_text",{"System.String"},{r.managedString(value)});v.lastText=value;
@@ -801,8 +830,8 @@ void updateStory(Runtime&r,int index,P line,P nativeRenderer,NSDictionary*d,NSAr
    if(std::isfinite(w)&&std::isfinite(h)){V2 rect{std::max(1.f,w+96.f),std::max(96.f,h+48.f)};r.call(v.tr,"set_sizeDelta",{"UnityEngine.Vector2"},{&rect});}
   }
  }
- r.call(v.graphic,"set_color",{"UnityEngine.Color"},{&color});
- r.call(v.text?v.canvas:v.graphic,"set_sortingOrder",{"System.Int32"},{&order});
+ if(!v.stateSet||memcmp(&v.lastColor,&color,sizeof(color)))r.call(v.graphic,"set_color",{"UnityEngine.Color"},{&color});
+ if(!v.stateSet||v.lastOrder!=order)r.call(v.text?v.canvas:v.graphic,"set_sortingOrder",{"System.Int32"},{&order});v.lastColor=color;v.lastOrder=order;v.stateSet=true;
  bool no=false;r.call(nativeRenderer,"set_enabled",{"System.Boolean"},{&no});
 }
 
@@ -823,11 +852,12 @@ bool hasNoteController(Runtime&r,P line,int index,bool above){
  return findSourceController(r,manager,note)!=nullptr;
 }
 void recoverSourceNotes(Runtime&r,P manager){
+ // Build the controller index only when a source note actually needs it.
  if(!currentChart)return;P progress=r.get<P>(manager,"progressControl"),judge=r.get<P>(manager,"judgeControl"),info=r.get<P>(manager,"levelInformation");
  if(!r.get<bool>(info,"chartLoaded"))return;
  float now=r.get<float>(progress,"nowTime"),world=r.staticValue<float>(r.klass("LevelInformation"),"Speed","System.Single");
  std::map<P,P>existing;
- for(const char*field:{"clickControls","dragControls","holdControls","flickControls"}){P list=r.get<P>(manager,field);for(int i=0,n=r.count(list);i<n;++i){P c=r.at(list,i);if(r.alive(c))existing[r.get<P>(c,"noteInfor")]=c;}}
+ bool controlsIndexed=false;
  P notes=r.get<P>(judge,"chartNoteSortByTime"),lines=r.get<P>(judge,"judgeLineControls");int n=r.count(notes),lo=0,hi=n;
  while(lo<hi){int mid=(lo+hi)/2;if(r.get<float>(r.at(notes,mid),"realTime")<now-.25f)lo=mid+1;else hi=mid;}
  for(int i=lo;i<n;++i){P note=r.at(notes,i);float start=r.get<float>(note,"realTime");if(start>now+8)break;
@@ -836,8 +866,9 @@ void recoverSourceNotes(Runtime&r,P manager){
   int sourceIndex=r.get<int>(note,"judgeLineIndex")/2;NSArray*sourceLines=currentChart[@"judgeLineList"];
   if(sourceIndex>=0&&sourceIndex<(int)sourceLines.count&&sourceNotesHidden(sourceLines[sourceIndex],now))continue;
   int li=r.get<int>(note,"judgeLineIndex")/2;if(li<0||li>=r.count(lines))continue;P line=r.at(lines,li);
-  double current=sourceFloor(li,now,floor(r,info,li)),delta=scalar(extra->second[@"floorPosition"])-current;
+  double current=sourceFloorFor(r,info,li,now),delta=scalar(extra->second[@"floorPosition"])-current;
   if(std::fabs(delta*scalar(extra->second[@"pmRawSpeed"],1)*world)>30)continue;
+  if(!controlsIndexed){for(const char*field:{"clickControls","dragControls","holdControls","flickControls"}){P list=r.get<P>(manager,field);for(int i=0,n=r.count(list);i<n;++i){P c=r.at(list,i);if(r.alive(c))existing[r.get<P>(c,"noteInfor")]=c;}}controlsIndexed=true;}
   auto present=existing.find(note);P controlObject=present==existing.end()?nullptr:present->second;
   if(!controlObject&&!r.get<bool>(note,"isJudged")&&start>=now-.001f){
    bool above=(r.get<int>(note,"judgeLineIndex")%2)==0;int index=r.get<int>(note,"noteIndex");P side=r.get<P>(line,above?"notesAbove":"notesBelow");
@@ -1064,7 +1095,7 @@ void visuals(Runtime&r,P progress){
  if(floorEntry==frameFloors.end()){
   // Avoid managed array reads when the source speed track is available.
   auto source=sourceFloors.find(f.line);double value;
-  if(source!=sourceFloors.end()&&!source->second.empty())value=phimod::rpeFloor(source->second,now,0);
+  if(source!=sourceFloors.end()&&!source->second.empty())value=sourceFloor(f.line,now,0);
   else{int lineIndex=r.get<int>(line,"index");value=floor(r,info,lineIndex);}
   floorEntry=frameFloors.emplace(f.line,value).first;
  }
@@ -1091,7 +1122,7 @@ void visuals(Runtime&r,P progress){
    }
   }
  }
- r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&position});
+ if(!visual.positionSet||memcmp(&visual.position,&position,sizeof(position))){r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&position});visual.position=position;visual.positionSet=true;}
  if(!visual.scaleSet||visual.scale.x!=size.x||visual.scale.y!=size.y||visual.scale.z!=size.z){r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&size});visual.scale=size;visual.scaleSet=true;}
  float alpha=scalar(f.note[@"pmAlpha"],1);
  if(!std::isfinite(alpha)||alpha<0)alpha=0;
@@ -1169,7 +1200,7 @@ void noteMoved(Runtime&r,P controlObject,bool hold){
  }
 
  V3 scale=r.unbox<V3>(r.call(tr,"get_localScale"));if(!noteScales.count(controlObject))noteScales[controlObject]=scale;
- double currentFloor=sourceFloor(index,now,floor(r,info,index));
+ double currentFloor=sourceFloorFor(r,info,index,now);
  float delta=scalar(n[@"floorPosition"])-currentFloor;
  float distance=delta*rpeFloorToDistance+scalar(n[@"pmYOffset"]);
  float yControlValue=control(d,@"yControl",distance);
@@ -1280,7 +1311,7 @@ void validate(Runtime&r){
  r.field(r.klass("ChapterInfo"),"subTitle","UnityEngine.UI.Text",false);
  P texture=r.type("UnityEngine","Texture2D");r.resolve(texture,".ctor",{"System.Int32","System.Int32","UnityEngine.TextureFormat","System.Boolean"});r.resolve(texture,"get_width");r.resolve(texture,"get_height");
  r.resolve(r.type("UnityEngine","ImageConversion"),"LoadImage",{"UnityEngine.Texture2D","System.Byte[]","System.Boolean"},true);
- P lowPreview=r.klass("AddressableImageLoaderWithLowResPreview");r.field(r.klass("AddressableImageLoader"),"_initialized","System.Int32",false);r.resolve(lowPreview,"CheckInitialized");r.resolve(lowPreview,"SetLowResImage",{"System.String"});r.resolve(lowPreview,"SetImageWithTransition",{"System.String","System.Single"});r.resolve(lowPreview,"get_Code");r.resolve(lowPreview,"set_Code",{"System.String"});r.field(lowPreview,"loadedImage","System.Boolean",false);
+ P lowPreview=r.klass("AddressableImageLoaderWithLowResPreview");r.field(r.klass("AddressableImageLoaderWithLowResPreview"),"newImage","AddressableImageLoader",false);r.field(r.klass("AddressableImageLoader"),"_initialized","System.Int32",false);r.resolve(lowPreview,"CheckInitialized");r.resolve(lowPreview,"SetLowResImage",{"System.String"});r.resolve(lowPreview,"SetImageWithTransition",{"System.String","System.Single"});r.resolve(lowPreview,"get_Code");r.resolve(lowPreview,"set_Code",{"System.String"});r.field(lowPreview,"loadedImage","System.Boolean",false);
  r.resolve(r.type("UnityEngine","Transform"),"SetSiblingIndex",{"System.Int32"});
  P probe=r.object_new(r.klass("Chapter"));
  if(!probe)throw std::runtime_error("Reference preflight allocation failed");

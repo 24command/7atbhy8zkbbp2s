@@ -11,7 +11,8 @@ class HoldIdentity(unittest.TestCase):
   self.assertIn('for(const auto&entry:extras)',post)
   self.assertNotIn('real[j]',post)
   self.assertIn('[source[@"type"] intValue]==3',post)
-  self.assertIn('liveHold&&!r.get<bool>(controlObject,"missed")',c)
+  self.assertIn('bool controlMissed=hold&&r.get<bool>(controlObject,"missed")',c)
+  self.assertIn('sourceGeometry&&!controlMissed',c)
   self.assertIn('_holdHeadIsDestroyed',c)
  def test_reordered_notes_keep_own_duration(self):
   mapping={'long':8.0,'short':0.5,'medium':3.0}

@@ -6,6 +6,8 @@
 - (NSDictionary*)snapshot;
 - (BOOL)saveUnlockRule:(NSDictionary*)rule animationURL:(NSURL*)url identifier:(NSString*)identifier error:(NSError**)error;
 - (BOOL)commit:(NSDictionary*)value error:(NSError**)error;
+- (NSString*)coverFolder:(NSString*)identifier;
+- (BOOL)assignSongs:(NSArray<NSString*>*)ids toChapter:(NSString*)chapter move:(BOOL)move error:(NSError**)error;
 - (NSString*)asset:(NSString*)identifier;
 - (BOOL)importURL:(NSURL*)url chapter:(NSString*)chapter error:(NSError**)error;
 - (NSURL*)exportSong:(NSString*)identifier error:(NSError**)error;

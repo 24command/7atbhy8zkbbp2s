@@ -8,6 +8,10 @@ Start with [HP_PRACTICE_20261018.md](HP_PRACTICE_20261018.md) for this revision,
 build/test checklist, and [GAMEPLAY_UI_PORT.md](GAMEPLAY_UI_PORT.md) for scope
 and safety boundaries. Portable C++ cores were rebuilt and run with local MSVC. Source-contract, metadata, judge-patch, and real-image hook-gate checks have passed on Windows. This revision still needs the macOS Apple SDK build and real-device verification.
 
+## Chapter management update (2026-11-13)
+
+See [CHAPTER_MANAGEMENT_20261113.md](CHAPTER_MANAGEMENT_20261113.md) for bulk moves, official-song references and cover edits, expanded chapter-cover fitting, compact Android-format exports, and dense-chart render caching. Existing native save identities and72-hook protocol are preserved.
+
 ## Changes
 
 - Practice result coroutine presentation and navigation-only recovery.
