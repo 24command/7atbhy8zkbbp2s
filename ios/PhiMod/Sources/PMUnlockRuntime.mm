@@ -150,7 +150,7 @@ void pumpAnimations(){
  if(presentMedia(path,cover,subject[@"title"]?:subject[@"name"],^(BOOL completed){
   if(!completed){if(resultResume){void(^cancelled)(BOOL)=resultResume;resultResume=nil;cancelled(NO);}return;}
   if(completed){NSError*error=nil;if(![progress seen:id signature:signature error:&error])logf("Unlock seen save failed: %s",error.localizedDescription.UTF8String?:"rule changed");}
-  if(pending.count&&[pending.firstObject isEqual:event])[pending removeObjectAtIndex:0];if(completed&&!resultResume)continueChain(id);
+  if(pending.count&&[pending.firstObject isEqual:event])[pending removeObjectAtIndex:0];if(completed&&!resultResume){if([rule[@"chain"][@"enabled"]boolValue])restoreMediaAudio();continueChain(id);}
  }))logf("Unlock reveal started: %s",id.UTF8String);
 }
 void enqueueReveals(Runtime&r,bool activateMenu=true){
@@ -188,6 +188,7 @@ bool beforeStart(Runtime&r,void*selector,void(^resume)(void)){
  NSString*name=rule[@"animation"],*folder=[PMContentStore.shared asset:id],*signature=PMUnlockSignature(rule);
  uint32_t handle=r.gchandle_new(owner,false);Runtime*rt=&r;menuActive=false;
  BOOL presented=presentMedia(name.length?[folder stringByAppendingPathComponent:name]:@"",coverPath(r,id),subject[@"title"]?:subject[@"name"],^(BOOL completed){
+  restoreMediaAudio(); // Release our audio state before native navigation changes it.
   P current=rt->gchandle_get_target(handle);bool valid=rt->alive(current);rt->gchandle_free(handle);menuActive=true;
   if(!completed||!valid)return;
   NSDictionary*latest=ruleFor(id);if(![PMUnlockSignature(latest) isEqualToString:signature])return;
@@ -208,7 +209,7 @@ bool beforeResultContinue(Runtime&r,void*button){
  // Chained unlocks own their next-song navigation; retain their menu path.
  for(NSDictionary*entry in pending)if([entity(entry[@"id"])[@"unlock"][@"chain"][@"enabled"]boolValue])return false;
  uint32_t handle=r.gchandle_new(event,false);Runtime*rt=&r;
- resultResume=^(BOOL completed){P saved=target(*rt,handle);rt->gchandle_free(handle);if(completed&&resultOwner&&rt->alive(target(*rt,resultOwner)))rt->call(saved,"Invoke");};
+ resultResume=^(BOOL completed){P saved=target(*rt,handle);try{if(completed&&resultOwner&&rt->alive(target(*rt,resultOwner)))rt->call(saved,"Invoke");}catch(...){rt->gchandle_free(handle);throw;}rt->gchandle_free(handle);};
  menuActive=false;logf("Unlock result Continue held: %lu reveals",(unsigned long)pending.count);return true;
 }
 void validate(Runtime&r){
