@@ -54,17 +54,17 @@ int main(int argc,const char**argv){@autoreleasepool{
  assert(![chapter[@"songInfo"][@"banner"]isEqual:@"Changed"]);
  // Android chapter v3: only references, not embedded official chart data.
  NSDictionary*officialRows=PMOfficialChapterEntries(officialLibrary);
- assert([PMChapterOfficialReferences(nil,officialRows,nil)count]==0);
+ assert(([PMChapterOfficialReferences(nil,officialRows,nil)count]==0));
  NSArray*refs=PMChapterOfficialReferences(@[@{@"id":@"official-b"},@{@"id":@"official-a"}],officialRows,nil);
- assert([refs isEqual:@[@"official-b",@"official-a"]]);
- assert(!PMChapterOfficialReferences(@{},officialRows,nil));
- assert(!PMChapterOfficialReferences(NSNull.null,officialRows,nil));
- assert(!PMChapterOfficialReferences(@[@"official-a"],officialRows,nil));
- assert(!PMChapterOfficialReferences(@[@{@"id":@"official-a"},@{@"id":@"official-a"}],officialRows,nil));
- assert(!PMChapterOfficialReferences(@[@{@"id":@"missing"}],officialRows,nil));
- assert(!PMChapterOfficialReferences(@[@{@"id":@"pm_a"}],@{@"pm_a":@{}},nil));
+ assert(([refs isEqual:@[@"official-b",@"official-a"]]));
+ assert((!PMChapterOfficialReferences(@{},officialRows,nil)));
+ assert((!PMChapterOfficialReferences(NSNull.null,officialRows,nil)));
+ assert((!PMChapterOfficialReferences(@[@"official-a"],officialRows,nil)));
+ assert((!PMChapterOfficialReferences(@[@{@"id":@"official-a"},@{@"id":@"official-a"}],officialRows,nil)));
+ assert((!PMChapterOfficialReferences(@[@{@"id":@"missing"}],officialRows,nil)));
+ assert((!PMChapterOfficialReferences(@[@{@"id":@"pm_a"}],@{@"pm_a":@{}},nil)));
  NSMutableArray*tooMany=[NSMutableArray new];for(int i=0;i<2001;++i)[tooMany addObject:@{@"id":@"official-a"}];
- assert(!PMChapterOfficialReferences(tooMany,officialRows,nil));
+ assert((!PMChapterOfficialReferences(tooMany,officialRows,nil)));
  NSDictionary*officialOnlyBundle=@{@"format":@"phigros-phi-chapter",@"version":@3,@"songs":@[],@"officialSongs":@[@{@"id":@"official-a"}],@"chapter":@{@"songs":@[@"official-a"]},@"dependencyChapters":@[@{@"songs":@[@"official-a"]}]};
  NSDictionary*decodedBundle=[NSJSONSerialization JSONObjectWithData:[NSJSONSerialization dataWithJSONObject:officialOnlyBundle options:0 error:nil] options:0 error:nil];
  NSArray*decodedRefs=PMChapterOfficialReferences(decodedBundle[@"officialSongs"],officialRows,nil);
