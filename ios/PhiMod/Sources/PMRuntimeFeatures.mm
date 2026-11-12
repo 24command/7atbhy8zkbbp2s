@@ -389,14 +389,20 @@ bool playSkinSound(Runtime&r,void*self,int index){
  P source=target(r,packAudioSource);if(!r.alive(source)){P go=r.object_new(r.type("UnityEngine","GameObject"));r.call(go,".ctor",{"System.String"},{r.string_new("PhiMod Skin Audio")});keep(r,go);source=r.call(go,"AddComponent",{"System.Type"},{r.type_get_object(r.class_get_type(r.type("UnityEngine","AudioSource")))});bool no=false;r.call(source,"set_playOnAwake",{"System.Boolean"},{&no});keep(r,source);packAudioSource=roots.back();}
  float volume=r.get<float>(r.mainGame(),"HitFXVol");r.call(source,"PlayOneShot",{"UnityEngine.AudioClip","System.Single"},{target(r,packClips[index]),&volume});return true;
 }
-void skinEffectCreated(Runtime&r,void*original,void*clone){
- if(!skinReady||packFrames.empty()||!clone||(original!=packGoodPrefab&&original!=packPerfectPrefab))return;
+void skinEffectCreated(Runtime&r,void*original,void*clone,void*control){
+ if(!skinReady||packFrames.empty()||!clone)return;
+ bool good=original==packGoodPrefab,perfect=original==packPerfectPrefab;
+ P note=control?r.get<P>(control,"noteInfor"):nullptr;bool hold=note&&r.get<int>(note,"type")==3;
+ if(hold){good|=original==r.get<P>(control,"good");perfect|=original==r.get<P>(control,"perfect");}
+ if(!good&&!perfect)return;
  if(packEffects.size()>=64)return; // Native effect remains as the bounded fallback.
  P go=r.object_new(r.type("UnityEngine","GameObject"));uint32_t handle=r.gchandle_new(go,false);
  try{r.call(go,".ctor",{"System.String"},{r.string_new("PhiMod Skin Hit")});P renderer=r.call(go,"AddComponent",{"System.Type"},{r.type_get_object(r.class_get_type(r.type("UnityEngine","SpriteRenderer")))});
   r.call(renderer,"set_sprite",{"UnityEngine.Sprite"},{packFrames.front()});int layer=r.unbox<int>(r.call(clone,"get_layer"));r.call(go,"set_layer",{"System.Int32"},{&layer});
   P native=r.children(clone,r.type("UnityEngine","Renderer"));int order=1032,sorting=0;for(uintptr_t i=0;native&&i<r.array_length(native);++i){P item=r.arrayAt(native,int(i));order=std::max(order,r.unbox<int>(r.call(item,"get_sortingOrder")));sorting=r.unbox<int>(r.call(item,"get_sortingLayerID"));}
-  r.call(renderer,"set_sortingLayerID",{"System.Int32"},{&sorting});r.call(renderer,"set_sortingOrder",{"System.Int32"},{&order});Color tint=packFxTinted?(original==packGoodPrefab?packGood:packPerfect):Color{1,1,1,1};r.call(renderer,"set_color",{"UnityEngine.Color"},{&tint});
+  if(control){P noteRenderer=r.get<P>(control,hold?"_holdSpriteRenderer":"_spriteRenderer");if(r.alive(noteRenderer)){order=std::max(order,r.unbox<int>(r.call(noteRenderer,"get_sortingOrder"))+1);sorting=r.unbox<int>(r.call(noteRenderer,"get_sortingLayerID"));}}
+  r.call(renderer,"set_sortingLayerID",{"System.Int32"},{&sorting});r.call(renderer,"set_sortingOrder",{"System.Int32"},{&order});Color tint=packFxTinted?(good?packGood:packPerfect):Color{1,1,1,1};r.call(renderer,"set_color",{"UnityEngine.Color"},{&tint});
+  if(packFxRotate&&control){P line=r.get<P>(control,"judgeLine");struct Q{float x,y,z,w;};Q q=r.unbox<Q>(r.call(r.call(line,"get_transform"),"get_rotation"));r.call(r.call(go,"get_transform"),"set_rotation",{"UnityEngine.Quaternion"},{&q});}
   V3 scale{packFxScale,packFxScale,1};r.call(r.call(go,"get_transform"),"set_localScale",{"UnityEngine.Vector3"},{&scale});
   double now=r.unbox<float>(r.stat(r.type("UnityEngine","Time"),"get_time"));uint32_t sourceRoot=r.gchandle_new(clone,false);packEffects.push_back({handle,sourceRoot,renderer,now,0});
   bool no=false;for(uintptr_t i=0;native&&i<r.array_length(native);++i)r.call(r.arrayAt(native,int(i)),"set_enabled",{"System.Boolean"},{&no});

@@ -1,3 +1,4 @@
+#import "PMContentStore.h"
 #import "PMResourcePackUI.h"
 #import "PMDiagnostics.h"
 #import "PMArchive.h"

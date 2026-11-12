@@ -563,7 +563,7 @@ void onNoteManager(P self,P mi){
  try{pmcontent::recoverSourceNotes(R(),self);}catch(const std::exception&e){static std::string previous;if(previous!=e.what()){previous=e.what();diagf("Source note recovery failed: %s",e.what());}}
  try{auto&r=R();pmcontent::visuals(r,r.get<P>(self,"progressControl"));}catch(const std::exception&e){static std::string previous;if(previous!=e.what()){previous=e.what();diagf("Post-note-manager visuals failed: %s",e.what());}}
 }
-P onSkinInstantiate(P original,P mi){P clone=orig<P(*)(P,P)>(h::skinInstantiate)(original,mi);if(ready&&!broken&&[NSThread isMainThread])try{pmfeatures::skinEffectCreated(R(),original,clone);}catch(const std::exception&e){diagf("Skin hit effect: %s",e.what());}return clone;}
+P onSkinInstantiate(P original,P mi){P clone=orig<P(*)(P,P)>(h::skinInstantiate)(original,mi);if(ready&&!broken&&[NSThread isMainThread])try{pmfeatures::skinEffectCreated(R(),original,clone,diagnosticJudgeControl);}catch(const std::exception&e){diagf("Skin hit effect: %s",e.what());}return clone;}
 template<h::Index I>void onSkinSound(P self,int index,P mi){if(ready&&!broken&&[NSThread isMainThread])try{if(pmfeatures::playSkinSound(R(),self,index))return;}catch(const std::exception&e){diagf("Skin hitsound: %s",e.what());}orig<void(*)(P,int,P)>(I)(self,index,mi);}
 bool onBlocking(P self,V2 point,P*out,P mi){
  if(applying())try{bool handled=false;bool value=pmmodes::blocking(R(),{point.x,point.y},out,handled);if(handled)return value;}catch(const std::exception&e){fault(e);}
@@ -571,6 +571,7 @@ bool onBlocking(P self,V2 point,P*out,P mi){
 }
 void onBlockLate(P self,P mi){orig<VoidFn>(h::blockLate)(self,mi);if(applying())try{pmmodes::late(R(),self);}catch(const std::exception&e){fault(e);}}
 void onHoldMove(P self,P mi){
+ DiagnosticJudgeScope effectScope(self);
  // Native NoteMove reads missed/timeOfJudge to fade and emit Hold effects.
  // Set them BEFORE the original, as in Android; sample the hole afterwards.
  if(applying())try{pmmodes::holdMove(R(),self);}catch(const std::exception&e){fault(e);}

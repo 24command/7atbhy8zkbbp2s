@@ -9,6 +9,9 @@ void makeNativeSettings(Runtime&r,P setting){
  clearNativeSettings(r);P source=r.get<P>(setting,"scrollRect"),original=r.get<P>(setting,"settingItemsManager");
  if(!r.alive(source)||!r.alive(original))throw std::runtime_error("Native setting templates unavailable");
  P sourceGo=go(r,source),parent=r.call(transform(r,source),"get_parent");P root=clone(r,sourceGo,parent,nativeSettingsRoot);active(r,root,false);
+ // The original tab/page is hidden while MOD is open; the clone must not
+ // remain beneath that same hidden ancestor.
+ bool keepWorld=true;r.call(transform(r,root),"SetParent",{"UnityEngine.Transform","System.Boolean"},{transform(r,setting),&keepWorld});
  try{
   P scroll=r.component(root,r.type("UnityEngine.UI","ScrollRect")),content=r.call(scroll,"get_content"),viewport=r.call(scroll,"get_viewport");
   for(int i=r.unbox<int>(r.call(content,"get_childCount"))-1;i>=0;--i){P child=r.call(content,"GetChild",{"System.Int32"},{&i});bool world=false;r.call(child,"SetParent",{"UnityEngine.Transform","System.Boolean"},{nullptr,&world});r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{go(r,child)});}

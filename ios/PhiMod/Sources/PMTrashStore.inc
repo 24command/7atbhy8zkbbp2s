@@ -15,7 +15,15 @@
  for(NSString*token in [f contentsOfDirectoryAtPath:[self.root stringByAppendingPathComponent:@"trash"] error:nil]){
   NSString*folder=[self trashPath:token];BOOL dir=NO;if(!folder||![f fileExistsAtPath:folder isDirectory:&dir]||!dir)continue;
   NSData*bytes=[NSData dataWithContentsOfFile:[folder stringByAppendingPathComponent:@"trash-entry.json"]];id meta=bytes?[NSJSONSerialization JSONObjectWithData:bytes options:NSJSONReadingMutableContainers error:nil]:nil;
-  if(![meta isKindOfClass:NSDictionary.class])meta=@{};
+  if(![meta isKindOfClass:NSDictionary.class]){
+   meta=@{};
+   // Old releases moved folders without metadata; recover exact identity from
+   // the last library backup when available, never invent difficulty/conditions.
+   NSData*backup=[NSData dataWithContentsOfFile:[self.root stringByAppendingPathComponent:@"library.backup.json"]];id old=backup?[NSJSONSerialization JSONObjectWithData:backup options:0 error:nil]:nil;
+   for(NSDictionary*song in [old isKindOfClass:NSDictionary.class]?old[@"songs"]:@[])if([token hasPrefix:[song[@"id"]stringByAppendingString:@"-"]]){
+    NSMutableArray*chapters=[NSMutableArray new];for(NSDictionary*c in old[@"chapters"])if([c[@"songs"]containsObject:song[@"id"]])[chapters addObject:c[@"id"]];meta=@{@"song":song,@"chapters":chapters};writeJSON(meta,[folder stringByAppendingPathComponent:@"trash-entry.json"],nil);break;
+   }
+  }
   NSMutableDictionary*entry=[meta mutableCopy];entry[@"token"]=token;entry[@"title"]=entry[@"song"][@"title"]?:token;
   entry[@"restorable"]=@([entry[@"song"]isKindOfClass:NSDictionary.class]&&safeID(entry[@"song"][@"id"]));[out addObject:entry];
  }

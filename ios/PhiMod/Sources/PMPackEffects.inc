@@ -29,7 +29,7 @@ void updatePackEffects(Runtime&r){
  double now=r.unbox<float>(r.stat(r.type("UnityEngine","Time"),"get_time"));
  for(auto it=packEffects.begin();it!=packEffects.end();){P go=target(r,it->go);int frame=int((now-it->start)/packFxDuration*packFrames.size());
   if(!r.alive(go)||frame>=(int)packFrames.size()){if(r.alive(go))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{go});r.gchandle_free(it->go);r.gchandle_free(it->source);it=packEffects.erase(it);continue;}
-  P source=target(r,it->source);if(r.alive(source)){P from=r.call(source,"get_transform"),to=r.call(go,"get_transform");V3 pos=r.unbox<V3>(r.call(from,"get_position"));r.call(to,"set_position",{"UnityEngine.Vector3"},{&pos});if(packFxRotate){struct Q{float x,y,z,w;};Q q=r.unbox<Q>(r.call(from,"get_rotation"));r.call(to,"set_rotation",{"UnityEngine.Quaternion"},{&q});}}
+  P source=target(r,it->source);if(r.alive(source)){P from=r.call(source,"get_transform"),to=r.call(go,"get_transform");V3 pos=r.unbox<V3>(r.call(from,"get_position"));r.call(to,"set_position",{"UnityEngine.Vector3"},{&pos});}
   frame=std::max(0,frame);if(it->frame!=frame){r.call(it->renderer,"set_sprite",{"UnityEngine.Sprite"},{packFrames[frame]});it->frame=frame;}++it;
  }
 }

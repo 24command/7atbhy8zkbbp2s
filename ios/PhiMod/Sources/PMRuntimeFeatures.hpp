@@ -4,7 +4,7 @@ namespace pmfeatures {
 void* noteSprite(pmbridge::Runtime&,int type,int part,void*original);
 void beforeNoteMove(pmbridge::Runtime&,void*control,bool hold);
 bool playSkinSound(pmbridge::Runtime&,void*self,int index);
-void skinEffectCreated(pmbridge::Runtime&,void*original,void*clone);
+void skinEffectCreated(pmbridge::Runtime&,void*original,void*clone,void*control);
 void styleLine(pmbridge::Runtime&,void*renderer);
 void attach(pmbridge::Runtime&);
 void levelBegin(pmbridge::Runtime&, void* level);
