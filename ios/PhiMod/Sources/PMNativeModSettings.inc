@@ -120,7 +120,7 @@ void pollNativeSettings(Runtime&r){
  PMModEditor*editor=[PMModEditor shared];if(nativeAdvanced&&editor.hidden){nativeAdvanced=false;active(r,root,true);for(auto&option:nativeOptions){float value=[[[PMSettings shared]value:option.key]floatValue];if(option.slider)r.call(option.item,"set_Value",{"System.Single"},{&value});else{bool on=value!=0;r.call(option.item,"set_Value",{"System.Boolean"},{&on});}option.last=value;}}
  if(nativeAdvanced)return;
  if(++nativeStableFrames==2)try{
-  P owner=target(r,settingRoot),tr=transform(r,root);Rect rect=r.unbox<Rect>(r.call(tr,"get_rect"));V2 position=r.unbox<V2>(r.call(tr,"get_anchoredPosition"));
+  P owner=target(r,settingRoot),tr=transform(r,root);sceneimpl::Rect rect=r.unbox<sceneimpl::Rect>(r.call(tr,"get_rect"));V2 position=r.unbox<V2>(r.call(tr,"get_anchoredPosition"));
   char message[256];snprintf(message,sizeof(message),"MOD page stable: tab=%d active=%d pos=%.1f,%.1f size=%.1f,%.1f options=%lu",r.get<int>(owner,"currentTab"),r.unbox<bool>(r.call(root,"get_activeInHierarchy")),position.x,position.y,rect.w,rect.h,(unsigned long)nativeOptions.size());PMDiagnosticsWrite(message);
  }catch(const std::exception&e){PMDiagnosticsWrite((std::string("MOD page diagnostic: ")+e.what()).c_str());}
  r.call(nativeSettingsManager,"RefreshPosition");

@@ -72,4 +72,8 @@ class NativeSettingsTab(unittest.TestCase):
   self.assertIn('reportRuntimeBuild()',hook)
   self.assertIn('image.dli_fname',hook)
   self.assertIn('MOD settings update failed:',hook)
+ def test_diagnostic_rect_does_not_collide_with_apple_rect(self):
+  native=(R/'PMNativeModSettings.inc').read_text(encoding='utf8')
+  self.assertIn('sceneimpl::Rect rect=r.unbox<sceneimpl::Rect>',native)
+  self.assertNotIn('Rect rect=r.unbox<Rect>',native)
 if __name__=='__main__':unittest.main()

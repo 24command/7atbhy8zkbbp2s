@@ -27,6 +27,18 @@ def fixture(declaration: str, name: str) -> str:
     )
 
 
+
+def rect_fixture(declaration: str) -> str:
+    return (
+        'struct Rect { short top,left,bottom,right; };\n'
+        'namespace sceneimpl { struct Rect { float x,y,w,h; }; }\n'
+        'struct Runtime { void* call(void*,const char*) { return nullptr; } '
+        'template<class T> T unbox(void*) { return {}; } };\n'
+        'namespace pmscene { using namespace sceneimpl; '
+        'void probe(Runtime&r,void*tr) { ' + declaration + ' (void)rect; } }\n'
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cxx', nargs='+', default=[os.environ.get('CXX', 'clang++')])
@@ -36,6 +48,10 @@ def main() -> None:
     if match is None or 'modEditorOpen=false' not in match.group():
         raise SystemExit('Scene editor state declaration changed; review regression fixture')
     declaration = match.group()
+    native = (ROOT/'PhiMod/Sources/PMNativeModSettings.inc').read_text(encoding='utf-8')
+    rect_match = re.search(r'(?:sceneimpl::)?Rect rect=r\.unbox<(?:sceneimpl::)?Rect>\(r\.call\(tr,"get_rect"\)\);', native)
+    if rect_match is None:
+        raise SystemExit('Native settings rectangle declaration changed; review regression fixture')
     flags = ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-pedantic', '-c']
     with tempfile.TemporaryDirectory(prefix='phimod-name-lookup-') as tmp:
         for old in (True, False):
@@ -49,7 +65,17 @@ def main() -> None:
                     raise SystemExit('Expected original open collision was not reproduced:\n' + result.stderr)
             elif result.returncode != 0:
                 raise SystemExit('Fixed scene state failed C++ lookup regression:\n' + result.stderr)
-    print('PASS scene state lookup: original open collision reproduced; renamed source compiles')
+        for old in (True, False):
+            case = rect_match.group().replace('sceneimpl::Rect', 'Rect') if old else rect_match.group()
+            path = Path(tmp)/('old-rect.cpp' if old else 'fixed-rect.cpp')
+            path.write_text(rect_fixture(case), encoding='utf-8')
+            result = subprocess.run([*args.cxx, *flags, str(path), '-o', str(path.with_suffix('.o'))], capture_output=True, text=True)
+            if old:
+                if result.returncode == 0 or 'ambiguous' not in result.stderr:
+                    raise SystemExit('Expected Apple Rect collision was not reproduced:\n' + result.stderr)
+            elif result.returncode != 0:
+                raise SystemExit('Qualified rectangle failed C++ lookup regression:\n' + result.stderr)
+    print('PASS scene lookup: original open and Apple Rect collisions reproduced; production spellings compile')
 
 
 if __name__ == '__main__':
