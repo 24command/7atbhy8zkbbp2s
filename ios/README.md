@@ -8,6 +8,10 @@ Start with [HP_PRACTICE_20261018.md](HP_PRACTICE_20261018.md) for this revision,
 build/test checklist, and [GAMEPLAY_UI_PORT.md](GAMEPLAY_UI_PORT.md) for scope
 and safety boundaries. Portable C++ cores were rebuilt and run with local MSVC. Source-contract, metadata, judge-patch, and real-image hook-gate checks have passed on Windows. This revision still needs the macOS Apple SDK build and real-device verification.
 
+## MOD tab / hit effects / iPad runtime (2026-11-14)
+
+See [IPAD_RUNTIME_FIXES_20261114.md](IPAD_RUNTIME_FIXES_20261114.md) for the log-confirmed null-Canvas rollback fix, post-native hit-effect placement/scale, and CPU/GPU/video overhead reductions. No chart reimport, no reduced shader resolution, and no new hooks (72). Device validation remains required.
+
 ## MOD tab input / RPE performance (2026-11-13)
 
 See [TAB_RENDER_OPTIMIZATION_20261113.md](TAB_RENDER_OPTIMIZATION_20261113.md) for the independent native tab hit target, cached note/line visibility, lifetime cursors, and pooled shader buffers. Current hook count remains **72**; no chart reimport is needed. Device click/FPS validation is still required.

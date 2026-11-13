@@ -79,7 +79,7 @@ void restore(Runtime&r,std::vector<std::pair<uint32_t,bool>>&v,const char*method
 void stash(Runtime&r,std::vector<std::pair<uint32_t,bool>>&v,P p,const char*getter,const char*setter,bool value){if(!r.alive(p))return;bool old=r.unbox<bool>(r.call(p,getter));v.emplace_back(r.gchandle_new(p,false),old);r.call(p,setter,{"System.Boolean"},{&value});}
 UIWindow *window(){for(UIScene *scene in UIApplication.sharedApplication.connectedScenes)if([scene isKindOfClass:UIWindowScene.class]&&scene.activationState==UISceneActivationStateForegroundActive)for(UIWindow*w in ((UIWindowScene*)scene).windows)if(w.isKeyWindow)return w;return nil;}
 CGFloat panelTop=100;
-void projectTab(Runtime&r){P tab=target(r,tabRoot);if(!r.alive(tab))return;P txt=tabText,canvas=r.call(txt,"get_canvas"),camera=r.call(canvas,"get_worldCamera");P corners=r.array_new(r.type("UnityEngine","Vector3"),4);uint32_t root=r.gchandle_new(corners,false);try{r.call(transform(r,tab),"GetWorldCorners",{"UnityEngine.Vector3[]"},{corners});float screenH=r.unbox<int>(r.stat(r.type("UnityEngine","Screen"),"get_height"));CGFloat bottom=0;UIWindow*w=window();for(int i=0;i<4;++i){V3 v=r.unbox<V3>(r.arrayAt(corners,i));V2 p=r.unbox<V2>(r.stat(r.type("UnityEngine","RectTransformUtility"),"WorldToScreenPoint",{"UnityEngine.Camera","UnityEngine.Vector3"},{camera,&v}));if(screenH>0)bottom=std::max(bottom,(screenH-p.y)*w.bounds.size.height/screenH);}panelTop=std::clamp(bottom+12,CGFloat(60),w.bounds.size.height*.35);}catch(...){r.gchandle_free(root);throw;}r.gchandle_free(root);}
+void projectTab(Runtime&r){P tab=target(r,tabRoot);if(!r.alive(tab))return;P txt=tabText;if(!r.alive(txt))return;P canvas=r.call(txt,"get_canvas");if(!r.alive(canvas))return;P camera=r.call(canvas,"get_worldCamera");P corners=r.array_new(r.type("UnityEngine","Vector3"),4);uint32_t root=r.gchandle_new(corners,false);try{r.call(transform(r,tab),"GetWorldCorners",{"UnityEngine.Vector3[]"},{corners});float screenH=r.unbox<int>(r.stat(r.type("UnityEngine","Screen"),"get_height"));CGFloat bottom=0;UIWindow*w=window();for(int i=0;i<4;++i){V3 v=r.unbox<V3>(r.arrayAt(corners,i));V2 p=r.unbox<V2>(r.stat(r.type("UnityEngine","RectTransformUtility"),"WorldToScreenPoint",{"UnityEngine.Camera","UnityEngine.Vector3"},{camera,&v}));if(screenH>0)bottom=std::max(bottom,(screenH-p.y)*w.bounds.size.height/screenH);}panelTop=std::clamp(bottom+12,CGFloat(60),w.bounds.size.height*.35);}catch(...){r.gchandle_free(root);throw;}r.gchandle_free(root);}
 }
 
 // The original Unity tab remains the navigation control. Only the MOD editor
@@ -282,7 +282,7 @@ void settingsFrame(Runtime&r,P self){runtime=&r;
   if(change&&([d[@"enabled"] boolValue]||[before[@"enabled"] boolValue])){NSDictionary*out=[PMRuntime applyJudgeSettings:[d[@"enabled"] boolValue] perfectMs:[d[@"perfect"] doubleValue] goodMs:[d[@"good"] doubleValue]];if(![out[@"ok"] boolValue]){editor.status.text=out[@"message"];return;}}
   NSString*error=nil;if(![[PMSettings shared] replaceConfiguration:d error:&error]){editor.status.text=error;return;}BOOL mainlineChanged=[d[@"mainlineUnlock"] boolValue]!=[before[@"mainlineUnlock"] boolValue];if(mainlineChanged){try{pmcontent::refreshMainlineAccess(r);}catch(const std::exception&e){editor.status.text=[NSString stringWithFormat:@"Saved; mainline refresh deferred: %s",e.what()];return;}}editor.status.text=@"Saved. Gameplay modes apply on next chart; judge verified immediately.";
  }
- projectTab(r);[editor layoutEditor];
+ if(nativeAdvanced){projectTab(r);[editor layoutEditor];}
 }
 bool ownsButton(P button){return button&&(buttons.count(button)||button==tabButton||nativeActions.count(button));}
 bool press(Runtime&r,P button){if(pressNativeSetting(r,button))return true;auto found=buttons.find(button);if(found!=buttons.end()){int i=found->second;P owner=target(r,selectorRoot);if(!r.alive(owner)||r.get<bool>(owner,"exit")||r.get<bool>(owner,"isMoving"))return true;NSString*key=keys[i];NSInteger old=[[[PMSettings shared] value:key] integerValue];NSNumber*value=i==2?@((old+1)%5):i==3?@((old+1)%3):@(!old);NSString*error=nil;[[PMSettings shared] setValue:value forKey:key error:&error];return true;}
@@ -295,7 +295,7 @@ bool press(Runtime&r,P button){if(pressNativeSetting(r,button))return true;auto 
   // frames so Misc footer/social links cannot remain below the MOD page.
   P frames=target(r,originalFrames);for(int i=0;frames&&i<(int)r.array_length(frames);++i)stash(r,hidden,go(r,r.arrayAt(frames,i)),"get_activeSelf","SetActive",false);
   for(const char*name:{"audioSource1","audioSource2"}){P src=r.get<P>(self,name);if(src)stash(r,mutes,r.get<P>(src,"audioSource"),"get_mute","set_mute",true);}
-  projectTab(r);
+  // Native page uses Unity layout, not the optional UIKit advanced-panel anchor.
  }catch(const std::exception&e){NSString*message=[NSString stringWithFormat:@"MOD settings: %s",e.what()];settingsLeave(r);reportModTabFailure(message);}}
  @catch(NSException*e){NSString*message=[NSString stringWithFormat:@"MOD settings: %@",e.reason];settingsLeave(r);reportModTabFailure(message);}return true;
 }

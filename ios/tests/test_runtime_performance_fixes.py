@@ -1,0 +1,44 @@
+from pathlib import Path
+import unittest
+ROOT=Path(__file__).resolve().parents[1]
+def source(name): return (ROOT/'PhiMod/Sources'/name).read_text(encoding='utf8')
+class RuntimePerformanceFixes(unittest.TestCase):
+ def test_hit_effect_is_hidden_until_native_placement_finishes(self):
+  s=source('PMRuntimeFeatures.mm').split('void skinEffectCreated(',1)[1].split('void styleLine(',1)[0]
+  self.assertLess(s.index('"set_enabled"'),s.index('"set_sprite"'))
+  self.assertIn('packEffectsPending=true',s)
+  fx=source('PMPackEffects.inc').split('void finishPackEffects(',1)[1].split('void updatePackEffects(',1)[0]
+  self.assertLess(fx.index('"get_position"'),fx.index('"set_enabled"'))
+  self.assertLess(fx.index('"set_localScale"'),fx.index('"set_enabled"'))
+  self.assertIn('nativeScale.x*packFxScale',fx)
+  self.assertIn('nativeScale.y*packFxScale',fx)
+  self.assertIn('r.gchandle_free(e.source);e.source=0',fx)
+  update=source('PMPackEffects.inc').split('void updatePackEffects(',1)[1]
+  self.assertNotIn('"set_position"',update)
+  hook=source('PMHookBackend.mm').split('void onNoteManager(',1)[1].split('P onSkinInstantiate(',1)[0]
+  self.assertLess(hook.index('orig<VoidFn>(h::noteManager)'),hook.index('pmfeatures::flushHitEffects'))
+ def test_video_avoids_eager_decode_and_repeated_constant_setters(self):
+  s=source('PMRuntimeFeatures.mm')
+  self.assertIn('std::upper_bound(a.begin(),a.end(),now',s)
+  self.assertIn('if(!v.go&&now<v.start-2.)continue;',s)
+  self.assertIn('if(!(v.length>0))continue;',s)
+  self.assertIn('if(!active&&!v.wasActive)continue;',s)
+  self.assertIn('color.a!=v.lastColor.a',s)
+  self.assertIn('if(!v.begun||!v.wasActive)',s)
+  self.assertIn('now>=v.start+v.length+2.',s)
+  self.assertIn('if(v.go)releaseVideo(r,v)',s)
+ def test_managed_bridge_retains_checked_abi(self):
+  s=source('PMIL2CPP.hpp')
+  self.assertIn('gameClassCache.find(name)',s)
+  self.assertIn('std::array<P,16> local',s)
+  self.assertIn('overflow.assign(args)',s)
+  self.assertIn('runtime_invoke(method,self,arguments,&ex)',s)
+  self.assertIn('Managed call failed:',s)
+  self.assertNotIn('reinterpret_cast<P(*)(P',s)
+ def test_shader_discard_requires_preservation(self):
+  s=source('PMMetalShaders.mm')
+  self.assertIn('if(e.fullCompiler&&e.full.discards)',s)
+  self.assertIn('(e.fullCompiler&&e.full.discards)?MTLLoadActionLoad:MTLLoadActionDontCare',s)
+  compiler=(ROOT/'PhiMod/Core/PMFullShaderCompiler.cpp').read_text(encoding='utf8')
+  self.assertIn('result.msl.find("discard_fragment")',compiler)
+if __name__=='__main__': unittest.main()

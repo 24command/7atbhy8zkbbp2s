@@ -40,4 +40,10 @@ class NativeSettingsTab(unittest.TestCase):
   self.assertIn('"set_maskable"',s)
   self.assertIn('reportModTabFailure(message)',s)
   self.assertIn('MOD tab click received',s)
+ def test_optional_uikit_anchor_cannot_close_native_page(self):
+  s=(R/'PMSceneUI.mm').read_text(encoding='utf8')
+  press=s.split('bool press(Runtime&r,P button)',1)[1].split('namespace {uint32_t recoveryRoot',1)[0]
+  self.assertNotIn('projectTab(r)',press)
+  self.assertIn('if(!r.alive(canvas))return;',s)
+  self.assertIn('if(nativeAdvanced){projectTab(r);[editor layoutEditor];}',s)
 if __name__=='__main__':unittest.main()

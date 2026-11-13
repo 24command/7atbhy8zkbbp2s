@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <array>
 #include <map>
 #include <initializer_list>
 #include <type_traits>
@@ -72,6 +73,7 @@ struct Runtime {
     uintptr_t (*array_length)(P)=nullptr;
     std::map<std::pair<P,std::string>,P> fieldCache;
     std::map<std::string,P> typeCache;
+    std::map<std::string,P,std::less<>> gameClassCache;
     std::map<std::pair<P,std::string>,P> methodCache;
     Runtime() = default;
     Runtime(const Runtime &) = delete;
@@ -136,6 +138,7 @@ struct Runtime {
         }
     }
     P klass(const char *name) {
+        auto cached=gameClassCache.find(name);if(cached!=gameClassCache.end())return cached->second;
         size_t count=0; const P *assemblies=domain_get_assemblies(domain,&count);
         if (!assemblies || count>4096) throw std::runtime_error("Invalid assembly inventory");
         for (size_t i=0;i<count;++i) {
@@ -143,7 +146,7 @@ struct Runtime {
             const char *imageName=image ? image_get_name(image) : nullptr;
             if (!imageName || strcmp(imageName,"Assembly-CSharp.dll")) continue;
             P c=class_from_name(image,"",name);
-            if (c) return c;
+            if (c) {gameClassCache.emplace(name,c);return c;}
         }
         throw std::runtime_error(std::string("Missing Assembly-CSharp type: ")+name);
     }
@@ -304,8 +307,11 @@ struct Runtime {
         throw std::runtime_error(std::string("Missing overload: ")+(class_get_name(c)?class_get_name(c):"?")+" :: "+signature);
     }
     P invokeOn(P method,P self,std::initializer_list<P> args={}) {
-        std::vector<P> a(args);P ex=nullptr;
-        P value=runtime_invoke(method,self,a.empty()?nullptr:a.data(),&ex);
+        // Reflection calls dominate dense-note CPU work. Preserve the checked
+        // runtime_invoke ABI, but avoid heap allocation for ordinary argument lists.
+        std::array<P,16> local{};std::vector<P> overflow;P*arguments=nullptr;
+        if(args.size()){if(args.size()<=local.size()){std::copy(args.begin(),args.end(),local.begin());arguments=local.data();}else{overflow.assign(args);arguments=overflow.data();}}
+        P ex=nullptr;P value=runtime_invoke(method,self,arguments,&ex);
         if(ex){
             const char *methodName=method_get_name(method);
             P c=object_get_class(ex);const char *exceptionName=c?class_get_name(c):nullptr;

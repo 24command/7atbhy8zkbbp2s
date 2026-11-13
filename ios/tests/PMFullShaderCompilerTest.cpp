@@ -20,13 +20,14 @@ int main(int argc,char**argv){
  }
  auto fixture=[&](const char*name,const std::string&source){auto program=pmfullshader::compile(source);assert(program.msl.find("vertex PMFullVertex pmVertex")!=std::string::npos);if(argc>1){std::ofstream out(std::string(argv[1])+"/"+name+".metal");out<<program.msl;}return program;};
  auto coords=fixture("coordinates","uniform sampler2D screenTexture; varying vec2 uv; void main(){gl_FragColor=texture2D(screenTexture,uv)+vec4(uv,gl_FragCoord.y*0.001,0.0);}");
- assert(coords.msl.find("pmRpeViewport")!=std::string::npos);
+ assert(coords.msl.find("pmRpeViewport")!=std::string::npos);assert(!coords.discards);
  auto values=fixture("scalar-types","uniform int i; uniform uint u; uniform bool b; uniform vec3 tint; // %0.1,0.2,0.3%\nvoid main(){gl_FragColor=vec4(tint*(b?float(i+int(u)):1.),1.);}");
  auto packed=pmfullshader::defaults(values);bool sawDefault=false;
  for(auto&u:values.uniforms){if(u.name=="tint"){sawDefault=true;assert(u.defaults.size()==3&&u.defaults[2]>.29f);}if(u.name=="b"){pmfullshader::put(packed,u,0,-1);uint32_t value;std::memcpy(&value,packed.data()+u.offset,4);assert(value==1);}
  if(u.name=="i"){pmfullshader::put(packed,u,0,-3);int value;std::memcpy(&value,packed.data()+u.offset,4);assert(value==-3);}}
  assert(sawDefault);
- fixture("discard-helper","uniform float time; uniform sampler2D screenTexture; varying vec2 uv; vec4 helper(vec2 p){if(p.x<0.25)discard;return texture2D(screenTexture,p+vec2(sin(time)*.01,0));}void main(){gl_FragColor=helper(uv);}");
+ auto discard=fixture("discard-helper","uniform float time; uniform sampler2D screenTexture; varying vec2 uv; vec4 helper(vec2 p){if(p.x<0.25)discard;return texture2D(screenTexture,p+vec2(sin(time)*.01,0));}void main(){gl_FragColor=helper(uv);}");
+ assert(discard.discards);
  fixture("macro-loop","uniform sampler2D screenTexture; varying vec2 uv;\n#define N 3\nvec4 sampleLater(vec2 p);void main(){vec4 c=vec4(0);for(int i=0;i<N;++i)c+=sampleLater(uv);gl_FragColor=c/float(N);}vec4 sampleLater(vec2 p){return textureLod(screenTexture,p,0.0);}");
  bool rejectedSampler=false;try{pmfullshader::compile("uniform sampler2D extra;varying vec2 uv;void main(){gl_FragColor=texture2D(extra,uv);}");}catch(const std::exception&){rejectedSampler=true;}assert(rejectedSampler);
  bool failed=false;try{pmfullshader::compile("void main(){ BAD SYNTAX }");}catch(...){failed=true;}assert(failed);

@@ -67,8 +67,8 @@ void render(id<MTLCommandBuffer>buffer,id<MTLDrawable>drawable){
   for(size_t i=0;i<active.size();++i){Effect&e=*active[i].first;id<MTLTexture>output=i+1==active.size()?target:(input==a?b:a);
    Params params{};params.clock[0]=float(now);params.clock[1]=float(target.width);params.clock[2]=float(target.height);
    for(size_t u=0;u<e.source.uniforms.size();++u){const auto&uniform=e.source.uniforms[u];auto track=e.tracks.find(uniform.name);for(int c=0;c<uniform.size;++c)params.values[u][c]=track==e.tracks.end()?uniform.defaults[c]:pmshader::sample(track->second[c],now,uniform.defaults[c]);}
-   if(e.fullCompiler){id<MTLBlitCommandEncoder>preserve=[buffer blitCommandEncoder];if(!preserve)return;[preserve copyFromTexture:input sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0,0,0) sourceSize:MTLSizeMake(target.width,target.height,1) toTexture:output destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0,0,0)];[preserve endEncoding];}
-   MTLRenderPassDescriptor*pass=[MTLRenderPassDescriptor renderPassDescriptor];pass.colorAttachments[0].texture=output;pass.colorAttachments[0].loadAction=e.fullCompiler?MTLLoadActionLoad:MTLLoadActionDontCare;pass.colorAttachments[0].storeAction=MTLStoreActionStore;
+   if(e.fullCompiler&&e.full.discards){id<MTLBlitCommandEncoder>preserve=[buffer blitCommandEncoder];if(!preserve)return;[preserve copyFromTexture:input sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0,0,0) sourceSize:MTLSizeMake(target.width,target.height,1) toTexture:output destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0,0,0)];[preserve endEncoding];}
+   MTLRenderPassDescriptor*pass=[MTLRenderPassDescriptor renderPassDescriptor];pass.colorAttachments[0].texture=output;pass.colorAttachments[0].loadAction=(e.fullCompiler&&e.full.discards)?MTLLoadActionLoad:MTLLoadActionDontCare;pass.colorAttachments[0].storeAction=MTLStoreActionStore;
    id<MTLRenderCommandEncoder>encoder=[buffer renderCommandEncoderWithDescriptor:pass];if(!encoder)return;
    [encoder setRenderPipelineState:active[i].second];[encoder setFragmentTexture:input atIndex:0];
    if(e.fullCompiler){

@@ -49,7 +49,7 @@ bool skinHoldCompact=false;
 int skinHead=50,skinTail=50,skinHeadMH=50,skinTailMH=50,skinCols=5,skinRows=6;
 std::set<int>skinBoundTypes;bool skinReady=false;std::map<P,P>skinBoundNotes;std::map<P,bool>skinHighlights;std::map<P,P>skinOriginals;std::map<P,uint32_t>skinOriginalRoots;
 struct TrackEvent { double s=0,e=0,a=0,b=0; };
-struct Video { int index=0; double start=0; std::string scale,path; std::map<std::string,std::vector<TrackEvent>> tracks; uint32_t go=0,texture=0; P player=nullptr,raw=nullptr; bool begun=false,failed=false; };
+struct Video { int index=0; double start=0; std::string scale,path; std::map<std::string,std::vector<TrackEvent>> tracks; uint32_t go=0,texture=0; P player=nullptr,raw=nullptr; bool begun=false,failed=false,prepared=false,wasActive=false,colorSet=false,rawEnabled=false;double length=0;Color lastColor{}; };
 std::vector<Video> videos;
 uint32_t videoLevel=0;
 bool legacyActive=false; int legacyStep=-1,legacyJudge=-1; std::string legacyFace;
@@ -160,15 +160,12 @@ void destroyVideoObject(Runtime&r,uint32_t &handle,bool releaseTexture){
  }catch(...){}
  r.gchandle_free(handle);handle=0;
 }
-void clearVideos(Runtime&r){
- for(Video &v:videos){
-  try{if(r.alive(v.player))r.call(v.player,"Stop");}catch(...){}
-  destroyVideoObject(r,v.go,false);
-  destroyVideoObject(r,v.texture,true);
-  v.player=v.raw=nullptr;
- }
- videos.clear();
+void releaseVideo(Runtime&r,Video&v){
+ try{if(r.alive(v.raw)){bool no=false;r.call(v.raw,"set_enabled",{"System.Boolean"},{&no});}if(r.alive(v.player))r.call(v.player,"Stop");}catch(...){}
+ destroyVideoObject(r,v.go,false);destroyVideoObject(r,v.texture,true);
+ v.player=v.raw=nullptr;v.prepared=v.begun=v.wasActive=v.colorSet=v.rawEnabled=false;
 }
+void clearVideos(Runtime&r){for(Video&v:videos)releaseVideo(r,v);videos.clear();}
 void prepareVideosFromEffects(Runtime&r,P level,NSString*folder){
  NSString*extensions=[folder stringByAppendingPathComponent:@"extensions"];
  NSString*effects=[folder stringByAppendingPathComponent:@"effects.tsv"];
@@ -227,9 +224,8 @@ void prepareVideos(Runtime&r,P level){
 }
 double trackAt(const std::vector<TrackEvent>&a,double now,double fallback){
  if(a.empty())return fallback;
- const TrackEvent*last=nullptr;
- for(auto&e:a){if(e.s<=now)last=&e;else break;}
- if(!last)return fallback;
+ auto next=std::upper_bound(a.begin(),a.end(),now,[](double t,const TrackEvent&e){return t<e.s;});
+ if(next==a.begin())return fallback;const TrackEvent*last=&*--next;
  if(last->e<=last->s||now>=last->e)return last->b;
  double q=std::clamp((now-last->s)/(last->e-last->s),0.,1.);
  return last->a+(last->b-last->a)*q;
@@ -270,6 +266,7 @@ void makeVideo(Runtime&r,Video&v){
   r.call(tr,"set_sizeDelta",{"UnityEngine.Vector2"},{&size});
   r.call(tr,"set_localPosition",{"UnityEngine.Vector3"},{&position});
   P raw=addComponent(r,go,r.type("UnityEngine.UI","RawImage"));v.raw=raw;
+  r.call(raw,"set_enabled",{"System.Boolean"},{&no});
   r.call(raw,"set_raycastTarget",{"System.Boolean"},{&no});
   P texture=r.object_new(r.type("UnityEngine","RenderTexture"));
   if(!texture)throw std::runtime_error("RPE video RenderTexture allocation failed");
@@ -302,20 +299,30 @@ void updateVideos(Runtime&r,P progress){
  double now=r.get<float>(progress,"nowTime");bool playing=r.get<bool>(progress,"isPlaying");
  for(auto&v:videos){
   if(v.failed||v.path.empty())continue;
+  // Release completed decoders/textures after a short grace period. Keep timing
+  // metadata so a backwards practice seek prepares and seeks the video again.
+  if(v.length>0&&now>=v.start+v.length+2.){if(v.go)releaseVideo(r,v);continue;}
+  if(!v.go&&v.length>0&&now>=v.start+v.length)continue;
+  // A video is invisible before start. Do not allocate/prepare all later
+  // decoders and render textures at chart entry on memory-limited devices.
+  if(!v.go&&now<v.start-2.)continue;
   try{
    makeVideo(r,v);
-   if(!v.player||!r.unbox<bool>(r.call(v.player,"get_isPrepared")))continue;
-   double length=r.unbox<double>(r.call(v.player,"get_length")),time=now-v.start;
-   bool active=time>=0&&time<length;
+   if(!v.player)continue;
+   if(!v.prepared){if(!r.unbox<bool>(r.call(v.player,"get_isPrepared")))continue;v.length=r.unbox<double>(r.call(v.player,"get_length"));if(!(v.length>0))continue;v.prepared=true;}
+   double time=now-v.start;bool active=time>=0&&time<v.length;
+   if(!active&&!v.wasActive)continue;
    double alpha=active?trackAt(v.tracks["alpha"],now,1):0,dim=trackAt(v.tracks["dim"],now,0);
    Color color{(float)(1-dim),(float)(1-dim),(float)(1-dim),(float)alpha};
-   r.call(v.raw,"set_color",{"UnityEngine.Color"},{&color});
+   if(!v.colorSet||color.r!=v.lastColor.r||color.g!=v.lastColor.g||color.b!=v.lastColor.b||color.a!=v.lastColor.a){r.call(v.raw,"set_color",{"UnityEngine.Color"},{&color});v.lastColor=color;v.colorSet=true;}
+   bool visible=active&&alpha>0;if(visible!=v.rawEnabled){r.call(v.raw,"set_enabled",{"System.Boolean"},{&visible});v.rawEnabled=visible;}
    bool running=r.unbox<bool>(r.call(v.player,"get_isPlaying"));
    if(active){
     r.call(v.player,"set_externalReferenceTime",{"System.Double"},{&time});
-    if(playing&&!running){if(!v.begun){r.call(v.player,"set_time",{"System.Double"},{&time});v.begun=true;}r.call(v.player,"Play");}
+    if(playing&&!running){if(!v.begun||!v.wasActive){r.call(v.player,"set_time",{"System.Double"},{&time});v.begun=true;}r.call(v.player,"Play");}
     else if(!playing&&running)r.call(v.player,"Pause");
    }else if(running)r.call(v.player,"Pause");
+   v.wasActive=active;
   }catch(const std::exception&e){v.failed=true;logf("RPE video update failed: %s",e.what());}
  }
 }
@@ -401,13 +408,14 @@ void skinEffectCreated(Runtime&r,void*original,void*clone,void*control){
  if(packEffects.size()>=64)return; // Native effect remains as the bounded fallback.
  P go=r.object_new(r.type("UnityEngine","GameObject"));uint32_t handle=r.gchandle_new(go,false);
  try{r.call(go,".ctor",{"System.String"},{r.string_new("PhiMod Skin Hit")});P renderer=r.call(go,"AddComponent",{"System.Type"},{r.type_get_object(r.class_get_type(r.type("UnityEngine","SpriteRenderer")))});
+  bool hidden=false;r.call(renderer,"set_enabled",{"System.Boolean"},{&hidden});
   r.call(renderer,"set_sprite",{"UnityEngine.Sprite"},{packFrames.front()});int layer=r.unbox<int>(r.call(clone,"get_layer"));r.call(go,"set_layer",{"System.Int32"},{&layer});
   P native=r.children(clone,r.type("UnityEngine","Renderer"));int order=1032,sorting=0;for(uintptr_t i=0;native&&i<r.array_length(native);++i){P item=r.arrayAt(native,int(i));order=std::max(order,r.unbox<int>(r.call(item,"get_sortingOrder")));sorting=r.unbox<int>(r.call(item,"get_sortingLayerID"));}
   if(control){P noteRenderer=r.get<P>(control,hold?"_holdSpriteRenderer":"_spriteRenderer");if(r.alive(noteRenderer)){order=std::max(order,r.unbox<int>(r.call(noteRenderer,"get_sortingOrder"))+1);sorting=r.unbox<int>(r.call(noteRenderer,"get_sortingLayerID"));}}
   r.call(renderer,"set_sortingLayerID",{"System.Int32"},{&sorting});r.call(renderer,"set_sortingOrder",{"System.Int32"},{&order});Color tint=packFxTinted?(good?packGood:packPerfect):Color{1,1,1,1};r.call(renderer,"set_color",{"UnityEngine.Color"},{&tint});
   if(packFxRotate&&control){P line=r.get<P>(control,"judgeLine");struct Q{float x,y,z,w;};Q q=r.unbox<Q>(r.call(r.call(line,"get_transform"),"get_rotation"));r.call(r.call(go,"get_transform"),"set_rotation",{"UnityEngine.Quaternion"},{&q});}
-  V3 scale{packFxScale,packFxScale,1};r.call(r.call(go,"get_transform"),"set_localScale",{"UnityEngine.Vector3"},{&scale});
-  double now=r.unbox<float>(r.stat(r.type("UnityEngine","Time"),"get_time"));uint32_t sourceRoot=r.gchandle_new(clone,false);packEffects.push_back({handle,sourceRoot,renderer,now,0});
+  P transform=r.call(go,"get_transform"),sourceTransform=r.call(clone,"get_transform");
+  uint32_t sourceRoot=r.gchandle_new(clone,false);packEffects.push_back({handle,sourceRoot,renderer,0,-1,false,transform,sourceTransform});packEffectsPending=true;
   bool no=false;for(uintptr_t i=0;native&&i<r.array_length(native);++i)r.call(r.arrayAt(native,int(i)),"set_enabled",{"System.Boolean"},{&no});
  }catch(...){if(r.alive(go))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{go});r.gchandle_free(handle);throw;}
 }
@@ -421,7 +429,8 @@ void levelBegin(Runtime&r,void*level){PMMetalShadersClear();clearVideos(r);if(vi
 void levelEnd(Runtime&r){PMMetalShadersClear();clearVideos(r);if(videoLevel){r.gchandle_free(videoLevel);videoLevel=0;}clearLegacy();releaseRoots(r);}
 void afterChart(Runtime&r,void*level){try{loadSkin(r);}catch(const std::exception&e){logf("Skin runtime setup failed: %s",e.what());releaseRoots(r);}try{prepareVideos(r,level);}catch(const std::exception&e){logf("RPE video load failed: %s",e.what());}try{P info=r.get<P>(r.mainGame(),"levelStartInfo");NSString*identifier=info?r.string(r.get<P>(info,"songsId")):nil;NSString*folder=resourceFolder(identifier);PMMetalShadersLoad(folder);}catch(const std::exception&e){logf("RPE shader metadata scan failed: %s",e.what());}}
 void observe(int rating){if(legacyActive)legacyJudge=rating==0?2:rating==1?1:0;}
-void noteMoved(Runtime&r,void*control,bool hold){try{P c=control;
+void flushHitEffects(Runtime&r){try{finishPackEffects(r);}catch(const std::exception&e){if(skinErrors.insert(e.what()).second)logf("Hit effect placement failed: %s",e.what());}}
+void noteMoved(Runtime&r,void*control,bool hold){flushHitEffects(r);if(!skinReady||!control)return;try{P c=control;
  // Native completion can destroy a controller later in the frame. Do not
  // replace its last sprite or rescale a completed/fading Hold after NoteMove.
  if(!r.alive(c))return;

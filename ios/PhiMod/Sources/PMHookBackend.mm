@@ -564,12 +564,22 @@ void onNoteManager(P self,P mi){
  if(pmpractice::entryLoading(R(),self))return;
  if(pmpractice::paused()){try{auto&r=R();ensureFloorArray(r,r.get<P>(self,"levelInformation"));pmpractice::previewFrame(r,self);pmcontent::visuals(r,r.get<P>(self,"progressControl"));}catch(const std::exception&e){diagf("Practice preview failed: %s",e.what());}return;}
  if(applying())try{pmmodes::beginFrame(R(),self);}catch(const std::exception&e){fault(e);}
+ bool profile=pmcontent::customLevel();auto nativeStart=std::chrono::steady_clock::now();
  orig<VoidFn>(h::noteManager)(self,mi);
+ auto nativeEnd=std::chrono::steady_clock::now();
+ pmfeatures::flushHitEffects(R());
    if(applying())try{pmmodes::frame(R(),self);}catch(const std::exception&e){fault(e);}
  // Native NoteUpdateManager.Update calls JudgeLineControl.UpdateInfo for all
  // lines. Apply custom visibility afterwards, never from a competing Update.
  try{pmcontent::recoverSourceNotes(R(),self);}catch(const std::exception&e){static std::string previous;if(previous!=e.what()){previous=e.what();diagf("Source note recovery failed: %s",e.what());}}
  try{auto&r=R();pmcontent::visuals(r,r.get<P>(self,"progressControl"));}catch(const std::exception&e){static std::string previous;if(previous!=e.what()){previous=e.what();diagf("Post-note-manager visuals failed: %s",e.what());}}
+ if(profile){
+  static P owner=nullptr;static unsigned frames=0;static double nativeMs=0,customMs=0,peakMs=0;
+  if(owner!=self){owner=self;frames=0;nativeMs=customMs=peakMs=0;}
+  auto done=std::chrono::steady_clock::now();double a=std::chrono::duration<double,std::milli>(nativeEnd-nativeStart).count(),b=std::chrono::duration<double,std::milli>(done-nativeEnd).count();
+  nativeMs+=a;customMs+=b;peakMs=std::max(peakMs,a+b);
+  if(++frames==300){diagf("RPE CPU profile (300 frames): native=%.2fms custom=%.2fms peak=%.2fms; excludes GPU",nativeMs/frames,customMs/frames,peakMs);frames=0;nativeMs=customMs=peakMs=0;}
+ }
 }
 P onSkinInstantiate(P original,P mi){P clone=orig<P(*)(P,P)>(h::skinInstantiate)(original,mi);
  // Shared generic Instantiate is also used by title/chapters and can run on

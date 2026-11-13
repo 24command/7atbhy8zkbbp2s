@@ -1,5 +1,6 @@
 // Resource-pack runtime: uses native effect/sound calls, never score callbacks.
-struct PackEffect{uint32_t go=0,source=0;P renderer=nullptr;double start=0;int frame=-1;};
+struct PackEffect{uint32_t go=0,source=0;P renderer=nullptr;double start=0;int frame=-1;bool initialized=false;P transform=nullptr,sourceTransform=nullptr;};
+bool packEffectsPending=false,packEffectPlacementLogged=false;
 std::vector<PackEffect>packEffects;std::vector<P>packFrames;
 std::map<int,uint32_t>packClips;uint32_t packAudioSource=0;
 struct PackLine{uint32_t renderer,original;};std::map<P,PackLine>packLines;
@@ -7,7 +8,7 @@ float packFxDuration=.5f,packFxScale=1;bool packFxRotate=false,packFxTinted=true
 Color packPerfect{1,.925f,.627f,1},packGood{.706f,.882f,1,1};
 P packGoodPrefab=nullptr,packPerfectPrefab=nullptr;
 void clearPackExtras(Runtime&r){
- for(auto&e:packEffects){P go=target(r,e.go);if(r.alive(go))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{go});r.gchandle_free(e.go);r.gchandle_free(e.source);}packEffects.clear();packFrames.clear();
+ for(auto&e:packEffects){P go=target(r,e.go);if(r.alive(go))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{go});r.gchandle_free(e.go);if(e.source)r.gchandle_free(e.source);}packEffects.clear();packEffectsPending=false;packEffectPlacementLogged=false;packFrames.clear();
  for(auto&entry:packLines){P renderer=target(r,entry.second.renderer),original=target(r,entry.second.original);if(r.alive(renderer)&&r.alive(original))r.call(renderer,"set_sprite",{"UnityEngine.Sprite"},{original});r.gchandle_free(entry.second.renderer);r.gchandle_free(entry.second.original);}packLines.clear();
  packClips.clear();packAudioSource=0;packGoodPrefab=packPerfectPrefab=nullptr;
 }
@@ -25,11 +26,33 @@ void preparePackExtras(Runtime&r,const std::map<std::string,std::string>&meta){
  P level=target(r,videoLevel);if(r.alive(level)){packGoodPrefab=r.get<P>(level,"goodJudge");packPerfectPrefab=r.get<P>(level,"perfectJudge");}
  logf("Resource pack extras ready frames=%lu sounds=%lu line=%d",(unsigned long)packFrames.size(),(unsigned long)packClips.size(),skinFiles.count("line.png")!=0);
 }
+// Instantiate returns before its caller assigns the native hit position/scale.
+// Publish custom pixels only AFTER that caller (NoteMove/NoteUpdateManager) returns.
+void finishPackEffects(Runtime&r){
+ if(!packEffectsPending)return;
+ double now=r.unbox<float>(r.stat(r.type("UnityEngine","Time"),"get_time"));
+ for(auto&e:packEffects){if(e.initialized)continue;P source=target(r,e.source);
+  if(!r.alive(source)){e.initialized=true;e.start=now-packFxDuration;continue;}
+  V3 position=r.unbox<V3>(r.call(e.sourceTransform,"get_position"));
+  V3 nativeScale=r.unbox<V3>(r.call(e.sourceTransform,"get_lossyScale"));
+  V3 scale{nativeScale.x*packFxScale,nativeScale.y*packFxScale,nativeScale.z};
+  r.call(e.transform,"set_position",{"UnityEngine.Vector3"},{&position});
+  r.call(e.transform,"set_localScale",{"UnityEngine.Vector3"},{&scale});
+  r.call(e.renderer,"set_sprite",{"UnityEngine.Sprite"},{packFrames.front()});
+  bool yes=true;r.call(e.renderer,"set_enabled",{"System.Boolean"},{&yes});
+  e.frame=0;e.start=now;e.initialized=true;
+  // Phira effects stay at the emission point, not the later moving note/line.
+  if(!packEffectPlacementLogged){logf("Skin hit effect placed after native move: scale=%.3f,%.3f pack=%.3f",scale.x,scale.y,packFxScale);packEffectPlacementLogged=true;}
+  r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{source});
+  r.gchandle_free(e.source);e.source=0;e.sourceTransform=nullptr;
+ }
+ packEffectsPending=false;
+}
 void updatePackEffects(Runtime&r){
+ if(packEffects.empty())return;finishPackEffects(r);
  double now=r.unbox<float>(r.stat(r.type("UnityEngine","Time"),"get_time"));
  for(auto it=packEffects.begin();it!=packEffects.end();){P go=target(r,it->go);int frame=int((now-it->start)/packFxDuration*packFrames.size());
-  if(!r.alive(go)||frame>=(int)packFrames.size()){if(r.alive(go))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{go});r.gchandle_free(it->go);r.gchandle_free(it->source);it=packEffects.erase(it);continue;}
-  P source=target(r,it->source);if(r.alive(source)){P from=r.call(source,"get_transform"),to=r.call(go,"get_transform");V3 pos=r.unbox<V3>(r.call(from,"get_position"));r.call(to,"set_position",{"UnityEngine.Vector3"},{&pos});}
+  if(!r.alive(go)||frame>=(int)packFrames.size()){if(r.alive(go))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{go});r.gchandle_free(it->go);if(it->source)r.gchandle_free(it->source);it=packEffects.erase(it);continue;}
   frame=std::max(0,frame);if(it->frame!=frame){r.call(it->renderer,"set_sprite",{"UnityEngine.Sprite"},{packFrames[frame]});it->frame=frame;}++it;
  }
 }

@@ -85,7 +85,11 @@ Program compile(const std::string&source){
  }
  for(auto&r:resources.sampled_images){if(compiler.get_name(r.id)!="screenTexture")throw std::runtime_error("RPE has no binding for sampler: "+compiler.get_name(r.id));spirv_cross::MSLResourceBinding binding{};binding.stage=spv::ExecutionModelFragment;binding.desc_set=compiler.get_decoration(r.id,spv::DecorationDescriptorSet);binding.binding=compiler.get_decoration(r.id,spv::DecorationBinding);binding.msl_texture=0;binding.msl_sampler=0;compiler.add_msl_resource_binding(binding);}
  auto msl=compiler.get_msl_options();msl.platform=spirv_cross::CompilerMSL::Options::iOS;msl.set_msl_version(2,3);compiler.set_msl_options(msl);
- compiler.rename_entry_point("main",result.entry,spv::ExecutionModelFragment);result.msl=compiler.compile()+vertexSource();return result;
+ compiler.rename_entry_point("main",result.entry,spv::ExecutionModelFragment);result.msl=compiler.compile()+vertexSource();
+ // Inspect generated MSL (after macros/helpers), not raw GLSL substring guesses.
+ // Only shaders able to discard fragments require copying old output pixels.
+ result.discards=result.msl.find("discard_fragment")!=std::string::npos||result.msl.find("demote_to_helper")!=std::string::npos;
+ return result;
 }
 void put(std::vector<uint8_t>&bytes,const Uniform&u,unsigned index,double value){
  if(index>=u.rows*u.columns*u.arrayCount||!std::isfinite(value))return;
