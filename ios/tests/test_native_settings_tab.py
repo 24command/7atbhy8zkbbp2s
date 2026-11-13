@@ -50,7 +50,26 @@ class NativeSettingsTab(unittest.TestCase):
   native=(R/'PMNativeModSettings.inc').read_text(encoding='utf8')
   self.assertIn('"currentTab")!=nativeTabIndex',native)
   self.assertIn('"get_activeInHierarchy"',native)
-  self.assertIn('MOD settings revision 20261114-b',native)
+  self.assertIn('phimod::settingsRevision',native)
   scene=(R/'PMSceneUI.mm').read_text(encoding='utf8')
   self.assertIn('MOD optional preview mute:',scene)
+ def test_external_fourth_tab_routes_before_cleanup(self):
+  s=(R/'PMHookBackend.mm').read_text(encoding='utf8')
+  hook=s.split('void onSettingTab(',1)[1].split('void onSettingBack(',1)[0]
+  self.assertIn('if(pmscene::settingsTabRequest(R(),self,index))return;',hook)
+  self.assertNotIn('pmscene::settingsLeave',hook)
+  scene=(R/'PMSceneUI.mm').read_text(encoding='utf8')
+  route=scene.split('bool settingsTabRequest(',1)[1].split('void settingsLeave(',1)[0]
+  self.assertLess(route.index('SettingsTabRoute::KeepMod'),route.index('settingsLeave('))
+  self.assertIn('owner==target(r,settingRoot)',route)
+ def test_touch_fallback_and_loaded_build_identification(self):
+  native=(R/'PMNativeModSettings.inc').read_text(encoding='utf8')
+  for marker in ('pollModTabTouch','RectangleContainsScreenPoint','tabTap.finish','modTabPopupShowing','MOD page stable'):
+   self.assertIn(marker,native)
+  scene=(R/'PMSceneUI.mm').read_text(encoding='utf8')
+  self.assertIn('MOD page leave reason=',scene)
+  hook=(R/'PMHookBackend.mm').read_text(encoding='utf8')
+  self.assertIn('reportRuntimeBuild()',hook)
+  self.assertIn('image.dli_fname',hook)
+  self.assertIn('MOD settings update failed:',hook)
 if __name__=='__main__':unittest.main()

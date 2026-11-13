@@ -4,7 +4,8 @@ namespace pmscene {
 void selectorFrame(pmbridge::Runtime&,void*);
 void selectorOff(pmbridge::Runtime&);
 void settingsFrame(pmbridge::Runtime&,void*);
-void settingsLeave(pmbridge::Runtime&);
+void settingsLeave(pmbridge::Runtime&,const char* reason="external");
+bool settingsTabRequest(pmbridge::Runtime&,void* owner,int index);
 bool press(pmbridge::Runtime&,void*);
 bool ownsButton(void*);
 void resultRecovery(pmbridge::Runtime&,void*,const std::string&);

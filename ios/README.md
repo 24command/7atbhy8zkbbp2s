@@ -8,6 +8,10 @@ Start with [HP_PRACTICE_20261018.md](HP_PRACTICE_20261018.md) for this revision,
 build/test checklist, and [GAMEPLAY_UI_PORT.md](GAMEPLAY_UI_PORT.md) for scope
 and safety boundaries. Portable C++ cores were rebuilt and run with local MSVC. Source-contract, metadata, judge-patch, and real-image hook-gate checks have passed on Windows. This revision still needs the macOS Apple SDK build and real-device verification.
 
+## MOD fourth-tab routing / loaded-build diagnosis (2026-11-14)
+
+See [SETTINGS_ROUTE_20261114.md](SETTINGS_ROUTE_20261114.md): owner-aware tab routing, duplicate fourth-tab protection, native tab touch fallback and page-exit tracing. Builds now embed the GitHub SHA; runtime marker `settings-route-v4-20261114` identifies the actually loaded framework. No new hooks or reimport. Device switching still requires verification.
+
 ## Unlock-details button input / native slanted style (2026-11-14)
 
 See [UNLOCK_BUTTON_INPUT_20261114.md](UNLOCK_BUTTON_INPUT_20261114.md): native LeanPolygon parallelogram, precise single-touch fallback with drag/duplicate guards, and a retained original message box even if optional scrolling fails. No new hooks or reimport. Device click/scroll validation remains required.

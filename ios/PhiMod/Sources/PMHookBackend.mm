@@ -1,3 +1,4 @@
+#include "../Core/PMBuildInfo.hpp"
 #import "PMHookBackend.h"
 #import "PMSettings.h"
 #import "PMRuntime.h"
@@ -58,6 +59,12 @@ using JudgeFn=bool(*)(P,P);
 using PerfectFn=void(*)(P,float,float,V3,bool,P);
 void diagf(const char *format,...){
  char buffer[768];va_list args;va_start(args,format);vsnprintf(buffer,sizeof(buffer),format,args);va_end(args);PMDiagnosticsWrite(buffer);
+}
+void reportRuntimeBuild(){
+ Dl_info image{};dladdr(reinterpret_cast<const void*>(&reportRuntimeBuild),&image);
+ diagf("PhiMod runtime build=%s settings=%s compiled=%s %s image=%s",phimod::buildRevision,phimod::settingsRevision,__DATE__,__TIME__,image.dli_fname?image.dli_fname:"unknown");
+ unsigned copies=0;for(uint32_t i=0;i<_dyld_image_count();++i){const char*name=_dyld_get_image_name(i);const char*leaf=name?strrchr(name,'/'):nullptr;if(leaf&&!strcmp(leaf+1,"PhiMod")){++copies;diagf("PhiMod loaded image: %s",name);}}
+ if(copies>1)diagf("WARNING: %u PhiMod images loaded; check duplicate framework packaging",copies);
 }
 // Capture the synchronous controller responsible for a native Miss; no rule changes.
 P diagnosticJudgeControl=nullptr;unsigned missDiagnosticCount=0;
@@ -161,7 +168,7 @@ void onAwake(P self,P mi){
  if(!broken){
   try{guard.store(PMReadOptions([[PMSettings shared] snapshot]).requiresSaveProtection());}catch(const std::exception &e){fault(e);}
  }
-  try{release(progressRoot);release(scoreRoot);attempt.reset();resetChartRegistration();judgeUpdateSeen=false;pmscene::settingsLeave(R());pmscene::clearRecovery(R());pmhp::clear(R());pmmodes::clear(R());pmpractice::clear(R());}catch(const std::exception&e){fault(e);}
+  try{release(progressRoot);release(scoreRoot);attempt.reset();resetChartRegistration();judgeUpdateSeen=false;pmscene::settingsLeave(R(),"level-start");pmscene::clearRecovery(R());pmhp::clear(R());pmmodes::clear(R());pmpractice::clear(R());}catch(const std::exception&e){fault(e);}
    inResult=false;resultPresented=false;levelOverStarted=false;loadingMaskCleared=false;
  try{frozenOptions=PMReadOptions([[PMSettings shared] snapshot]);diagf("LevelControl.Awake options assisted=%d hp=%d hpMax=%.1f hpD=[%.1f,%.1f,%.1f,%.1f]",frozenOptions.assisted(),frozenOptions.hpEnabled,frozenOptions.hpMax,frozenOptions.hpDelta[0],frozenOptions.hpDelta[1],frozenOptions.hpDelta[2],frozenOptions.hpDelta[3]);if(!broken){pmhp::prepare(R(),self,frozenOptions);diagf("HP prepare ok active=%d normalized=%.3f",pmhp::active(),pmhp::normalized());pmmodes::prepare(R(),self,frozenOptions);pmpractice::prepare(R(),frozenOptions);diagf("Chart modes and practice prepare ok");}}catch(const std::exception&e){diagf("LevelControl.Awake prepare failed: %s",e.what());fault(e);}
  diagf("LevelControl.Awake calling original hpActive=%d",pmhp::active());
@@ -544,7 +551,7 @@ template<class F>bool contentBoundary(const char*stage,F&&work){
 }
 void onChapterStart(P self,P mi){
  // A MOD data failure must not prevent Unity's original chapter UI from starting.
- bool prepared=contentBoundary("Content chapter prepare failed",[&]{pmscene::settingsLeave(R());pmcontent::chapterPrepare(R(),self);});
+ bool prepared=contentBoundary("Content chapter prepare failed",[&]{pmscene::settingsLeave(R(),"chapter-start");pmcontent::chapterPrepare(R(),self);});
  orig<VoidFn>(h::chapterStart)(self,mi);
  if(prepared)contentBoundary("Content chapter layout failed",[&]{pmcontent::chapterReady(R(),self);});
  contentBoundary("Chapter unlock layout failed",[&]{pmunlock::chapterReady(R(),self);});
@@ -663,9 +670,9 @@ void onSelector(P self,P mi){
  contentBoundary("Selector loading",[&]{pmcontent::selectorLoadingFrame(R(),self);});
 }
 void onSelectorOff(P self,P mi){try{pmcontent::selectorLoadingEnd(R(),false);pmscene::selectorOff(R());pmunlock::clear(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::selectorOff)(self,mi);}
-void onSetting(P self,P mi){orig<VoidFn>(h::setting)(self,mi);try{pmunlock::clear(R());pmscene::settingsFrame(R(),self);}catch(const std::exception&e){lastError=e.what();}}
-void onSettingTab(P self,int index,P mi){try{pmscene::settingsLeave(R());}catch(const std::exception&e){lastError=e.what();}orig<void(*)(P,int,P)>(h::settingTab)(self,index,mi);}
-void onSettingBack(P self,P mi){try{pmscene::settingsLeave(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::settingBack)(self,mi);}
+void onSetting(P self,P mi){orig<VoidFn>(h::setting)(self,mi);static std::string previous;try{pmunlock::clear(R());pmscene::settingsFrame(R(),self);previous.clear();}catch(const std::exception&e){lastError=e.what();if(previous!=lastError){previous=lastError;diagf("MOD settings update failed: %s",e.what());}}}
+void onSettingTab(P self,int index,P mi){try{if(pmscene::settingsTabRequest(R(),self,index))return;}catch(const std::exception&e){lastError=e.what();diagf("MOD tab routing failed target=%d: %s",index,e.what());return;}orig<void(*)(P,int,P)>(h::settingTab)(self,index,mi);}
+void onSettingBack(P self,P mi){try{pmscene::settingsLeave(R(),"back-button");}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::settingBack)(self,mi);}
 bool dispatchModButton(P self){
  try{if(pmunlock::beforeResultContinue(R(),self))return true;}catch(const std::exception&e){diagf("Unlock result Continue: %s",e.what());}
  try{if(pmunlock::pressRequirement(R(),self))return true;}catch(const std::exception&e){diagf("Unlock details button: %s",e.what());return true;}
@@ -713,6 +720,7 @@ void onCheckFlick(P s,int f,P m){onCheck(s,f,m,h::checkFlick);}
 + (NSDictionary *)install {
  if(ready)return [self status];
  ++installAttempts;
+ if(installAttempts==1)reportRuntimeBuild();
  if(installAttempts<=3||installAttempts%10==0)diagf("PMHookBackend.install attempt=%u",installAttempts);
  @try{try{
   auto candidate=std::make_unique<Runtime>();candidate->open();candidate->mainGame();auto &r=*candidate;

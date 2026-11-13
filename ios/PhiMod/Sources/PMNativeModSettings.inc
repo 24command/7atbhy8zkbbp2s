@@ -2,6 +2,32 @@
 namespace {
 uint32_t nativeSettingsRoot=0;P nativeSettingsManager=nullptr;bool nativeAdvanced=false;
 struct NativeOption{P item;NSString*key;float last;bool slider;};std::vector<NativeOption>nativeOptions;std::map<P,int>nativeActions;
+phimod::UITapGate tabTap;P tabTouchOwner=nullptr;int nativeStableFrames=0;
+struct ModTabTouch{int finger;V2 position,raw,delta;float dt;int taps,phase,type;float pressure,maxPressure,radius,radiusVariance,altitude,azimuth;};
+static_assert(sizeof(ModTabTouch)==68,"Unity Touch payload");
+bool modTabContains(Runtime&r,V2 screen){
+ P graphic=r.call(tabButton,"get_targetGraphic");if(!r.alive(graphic))return false;
+ P canvas=r.call(graphic,"get_canvas");if(!r.alive(canvas))return false;
+ P camera=nullptr;if(r.enumValue(r.call(canvas,"get_renderMode"),"UnityEngine.RenderMode")!=0)camera=r.call(canvas,"get_worldCamera");
+ P rect=r.call(graphic,"get_rectTransform");
+ return r.unbox<bool>(r.stat(r.type("UnityEngine","RectTransformUtility"),"RectangleContainsScreenPoint",{"UnityEngine.RectTransform","UnityEngine.Vector2","UnityEngine.Camera"},{rect,&screen,camera}));
+}
+bool modTabPopupShowing(Runtime&r){
+ P dialogs=r.stat(r.type("UnityEngine","Object"),"FindObjectsOfType",{"System.Type"},{r.type_get_object(r.class_get_type(r.type("Phigros.UI","MsgBox")))});
+ for(uintptr_t i=0;dialogs&&i<r.array_length(dialogs);++i){P popup=r.arrayAt(dialogs,int(i));if(r.alive(popup)&&r.get<bool>(popup,"isShowing"))return true;}return false;
+}
+bool pollModTabTouch(Runtime&r,P self){
+ if(modEditorOpen||!r.alive(tabButton)||self!=target(r,settingRoot)||r.get<float>(self,"leaveTime")>0){tabTap.reset();return false;}
+ if(!r.unbox<bool>(r.call(tabButton,"IsActive"))||!r.unbox<bool>(r.call(tabButton,"IsInteractable"))){tabTap.reset();return false;}
+ P input=r.type("UnityEngine","Input");if(r.unbox<int>(r.stat(input,"get_touchCount"))!=1){tabTap.reset();return false;}
+ int zero=0;auto touch=r.unbox<ModTabTouch>(r.stat(input,"GetTouch",{"System.Int32"},{&zero}));
+ float width=r.unbox<int>(r.stat(r.type("UnityEngine","Screen"),"get_width")),slop=std::clamp(width*.012f,12.f,32.f);
+ if(touch.phase==0){if(modTabContains(r,touch.position)&&!modTabPopupShowing(r)){tabTap.begin(touch.finger,touch.position.x,touch.position.y);tabTouchOwner=self;PMDiagnosticsWrite("MOD tab touch began inside target");}else tabTap.reset();}
+ else if(touch.phase==4)tabTap.reset();
+ else if(touch.phase==3){bool inside=tabTouchOwner==self&&modTabContains(r,touch.position);return tabTap.finish(touch.finger,touch.position.x,touch.position.y,slop,inside)&&!modTabPopupShowing(r);}
+ else tabTap.move(touch.finger,touch.position.x,touch.position.y,slop);
+ return false;
+}
 bool nativeTabSwitch=false;int nativePreviousTab=0,nativeTabIndex=-1;uint32_t originalFrames=0,originalTabs=0,originalContents=0;
 void changeNativeTab(Runtime&r,P setting,int index){nativeTabSwitch=true;@try{r.call(setting,"ChangeTab",{"System.Int32"},{&index});}@finally{nativeTabSwitch=false;}}
 void clearNativeSettings(Runtime&r){
@@ -11,7 +37,7 @@ void clearNativeSettings(Runtime&r){
   r.put(setting,"frameAnimators",target(r,originalFrames));r.put(setting,"tabAnimators",target(r,originalTabs));r.put(setting,"tabScrollContents",target(r,originalContents));
  }
  for(uint32_t*h:{&originalFrames,&originalTabs,&originalContents})if(*h){r.gchandle_free(*h);*h=0;}nativeTabIndex=-1;
- nativeOptions.clear();nativeActions.clear();nativeSettingsManager=nullptr;nativeAdvanced=false;dispose(r,nativeSettingsRoot,true);
+ nativeStableFrames=0;tabTap.reset();nativeOptions.clear();nativeActions.clear();nativeSettingsManager=nullptr;nativeAdvanced=false;dispose(r,nativeSettingsRoot,true);
 }
 bool childPath(Runtime&r,P source,P node,std::vector<int>&path){for(int depth=0;node&&node!=source&&depth<32;++depth){path.push_back(r.unbox<int>(r.call(node,"GetSiblingIndex")));node=r.call(node,"get_parent");}return node==source;}
 P mappedTransform(Runtime&r,P source,P clone,P node){std::vector<int>path;if(!childPath(r,source,node,path))throw std::runtime_error("Settings template reference lies outside its frame");for(auto i=path.rbegin();i!=path.rend();++i){int index=*i;clone=r.call(clone,"GetChild",{"System.Int32"},{&index});}return clone;}
@@ -43,6 +69,10 @@ void makeNativeSettings(Runtime&r,P setting){
  if(!sourceFrame)throw std::runtime_error("Settings scroll frame not found");
  P sourceTransform=transform(r,sourceFrame),parent=r.call(sourceTransform,"get_parent");
  P root=clone(r,go(r,sourceFrame),parent,nativeSettingsRoot);active(r,root,false);
+ // Only the page visual/template is cloned. A copied Setting controller must
+ // never run native Update or take ownership of the live settings session.
+ P controllers=r.children(root,r.klass("Setting"));bool disabled=false;
+ for(uintptr_t i=0;controllers&&i<r.array_length(controllers);++i)r.call(r.arrayAt(controllers,int(i)),"set_enabled",{"System.Boolean"},{&disabled});
  try{
   P cloneTransform=transform(r,root);
   P scrollTransform=mappedTransform(r,sourceTransform,cloneTransform,transform(r,source));
@@ -81,7 +111,7 @@ void makeNativeSettings(Runtime&r,P setting){
   P group=r.component(root,r.type("UnityEngine","CanvasGroup"));
   if(r.alive(group)){bool yes=true;float alpha=1;r.call(group,"set_alpha",{"System.Single"},{&alpha});r.call(group,"set_interactable",{"System.Boolean"},{&yes});r.call(group,"set_blocksRaycasts",{"System.Boolean"},{&yes});}
   if(r.get<int>(setting,"currentTab")!=nativeTabIndex||!r.unbox<bool>(r.call(root,"get_activeInHierarchy")))throw std::runtime_error("Native MOD tab did not become active");
-  PMDiagnosticsWrite("MOD settings revision 20261114-b: native tab=3 active; no Canvas projection");
+  PMDiagnosticsWrite((std::string("MOD page active: ")+phimod::settingsRevision+" build="+phimod::buildRevision+" nativeTab=3").c_str());
   PMDiagnosticsWrite("MOD native fourth settings tab created: distinct viewport/content/itemsHolder");
  }catch(...){clearNativeSettings(r);throw;}
 }
@@ -89,6 +119,10 @@ void pollNativeSettings(Runtime&r){
  P root=target(r,nativeSettingsRoot);if(!r.alive(root))return;
  PMModEditor*editor=[PMModEditor shared];if(nativeAdvanced&&editor.hidden){nativeAdvanced=false;active(r,root,true);for(auto&option:nativeOptions){float value=[[[PMSettings shared]value:option.key]floatValue];if(option.slider)r.call(option.item,"set_Value",{"System.Single"},{&value});else{bool on=value!=0;r.call(option.item,"set_Value",{"System.Boolean"},{&on});}option.last=value;}}
  if(nativeAdvanced)return;
+ if(++nativeStableFrames==2)try{
+  P owner=target(r,settingRoot),tr=transform(r,root);Rect rect=r.unbox<Rect>(r.call(tr,"get_rect"));V2 position=r.unbox<V2>(r.call(tr,"get_anchoredPosition"));
+  char message[256];snprintf(message,sizeof(message),"MOD page stable: tab=%d active=%d pos=%.1f,%.1f size=%.1f,%.1f options=%lu",r.get<int>(owner,"currentTab"),r.unbox<bool>(r.call(root,"get_activeInHierarchy")),position.x,position.y,rect.w,rect.h,(unsigned long)nativeOptions.size());PMDiagnosticsWrite(message);
+ }catch(const std::exception&e){PMDiagnosticsWrite((std::string("MOD page diagnostic: ")+e.what()).c_str());}
  r.call(nativeSettingsManager,"RefreshPosition");
  for(auto&option:nativeOptions){float value=option.slider?r.unbox<float>(r.call(option.item,"get_Value")):(r.unbox<bool>(r.call(option.item,"get_Value"))?1.f:0.f);if(std::fabs(value-option.last)<.0001f)continue;NSString*error=nil;if([[PMSettings shared]setValue:@(value) forKey:option.key error:&error])option.last=value;else{float old=option.last;if(option.slider)r.call(option.item,"set_Value",{"System.Single"},{&old});else{bool on=old!=0;r.call(option.item,"set_Value",{"System.Boolean"},{&on});}PMDiagnosticsWrite(error.UTF8String);}}
 }

@@ -9,6 +9,9 @@
 #import "PMHookBackend.h"
 #import "PMContentUI.h"
 #include "PMContentRuntime.hpp"
+#include "../Core/PMSettingsTabRoute.hpp"
+#include "../Core/PMUIInteraction.hpp"
+#include "../Core/PMBuildInfo.hpp"
 #include <algorithm>
 #include <array>
 #include <map>
@@ -170,11 +173,19 @@ void projectTab(Runtime&r){P tab=target(r,tabRoot);if(!r.alive(tab))return;P txt
 namespace pmscene {
 using namespace sceneimpl;
 #include "PMNativeModSettings.inc"
-void settingsLeave(Runtime&r){if(nativeTabSwitch)return;restore(r,hidden,"SetActive");clearNativeSettings(r);restore(r,animations,"set_enabled");restore(r,mutes,"set_mute");modEditorOpen=false;[[PMModEditor shared] cancel];
+bool settingsTabRequest(Runtime&r,void*owner,int index){
+ auto route=phimod::settingsTabRoute(owner==target(r,settingRoot),nativeTabSwitch,modEditorOpen,index);
+ if(route==phimod::SettingsTabRoute::Original)return false;
+ char message[160];snprintf(message,sizeof(message),"MOD tab request: target=%d active=%d route=%d",index,modEditorOpen,int(route));PMDiagnosticsWrite(message);
+ if(route==phimod::SettingsTabRoute::KeepMod)return true;
+ if(route==phimod::SettingsTabRoute::OpenMod){if(tabButton)press(r,tabButton);return true;}
+ settingsLeave(r,"native-tab");return false;
+}
+void settingsLeave(Runtime&r,const char*reason){if(nativeTabSwitch)return;tabTap.reset();if(modEditorOpen)PMDiagnosticsWrite((std::string("MOD page leave reason=")+reason).c_str());restore(r,hidden,"SetActive");clearNativeSettings(r);restore(r,animations,"set_enabled");restore(r,mutes,"set_mute");modEditorOpen=false;[[PMModEditor shared] cancel];
  P owner=target(r,settingRoot);if(r.alive(owner)){P tabs=r.get<P>(owner,"tabAnimators");int index=r.get<int>(owner,"currentTab");if(tabs&&index>=0&&uintptr_t(index)<r.array_length(tabs)){P tr=transform(r,r.arrayAt(tabs,index)),slider=r.get<P>(owner,"sliderController");V2 pos=r.unbox<V2>(r.call(tr,"get_anchoredPosition")),size=r.unbox<V2>(r.call(tr,"get_sizeDelta"));if(slider)r.call(slider,"MoveTo",{"System.Single","System.Single"},{&pos.x,&size.x});}}
 }
 void selectorOff(Runtime&r){clearSelector(r);}
-void selectorFrame(Runtime&r,P self){runtime=&r;if(modEditorOpen)settingsLeave(r);if(settingRoot){dispose(r,tabRoot,true);dispose(r,settingRoot,false);tabButton=tabText=nullptr;}
+void selectorFrame(Runtime&r,P self){runtime=&r;if(modEditorOpen)settingsLeave(r,"selector-active");if(settingRoot){dispose(r,tabRoot,true);dispose(r,settingRoot,false);tabButton=tabText=nullptr;}
  if(target(r,selectorRoot)!=self)makeSelector(r,self);if(!built)return;
  NSDictionary*s=[[PMSettings shared] snapshot];bool visible=[s[@"showShortcuts"] boolValue]&&r.unbox<bool>(r.call(go(r,mirrorTransform),"get_activeInHierarchy"))&&!r.get<bool>(self,"exit");
  V3 position=r.unbox<V3>(r.call(mirrorTransform,"get_localPosition")),scale=r.unbox<V3>(r.call(mirrorTransform,"get_localScale"));
@@ -211,6 +222,7 @@ P makeModTabHitTarget(Runtime&r,P tab){
  try{
   r.call(hit,".ctor",{"System.String"},{r.string_new("PhiModTabHitTarget")});
   auto add=[&](const char*ns,const char*name){return r.call(hit,"AddComponent",{"System.Type"},{r.type_get_object(r.class_get_type(r.type(ns,name)))});};
+  int layer=r.unbox<int>(r.call(tab,"get_layer"));r.call(hit,"set_layer",{"System.Int32"},{&layer});
   P rect=add("UnityEngine","RectTransform");bool no=false,yes=true;
   r.call(rect,"SetParent",{"UnityEngine.Transform","System.Boolean"},{transform(r,tab),&no});
   V2 zero{0,0},one{1,1};r.call(rect,"set_anchorMin",{"UnityEngine.Vector2"},{&zero});r.call(rect,"set_anchorMax",{"UnityEngine.Vector2"},{&one});
@@ -231,7 +243,7 @@ void reportModTabFailure(NSString*message){
 }
 void settingsFrame(Runtime&r,P self){runtime=&r;
  if(target(r,settingRoot)!=self){
-  settingsLeave(r);dispose(r,tabRoot,true);dispose(r,settingRoot,false);
+  settingsLeave(r,"settings-owner-change");dispose(r,tabRoot,true);dispose(r,settingRoot,false);
   settingRoot=r.gchandle_new(self,false);tabButton=tabText=nullptr;tabFailed=false;
  }
  if(tabFailed)return;
@@ -253,7 +265,7 @@ void settingsFrame(Runtime&r,P self){runtime=&r;
    emptyClick(r,button);bool no=false;r.call(button,"set_enabled",{"System.Boolean"},{&no});
    button=makeModTabHitTarget(r,obj);r.text(text,"MOD");active(r,obj,true);
    P tabLayout=r.component(go(r,parent),r.klass("SettingTabController"));if(r.alive(tabLayout))r.call(tabLayout,"Refresh");
-   PMDiagnosticsWrite("MOD tab native layout and independent raycast target ready");
+   PMDiagnosticsWrite((std::string("MOD tab input ready: ")+phimod::settingsRevision+" build="+phimod::buildRevision).c_str());
    // Publish the click target only after the entire clone is usable.
    tabButton=button;tabText=text;
   }catch(...){
@@ -273,11 +285,12 @@ void settingsFrame(Runtime&r,P self){runtime=&r;
  }
  bool enabled=r.get<float>(self,"leaveTime")<=0;r.call(tabButton,"set_interactable",{"System.Boolean"},{&enabled});
  r.text(tabText,"MOD");
- PMModEditor*editor=[PMModEditor shared];if(modEditorOpen&&editor.hidden&&!nativeSettingsRoot){settingsLeave(r);return;}
+ PMModEditor*editor=[PMModEditor shared];if(modEditorOpen&&editor.hidden&&!nativeSettingsRoot){settingsLeave(r,"missing-native-page");return;}
+ if(!modEditorOpen&&pollModTabTouch(r,self)){PMDiagnosticsWrite("MOD tab touch fallback activation");press(r,tabButton);}
  if(modEditorOpen&&nativeSettingsRoot)pollNativeSettings(r);
  if(!modEditorOpen)return;
  for(auto&entry:hidden){P obj=target(r,entry.first);if(r.alive(obj)&&r.unbox<bool>(r.call(obj,"get_activeSelf"))){bool no=false;r.call(obj,"SetActive",{"System.Boolean"},{&no});}}
- if(!r.unbox<bool>(r.call(go(r,self),"get_activeInHierarchy"))||r.get<float>(self,"leaveTime")>0){settingsLeave(r);return;}
+ if(!r.unbox<bool>(r.call(go(r,self),"get_activeInHierarchy"))||r.get<float>(self,"leaveTime")>0){settingsLeave(r,"settings-window-exit");return;}
  if(editor.saveRequested){editor.saveRequested=NO;NSDictionary*before=[[PMSettings shared] snapshot];NSDictionary*d=[editor.draft copy];NSString*validationError=nil;if(![[PMSettings shared] validateSnapshot:d error:&validationError]){editor.status.text=validationError;return;}BOOL change=[d[@"enabled"] boolValue]!=[before[@"enabled"] boolValue]||[d[@"perfect"] doubleValue]!=[before[@"perfect"] doubleValue]||[d[@"good"] doubleValue]!=[before[@"good"] doubleValue];
   if(change&&([d[@"enabled"] boolValue]||[before[@"enabled"] boolValue])){NSDictionary*out=[PMRuntime applyJudgeSettings:[d[@"enabled"] boolValue] perfectMs:[d[@"perfect"] doubleValue] goodMs:[d[@"good"] doubleValue]];if(![out[@"ok"] boolValue]){editor.status.text=out[@"message"];return;}}
   NSString*error=nil;if(![[PMSettings shared] replaceConfiguration:d error:&error]){editor.status.text=error;return;}BOOL mainlineChanged=[d[@"mainlineUnlock"] boolValue]!=[before[@"mainlineUnlock"] boolValue];if(mainlineChanged){try{pmcontent::refreshMainlineAccess(r);}catch(const std::exception&e){editor.status.text=[NSString stringWithFormat:@"Saved; mainline refresh deferred: %s",e.what()];return;}}editor.status.text=@"Saved. Gameplay modes apply on next chart; judge verified immediately.";
@@ -297,8 +310,8 @@ bool press(Runtime&r,P button){if(pressNativeSetting(r,button))return true;auto 
   // Optional preview muting must not roll back an already-visible native page.
   for(const char*name:{"audioSource1","audioSource2"})try{P src=r.get<P>(self,name);if(r.alive(src)){P audio=r.get<P>(src,"audioSource");if(r.alive(audio))stash(r,mutes,audio,"get_mute","set_mute",true);}}catch(const std::exception&e){PMDiagnosticsWrite((std::string("MOD optional preview mute: ")+e.what()).c_str());}
   // Native page uses Unity layout, not the optional UIKit advanced-panel anchor.
- }catch(const std::exception&e){NSString*message=[NSString stringWithFormat:@"MOD settings: %s",e.what()];settingsLeave(r);reportModTabFailure(message);}}
- @catch(NSException*e){NSString*message=[NSString stringWithFormat:@"MOD settings: %@",e.reason];settingsLeave(r);reportModTabFailure(message);}return true;
+ }catch(const std::exception&e){NSString*message=[NSString stringWithFormat:@"MOD settings: %s",e.what()];settingsLeave(r,"page-create-failed");reportModTabFailure(message);}}
+ @catch(NSException*e){NSString*message=[NSString stringWithFormat:@"MOD settings: %@",e.reason];settingsLeave(r,"page-create-failed");reportModTabFailure(message);}return true;
 }
 
 namespace {uint32_t recoveryRoot=0;UIAlertController*recoveryAlert=nil;}
