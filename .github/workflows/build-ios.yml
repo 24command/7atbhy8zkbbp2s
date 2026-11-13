@@ -64,7 +64,7 @@ jobs:
         run: |
           file "$RUNNER_TEMP/out/PhiMod.framework/PhiMod"
           xcrun lipo -info "$RUNNER_TEMP/out/PhiMod.framework/PhiMod"
-          xcrun lipo -verify_arch arm64 "$RUNNER_TEMP/out/PhiMod.framework/PhiMod"
+          xcrun lipo "$RUNNER_TEMP/out/PhiMod.framework/PhiMod" -verify_arch arm64
           codesign --verify --verbose "$RUNNER_TEMP/out/PhiMod.framework"
           python3 - "$RUNNER_TEMP/out/PhiMod.framework/PhiMod" <<'PY'
           import sys
