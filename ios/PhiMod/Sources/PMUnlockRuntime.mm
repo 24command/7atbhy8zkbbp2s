@@ -1,4 +1,5 @@
 #include "PMUnlockRuntime.hpp"
+#include "../Core/PMUIInteraction.hpp"
 #import "PMContentStore.h"
 #import "PMUnlockRules.h"
 #import "PMUnlockProgress.h"
@@ -457,7 +458,7 @@ bool blockChallengeButton(Runtime&r,void*raw){
  return false;
 }
 bool ownsRequirementButton(void*button){return button&&button==requirementButton;}
-bool pressRequirement(Runtime&r,void*button){if(!ownsRequirementButton(button))return false;if(lockUIBlocked&&lockUIDetails.length)openRequirementPopup(r,lockUIDetails);return true;}
+bool pressRequirement(Runtime&r,void*button){if(!ownsRequirementButton(button))return false;activateRequirement(r,"native-button");return true;}
 void refreshListLocks(Runtime&r,P selector){
  static P last=nullptr;static int lastSlot=-1,lastCount=-1;static NSUInteger lastRev=NSUIntegerMax;static double lastTime=0;static std::map<P,std::pair<bool,bool>>cache;
  P items=r.call(selector,"get_SongItems");int slot=r.get<int>(selector,"nowLevel");if(slot<0||slot>3)return;
@@ -473,12 +474,13 @@ void refreshListLocks(Runtime&r,P selector){
  }
 }
 void tick(Runtime&r,void*selector){
- if(!selector||r.get<bool>((P)selector,"exit")){menuActive=false;return;}
+ if(!selector||r.get<bool>((P)selector,"exit")){requirementTap.reset();requirementVisible=false;menuActive=false;return;}
  double now=NSDate.timeIntervalSinceReferenceDate;
  try{P challenge=r.get<P>((P)selector,"challengeSongSelectorControl");if(r.alive(challenge)){
   for(const char*field:{"selectButton","playButton"}){P button=r.get<P>(challenge,field);if(r.alive(button)&&blockChallengeButton(r,button))disableChallengeButton(r,button);}
  }}catch(const std::exception&e){logf("Challenge access UI: %s",e.what());}
  try{refreshListLocks(r,(P)selector);songLockUI(r,(P)selector,now);}catch(const std::exception&e){if(now-lastScan>=1)logf("Song unlock UI failed: %s",e.what());}
+ try{pollRequirementInput(r,(P)selector);}catch(const std::exception&e){requirementTap.reset();if(now-lastScan>=1)logf("Unlock details input: %s",e.what());}
  if(now-lastScan<1)return;lastScan=now;enqueueReveals(r);
 }
 

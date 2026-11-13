@@ -25,4 +25,30 @@ class SelectorDetails(unittest.TestCase):
 
   u=(ROOT/'PhiMod/Sources/PMUnlockRuntime.mm').read_text(encoding='utf-8');self.assertIn('showRequirementButton(r,tip,details)',u)
   self.assertIn('lockUIDetails=[tips componentsJoinedByString:@"\\n\\n"]',u)
+ def test_native_polygon_and_scoped_touch_fallback(self):
+  s=(ROOT/'PhiMod/Sources/PMUnlockDetails.inc').read_text(encoding='utf-8')
+  self.assertIn('"Lean.Gui","LeanPolygon"',s)
+  self.assertIn('float fill=-1,blur=1',s)
+  self.assertIn('"get_InverseSlope"',s)
+  self.assertIn('"ScreenPointToLocalPointInRectangle"',s)
+  self.assertIn('"UnityEngine.Vector2&"',s)
+  self.assertIn('r.unbox<RequirementTouch>',s)
+  self.assertIn('if(count!=1){requirementTap.reset();return;}',s)
+  self.assertIn('requirementTap.finish(',s)
+  self.assertIn('requirementTouchItem==lockUIItem&&requirementTouchSlot==lockUISlot',s)
+  self.assertIn('activateRequirement(r,"touch-fallback")',s)
+  runtime=(ROOT/'PhiMod/Sources/PMUnlockRuntime.mm').read_text(encoding='utf-8')
+  self.assertIn('pollRequirementInput(r,(P)selector)',runtime)
+ def test_native_popup_is_not_cancelled_by_scroll_enhancement(self):
+  s=(ROOT/'PhiMod/Sources/PMUnlockDetails.inc').read_text(encoding='utf-8')
+  layout=s.split('void prepareRequirementScroll(',1)[1].split('void pollRequirementDialog(',1)[0]
+  self.assertNotIn('r.call(popup,"Cancel")',layout)
+  self.assertIn('native dialog retained',layout)
+  self.assertIn('r.gchandle_new(task,false)',s)
+  self.assertIn('requirementSeenShowing',s)
+  self.assertIn('requirementPopupSince>2',s)
+  self.assertIn('"ShowOkMessageBox"',s)
+  opening=s.split('void openRequirementPopup(',1)[1].split('void activateRequirement(',1)[0]
+  self.assertNotIn('prepareRequirementScroll(',opening)
+  self.assertNotIn('"RefreshElements"',opening)
 if __name__=='__main__':unittest.main()
