@@ -31,4 +31,13 @@ class NativeSettingsTab(unittest.TestCase):
  def test_paths_resolved_before_removing_template_children(self):
   s=(R/'PMNativeModSettings.inc').read_text(encoding='utf8')
   self.assertLess(s.index('for(const char*field:{"previewNoteHolder"'),s.index('r.call(holder,"get_childCount")'))
+ def test_independent_hit_surface_and_visible_failure(self):
+  s=(R/'PMSceneUI.mm').read_text(encoding='utf8')
+  self.assertIn('button=makeModTabHitTarget(r,obj)',s)
+  self.assertIn('PhiModTabHitTarget',s)
+  self.assertIn('"set_raycastTarget"',s)
+  self.assertIn('"set_ignoreParentGroups"',s)
+  self.assertIn('"set_maskable"',s)
+  self.assertIn('reportModTabFailure(message)',s)
+  self.assertIn('MOD tab click received',s)
 if __name__=='__main__':unittest.main()

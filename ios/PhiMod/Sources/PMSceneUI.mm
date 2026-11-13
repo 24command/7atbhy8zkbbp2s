@@ -203,6 +203,32 @@ void selectorFrame(Runtime&r,P self){runtime=&r;if(modEditorOpen)settingsLeave(r
   if(i==3){int mode=[s[@"challenge"] intValue];if(it.display!=mode){r.text(it.text,mode==1?"AP":mode==2?"FC":"AP / FC");it.display=mode;}}
  }
 }
+// Keep hit testing separate from the cloned tab Animator's graphic tracks.
+// The native third tab may have disabled/masked decorative graphics; copying
+// its label alone does not guarantee a valid fourth Button raycast surface.
+P makeModTabHitTarget(Runtime&r,P tab){
+ P hit=r.object_new(r.type("UnityEngine","GameObject"));uint32_t root=r.gchandle_new(hit,false);
+ try{
+  r.call(hit,".ctor",{"System.String"},{r.string_new("PhiModTabHitTarget")});
+  auto add=[&](const char*ns,const char*name){return r.call(hit,"AddComponent",{"System.Type"},{r.type_get_object(r.class_get_type(r.type(ns,name)))});};
+  P rect=add("UnityEngine","RectTransform");bool no=false,yes=true;
+  r.call(rect,"SetParent",{"UnityEngine.Transform","System.Boolean"},{transform(r,tab),&no});
+  V2 zero{0,0},one{1,1};r.call(rect,"set_anchorMin",{"UnityEngine.Vector2"},{&zero});r.call(rect,"set_anchorMax",{"UnityEngine.Vector2"},{&one});
+  r.call(rect,"set_sizeDelta",{"UnityEngine.Vector2"},{&zero});r.call(rect,"set_anchoredPosition",{"UnityEngine.Vector2"},{&zero});
+  P image=add("UnityEngine.UI","Image");color(r,image,{1,1,1,0});
+  r.call(image,"set_maskable",{"System.Boolean"},{&no});r.call(image,"set_raycastTarget",{"System.Boolean"},{&yes});
+  P group=add("UnityEngine","CanvasGroup");r.call(group,"set_ignoreParentGroups",{"System.Boolean"},{&yes});
+  P button=add("UnityEngine.UI","Button");r.call(button,"set_targetGraphic",{"UnityEngine.UI.Graphic"},{image});emptyClick(r,button);
+  r.gchandle_free(root);return button;
+ }catch(...){r.gchandle_free(root);throw;}
+}
+void reportModTabFailure(NSString*message){
+ PMDiagnosticsWrite(message.UTF8String);
+ UIViewController*host=window().rootViewController;while(host.presentedViewController)host=host.presentedViewController;
+ UIAlertController*alert=[UIAlertController alertControllerWithTitle:@"MOD" message:message preferredStyle:UIAlertControllerStyleAlert];
+ [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+ [host presentViewController:alert animated:YES completion:nil];
+}
 void settingsFrame(Runtime&r,P self){runtime=&r;
  if(target(r,settingRoot)!=self){
   settingsLeave(r);dispose(r,tabRoot,true);dispose(r,settingRoot,false);
@@ -224,7 +250,10 @@ void settingsFrame(Runtime&r,P self){runtime=&r;
    P button=first(r,obj,r.type("UnityEngine.UI","Button"));
    P text=first(r,obj,r.type("UnityEngine.UI","Text"));
    if(!button||!text)throw std::runtime_error("Setting tab prefab mismatch");
-   emptyClick(r,button);r.text(text,"MOD");active(r,obj,true);
+   emptyClick(r,button);bool no=false;r.call(button,"set_enabled",{"System.Boolean"},{&no});
+   button=makeModTabHitTarget(r,obj);r.text(text,"MOD");active(r,obj,true);
+   P tabLayout=r.component(go(r,parent),r.klass("SettingTabController"));if(r.alive(tabLayout))r.call(tabLayout,"Refresh");
+   PMDiagnosticsWrite("MOD tab native layout and independent raycast target ready");
    // Publish the click target only after the entire clone is usable.
    tabButton=button;tabText=text;
   }catch(...){
@@ -258,6 +287,7 @@ void settingsFrame(Runtime&r,P self){runtime=&r;
 bool ownsButton(P button){return button&&(buttons.count(button)||button==tabButton||nativeActions.count(button));}
 bool press(Runtime&r,P button){if(pressNativeSetting(r,button))return true;auto found=buttons.find(button);if(found!=buttons.end()){int i=found->second;P owner=target(r,selectorRoot);if(!r.alive(owner)||r.get<bool>(owner,"exit")||r.get<bool>(owner,"isMoving"))return true;NSString*key=keys[i];NSInteger old=[[[PMSettings shared] value:key] integerValue];NSNumber*value=i==2?@((old+1)%5):i==3?@((old+1)%3):@(!old);NSString*error=nil;[[PMSettings shared] setValue:value forKey:key error:&error];return true;}
  if(button!=tabButton)return false;P self=target(r,settingRoot);if(!r.alive(self))return true;if(modEditorOpen)return true;
+ PMDiagnosticsWrite("MOD tab click received; creating native fourth page");
  modEditorOpen=true;
  @try{try{
   makeNativeSettings(r,self);
@@ -266,8 +296,8 @@ bool press(Runtime&r,P button){if(pressNativeSetting(r,button))return true;auto 
   P frames=target(r,originalFrames);for(int i=0;frames&&i<(int)r.array_length(frames);++i)stash(r,hidden,go(r,r.arrayAt(frames,i)),"get_activeSelf","SetActive",false);
   for(const char*name:{"audioSource1","audioSource2"}){P src=r.get<P>(self,name);if(src)stash(r,mutes,r.get<P>(src,"audioSource"),"get_mute","set_mute",true);}
   projectTab(r);
- }catch(const std::exception&e){PMDiagnosticsWrite(e.what());settingsLeave(r);throw;}}
- @catch(NSException*e){PMDiagnosticsWrite([NSString stringWithFormat:@"MOD settings creation exception: %@",e.reason].UTF8String);settingsLeave(r);throw std::runtime_error(e.reason.UTF8String?:"MOD settings creation failed");}return true;
+ }catch(const std::exception&e){NSString*message=[NSString stringWithFormat:@"MOD settings: %s",e.what()];settingsLeave(r);reportModTabFailure(message);}}
+ @catch(NSException*e){NSString*message=[NSString stringWithFormat:@"MOD settings: %@",e.reason];settingsLeave(r);reportModTabFailure(message);}return true;
 }
 
 namespace {uint32_t recoveryRoot=0;UIAlertController*recoveryAlert=nil;}

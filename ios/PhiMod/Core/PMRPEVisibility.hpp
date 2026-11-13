@@ -2,6 +2,13 @@
 #include <algorithm>
 #include <cmath>
 namespace phimod {
+struct RpeVisualValues{double floor,endFloor,raw,yOffset,size,alpha,visible;};
+inline bool rpeVisibleAt(const RpeVisualValues&n,double now,double start,bool lineHidden){return start-now<=n.visible&&n.alpha>0&&!lineHidden;}
+// End-time ordering avoids revisiting retired notes and supports backwards seeks.
+// This is NOT a future-time cutoff: all still-live performances remain candidates.
+template<class Container> auto rpeFirstUnexpired(const Container&notes,double cutoff){
+ return std::lower_bound(notes.begin(),notes.end(),cutoff,[](const auto&n,double t){return n.end<t;});
+}
 struct RpePlanePose{double x=0,y=0,xx=1,xy=0,yx=0,yy=1;};
 // Android rpeVisualNear: test the authored geometry AFTER the line transform.
 // Long holds can cross the viewport even if both caps are outside it.

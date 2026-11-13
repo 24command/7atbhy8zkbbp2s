@@ -7,6 +7,7 @@
 #include "../Core/PMShaderSource.hpp"
 #include "../Core/PMFullShaderCompiler.hpp"
 #include <atomic>
+#include <cstring>
 #include <mutex>
 #include <memory>
 #include <map>
@@ -16,7 +17,7 @@
 #include "../Vendor/phira-shaders/rpe_shader_presets.h"
 namespace {
 struct Effect {int index=0;double start=0,end=0;bool global=false,range=false;std::string name;pmshader::Source source;pmfullshader::Program full;bool fullCompiler=false;std::vector<uint8_t>defaultUniforms,uniformScratch;std::map<std::string,std::array<std::vector<pmshader::Key>,4>>tracks;id<MTLLibrary> library=nil;std::map<NSUInteger,id<MTLRenderPipelineState>>pipelines;};
-struct Scratch {std::atomic<bool>busy{false};id<MTLTexture>a=nil,b=nil;};
+struct Scratch {std::atomic<bool>busy{false};id<MTLTexture>a=nil,b=nil;std::map<int,id<MTLBuffer>>uniformBuffers;};
 struct Session {NSMutableArray*compatibility=[NSMutableArray new];NSString*reportPath=nil;id<MTLSamplerState>sampler=nil;std::vector<Effect>effects;std::array<std::shared_ptr<Scratch>,3>scratch{std::make_shared<Scratch>(),std::make_shared<Scratch>(),std::make_shared<Scratch>()};};
 std::mutex stateLock;
 std::shared_ptr<Session> current;
@@ -48,12 +49,15 @@ void render(id<MTLCommandBuffer>buffer,id<MTLDrawable>drawable){
  id<MTLTexture>target=metal.texture;
  if(target.framebufferOnly){if(logged.insert("framebuffer").second)report(@"Shader deferred: drawable remains framebufferOnly");return;}
  @try {
-  MTLTextureDescriptor*d=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:target.pixelFormat width:target.width height:target.height mipmapped:NO];d.storageMode=MTLStorageModePrivate;d.usage=MTLTextureUsageShaderRead|MTLTextureUsageRenderTarget;
   std::shared_ptr<Scratch>scratch;
   for(auto&candidate:current->scratch){bool expected=false;if(candidate->busy.compare_exchange_strong(expected,true)){scratch=candidate;break;}}
   if(!scratch)return; // Never block the render thread waiting for the GPU.
-  if(!scratch->a||scratch->a.width!=target.width||scratch->a.height!=target.height||scratch->a.pixelFormat!=target.pixelFormat){scratch->a=[device newTextureWithDescriptor:d];scratch->b=nil;}
-  if(active.size()>1&&!scratch->b)scratch->b=[device newTextureWithDescriptor:d];
+  bool resized=!scratch->a||scratch->a.width!=target.width||scratch->a.height!=target.height||scratch->a.pixelFormat!=target.pixelFormat;
+  if(resized||(active.size()>1&&!scratch->b)){
+   MTLTextureDescriptor*d=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:target.pixelFormat width:target.width height:target.height mipmapped:NO];d.storageMode=MTLStorageModePrivate;d.usage=MTLTextureUsageShaderRead|MTLTextureUsageRenderTarget;
+   if(resized){scratch->a=[device newTextureWithDescriptor:d];scratch->b=nil;}
+   if(active.size()>1&&!scratch->b)scratch->b=[device newTextureWithDescriptor:d];
+  }
   id<MTLTexture>a=scratch->a,b=scratch->b;
   [buffer addCompletedHandler:^(id<MTLCommandBuffer>){scratch->busy=false;}];
   if(!a||(active.size()>1&&!b)){if(logged.insert("allocation").second)report(@"Shader skipped: Metal scratch texture allocation failed");return;}
@@ -77,7 +81,7 @@ void render(id<MTLCommandBuffer>buffer,id<MTLDrawable>drawable){
      for(unsigned channel=0;channel<std::min(4u,uniform.rows*uniform.columns*uniform.arrayCount);++channel)pmfullshader::put(bytes,uniform,channel,pmshader::sample(track->second[channel],now,channel<uniform.defaults.size()?uniform.defaults[channel]:0));
     }
     if(bytes.size()<=4096)[encoder setFragmentBytes:bytes.data() length:bytes.size() atIndex:0];
-    else{id<MTLBuffer>uniformBuffer=[device newBufferWithBytes:bytes.data() length:bytes.size() options:MTLResourceStorageModeShared];if(!uniformBuffer){[encoder endEncoding];return;}[encoder setFragmentBuffer:uniformBuffer offset:0 atIndex:0];}
+    else{auto&uniformBuffer=scratch->uniformBuffers[e.index];if(!uniformBuffer||uniformBuffer.length<bytes.size())uniformBuffer=[device newBufferWithLength:bytes.size() options:MTLResourceStorageModeShared];if(!uniformBuffer){[encoder endEncoding];return;}memcpy(uniformBuffer.contents,bytes.data(),bytes.size());[encoder setFragmentBuffer:uniformBuffer offset:0 atIndex:0];}
     [encoder setFragmentSamplerState:current->sampler atIndex:0];
    }else [encoder setFragmentBytes:&params length:sizeof(params) atIndex:0];[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];[encoder endEncoding];input=output;
   }

@@ -14,11 +14,23 @@ class SourceVisibility(unittest.TestCase):
  def test_fake_and_real_share_geometry_gate(self):
   s=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text(encoding='utf8')
   self.assertNotIn('.start-8<=now',s)
-  self.assertIn('sourceVisualNear(r,pose->second,f.note',s)
+  self.assertIn('sourceVisualNear(r,pose->second,f.visual',s)
   near=s.split('bool sourceVisualNear(',1)[1].split('void recoverSourceNotes(',1)[0]
-  for name in ('pmVisible','pmAlpha','sourceNotesHidden','rpeCovered','rpeGeometry','rpeHorizontalPosition','alphaControl','yControl','sizeControl'):
+  for name in ('rpeVisibleAt','rpeCovered','rpeGeometry','rpeHorizontalPosition','alphaControl','yControl','sizeControl'):
    self.assertIn(name,near)
  def test_source_time_cache_reset_at_teardown(self):
   s=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text(encoding='utf8')
   self.assertIn('sourceCandidates.clear();sourceCandidatesReady=false;',s)
+ def test_cached_scheduler_preserves_far_future_and_rewind(self):
+  s=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text(encoding='utf8')
+  block=s.split('void recoverSourceNotes(',1)[1].split('void visuals(',1)[0]
+  self.assertIn('rpeFirstUnexpired(sourceCandidates,now-.25)',block)
+  self.assertIn('sourceVisual(n)',block)
+  self.assertIn('if(controlObject&&r.get<bool>(controlObject,"isVisible"))continue;',block)
+  self.assertIn('int previousCount=r.count(controls)',block)
+  near=s.split('bool sourceVisualNear(',1)[1].split('void recoverSourceNotes(',1)[0]
+  self.assertNotIn('scalar(',near)
+  self.assertNotIn('notePerspectiveWidth(',near)
+  self.assertNotIn('trackValue(',near)
+  self.assertNotIn('if(start>now+8)',block)
 if __name__=='__main__':unittest.main()

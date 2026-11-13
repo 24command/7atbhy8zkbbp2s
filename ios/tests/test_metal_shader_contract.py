@@ -21,4 +21,12 @@ class MetalShaderContract(unittest.TestCase):
  def test_host_shader_check_in_ci(self):
   self.assertIn('run_shader_tests.sh',next(p for p in (R.parent/'.github/workflows/build-ios.yml',R/'.github/workflows/build-ios.yml') if p.is_file()).read_text(encoding='utf-8'))
   self.assertIn('xcrun --sdk iphoneos metal',(R/'tests/run_shader_tests.sh').read_text(encoding='utf-8'))
+ def test_large_uniform_storage_is_reused_only_after_gpu_completion(self):
+  s=(R/'PhiMod/Sources/PMMetalShaders.mm').read_text(encoding='utf-8')
+  self.assertIn('scratch->uniformBuffers[e.index]',s)
+  self.assertIn('uniformBuffer.length<bytes.size()',s)
+  self.assertIn('memcpy(uniformBuffer.contents,bytes.data(),bytes.size())',s)
+  self.assertIn('scratch->busy=false',s)
+  self.assertIn('compare_exchange_strong(expected,true)',s)
+  self.assertNotIn('newBufferWithBytes:bytes.data()',s)
 if __name__=='__main__':unittest.main()

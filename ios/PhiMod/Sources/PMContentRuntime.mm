@@ -41,7 +41,8 @@ P recordSelector=nullptr,recordItem=nullptr;int recordSlot=-1;NSUInteger recordR
 NSUInteger selectorLibraryRevision=0;int loadingSong=-1,loadingSlot=-1;
 float loadingPosition=0;double selectionChangedAt=0;bool selectorDragging=true;
 std::set<P>recoveredSourceNotes;
-struct SourceCandidate{P note;NSDictionary*source;int line,index,type;bool above;double start,end;float x;};
+using SourceVisual=phimod::RpeVisualValues;
+struct SourceCandidate{P note;NSDictionary*source;SourceVisual visual;int line,index,type;bool above;double start,end;float x;};
 std::vector<SourceCandidate>sourceCandidates;bool sourceCandidatesReady=false;
 
 P extrasBoundChart=nullptr;
@@ -51,7 +52,7 @@ std::map<int,StoryVisual>storyVisuals;
 std::set<int>failedVisualLines;
 std::map<int,P>plainLineRenderers;std::map<int,double>storyRetry;std::set<int>storyReported;
 NSArray*storyFiles=nil;bool storyIndexed=false;P storyFrameCamera=nullptr;float storyFrameWidth=0;std::map<std::string,P>storySprites;P storyMaterial=nullptr;
-struct Fake{NSDictionary*note;int line;bool below;double start,end;bool chord;};
+struct Fake{NSDictionary*note;SourceVisual visual;int line;bool below;double start,end;bool chord;};
 struct FakeVisualCache{P transform=nullptr;P capTransforms[2]{};Bounds bounds{};bool shown=false;bool capShown[2]{false,false};bool colorSet=false,scaleSet=false,positionSet=false;Color color{};V3 scale{},position{};};
 std::map<size_t,FakeVisualCache>fakeVisualCache;
 std::vector<size_t>fakeSchedule;std::set<size_t>activeFakes;size_t fakeCursor=0;bool fakeScheduleReady=false;double fakeLastTime=0;
@@ -856,23 +857,27 @@ bool hasNoteController(Runtime&r,P line,int index,bool above){
  P progress=r.get<P>(line,"progressControl"),judge=r.get<P>(progress,"judgeControl"),manager=r.get<P>(judge,"noteUpdateManager");
  return findSourceController(r,manager,note)!=nullptr;
 }
-struct SourceFrameLine{P owner;phimod::RpePlanePose pose;double floor;NSDictionary*source;};
+SourceVisual sourceVisual(NSDictionary*n){return {scalar(n[@"floorPosition"]),scalar(n[@"pmEndFloor"],scalar(n[@"floorPosition"])),scalar(n[@"pmRawSpeed"],1),scalar(n[@"pmYOffset"]),scalar(n[@"pmSize"],1),scalar(n[@"pmAlpha"],1),scalar(n[@"pmVisible"],999999)};}
+struct SourceFrameLine{P owner;phimod::RpePlanePose pose;double floor;NSDictionary*source;NSDictionary*decor;bool hidden,cover;double incline,width;bool alphaControl,yControl,posControl,sizeControl;};
 SourceFrameLine sourceFrameLine(Runtime&r,P owner,NSDictionary*source,int index,P info,double now){
  P tr=r.call(owner,"get_transform");V3 zero{0,0,0},x{1,0,0},y{0,1,0};
  V3 origin=r.unbox<V3>(r.call(tr,"TransformPoint",{"UnityEngine.Vector3"},{&zero})),right=r.unbox<V3>(r.call(tr,"TransformPoint",{"UnityEngine.Vector3"},{&x})),up=r.unbox<V3>(r.call(tr,"TransformPoint",{"UnityEngine.Vector3"},{&y}));
- return {owner,{origin.x,origin.y,right.x-origin.x,right.y-origin.y,up.x-origin.x,up.y-origin.y},sourceFloorFor(r,info,index,now),source};
+ NSDictionary*d=source[@"pmDecor"];double incline=trackValue(d[@"inclineEvents"],now,0);
+ return {owner,{origin.x,origin.y,right.x-origin.x,right.y-origin.y,up.x-origin.x,up.y-origin.y},sourceFloorFor(r,info,index,now),source,d,sourceNotesHidden(source,now),d[@"isCover"]?[d[@"isCover"]boolValue]:true,incline,std::fabs(incline)>1e-6?notePerspectiveWidth(r,d,now):0,[d[@"alphaControl"]count]>0,[d[@"yControl"]count]>0,[d[@"posControl"]count]>0,[d[@"sizeControl"]count]>0};
 }
-bool sourceVisualNear(Runtime&r,const SourceFrameLine&line,NSDictionary*n,double now,double start,bool hold,bool below,float x,float world){
- NSDictionary*d=line.source[@"pmDecor"];double raw=scalar(n[@"pmRawSpeed"],1),delta=scalar(n[@"floorPosition"])-line.floor;
- if(start-now>scalar(n[@"pmVisible"],999999)||scalar(n[@"pmAlpha"],1)<=0||sourceNotesHidden(line.source,now))return false;
- bool cover=d[@"isCover"]?[d[@"isCover"]boolValue]:true;
- if(rpeCovered(cover,now,start,scalar(n[@"floorPosition"]),line.floor,raw))return false;
- double distance=delta*rpeFloorToDistance+scalar(n[@"pmYOffset"]);
- if(control(d,@"alphaControl",distance)<=0)return false;
- auto geometry=rpeGeometry(delta,scalar(n[@"pmEndFloor"],scalar(n[@"floorPosition"]))-line.floor,0,raw,scalar(n[@"pmYOffset"]),control(d,@"yControl",distance),world,hold&&now>=start);
- x=rpeHorizontalPosition(x,hold,control(d,@"posControl",distance),trackValue(d[@"inclineEvents"],now,0),geometry.head,notePerspectiveWidth(r,d,now));
+bool sourceVisualNear(Runtime&r,const SourceFrameLine&line,const SourceVisual&n,double now,double start,bool hold,bool below,float x,float world){
+ (void)r;
+ // Immutable note values are decoded once, not through NSDictionary for every
+ // future note every frame. Line tracks/perspective are evaluated once per line.
+ if(!phimod::rpeVisibleAt(n,now,start,line.hidden))return false;
+ double delta=n.floor-line.floor;
+ if(rpeCovered(line.cover,now,start,n.floor,line.floor,n.raw))return false;
+ NSDictionary*d=line.decor;double distance=delta*rpeFloorToDistance+n.yOffset;
+ if(line.alphaControl&&control(d,@"alphaControl",distance)<=0)return false;
+ auto geometry=rpeGeometry(delta,n.endFloor-line.floor,0,n.raw,n.yOffset,line.yControl?control(d,@"yControl",distance):1,world,hold&&now>=start);
+ x=rpeHorizontalPosition(x,hold,line.posControl?control(d,@"posControl",distance):1,line.incline,geometry.head,line.width);
  double head=below?-geometry.head:geometry.head,tail=hold?(below?-geometry.tail:geometry.tail):head;
- return phimod::rpeVisualNear(line.pose,x,head,tail,scalar(n[@"pmSize"],1)*control(d,@"sizeControl",distance));
+ return phimod::rpeVisualNear(line.pose,x,head,tail,n.size*(line.sizeControl?control(d,@"sizeControl",distance):1));
 }
 void recoverSourceNotes(Runtime&r,P manager){
  if(!currentChart)return;P progress=r.get<P>(manager,"progressControl"),judge=r.get<P>(manager,"judgeControl"),info=r.get<P>(manager,"levelInformation");
@@ -885,23 +890,34 @@ void recoverSourceNotes(Runtime&r,P manager){
  if(!sourceCandidatesReady){
   for(const auto&entry:extras){P note=entry.first;NSDictionary*n=entry.second;if(!n[@"pmRawSpeed"])continue;
    int line=r.get<int>(note,"judgeLineIndex"),type=r.get<int>(note,"type");double start=r.get<float>(note,"realTime");
-   sourceCandidates.push_back({note,n,line/2,r.get<int>(note,"noteIndex"),type,line%2==0,start,start+(type==3?r.get<float>(note,"holdTime"):0),r.get<float>(note,"positionX")});
+   sourceCandidates.push_back({note,n,sourceVisual(n),line/2,r.get<int>(note,"noteIndex"),type,line%2==0,start,start+(type==3?r.get<float>(note,"holdTime"):0),r.get<float>(note,"positionX")});
   }
+  std::stable_sort(sourceCandidates.begin(),sourceCandidates.end(),[](const auto&a,const auto&b){return a.end<b.end;});
   sourceCandidatesReady=true;
  }
  std::map<int,SourceFrameLine>poses;std::map<P,P>existing;bool controlsIndexed=false;
- for(const auto&candidate:sourceCandidates){
+ // Binary lifetime cursor also handles practice seeks backwards without rebuilding.
+ for(auto it=phimod::rpeFirstUnexpired(sourceCandidates,now-.25);it!=sourceCandidates.end();++it){
+  const auto&candidate=*it;
   if(candidate.end<now-.25||candidate.line<0||candidate.line>=count||candidate.line>=(int)sourceLines.count)continue;
   bool due=now>=candidate.start-2&&now<=candidate.end+.25;
-  auto pose=poses.find(candidate.line);if(pose==poses.end())pose=poses.emplace(candidate.line,sourceFrameLine(r,r.at(lines,candidate.line),sourceLines[candidate.line],candidate.line,info,now)).first;
-  bool near=sourceVisualNear(r,pose->second,candidate.source,now,candidate.start,candidate.type==3,!candidate.above,candidate.x,world);
-  if(!near&&!due)continue;
-  if(!controlsIndexed){for(const char*field:{"clickControls","dragControls","holdControls","flickControls"}){P list=r.get<P>(manager,field);for(int i=0,n=r.count(list);i<n;++i){P c=r.at(list,i);if(r.alive(c))existing[r.get<P>(c,"noteInfor")]=c;}}controlsIndexed=true;}
+  if(!controlsIndexed){for(const char*field:{"clickControls","dragControls","holdControls","flickControls"}){P list=r.get<P>(manager,field);for(int i=0,n=r.count(list);i<n;++i){P c=r.at(list,i);if(c)existing[r.get<P>(c,"noteInfor")]=c;}}controlsIndexed=true;}
   P note=candidate.note;auto present=existing.find(note);P controlObject=present==existing.end()?nullptr:present->second;
+  // Native NoteMove already applied source geometry to visible live controls.
+  // Do not repeat their tracks and visibility work in the recovery pass.
+  if(controlObject&&r.get<bool>(controlObject,"isVisible"))continue;
+  auto pose=poses.find(candidate.line);if(pose==poses.end())pose=poses.emplace(candidate.line,sourceFrameLine(r,r.at(lines,candidate.line),sourceLines[candidate.line],candidate.line,info,now)).first;
+  bool near=sourceVisualNear(r,pose->second,candidate.visual,now,candidate.start,candidate.type==3,!candidate.above,candidate.x,world);
+  if(!near&&!due)continue;
   if(!controlObject&&!r.get<bool>(note,"isJudged")&&candidate.start>=now-.001f){
    int index=candidate.index;bool above=candidate.above;P line=pose->second.owner,side=r.get<P>(line,above?"notesAbove":"notesBelow");
    if(index<0||index>=r.count(side)||r.at(side,index)!=note)continue;
-   r.call(line,"CreateNote",{"System.Int32","System.Boolean"},{&index,&above});controlObject=findSourceController(r,manager,note);
+   // CreateNote appends to the native type list. Check only new entries
+   // instead of rescanning every existing controller for each simultaneous spawn.
+   P controls=r.get<P>(manager,sourceControlList(candidate.type));int previousCount=r.count(controls);
+   r.call(line,"CreateNote",{"System.Int32","System.Boolean"},{&index,&above});
+   for(int i=previousCount,n=r.count(controls);i<n;++i){P c=r.at(controls,i);if(c&&r.get<P>(c,"noteInfor")==note){controlObject=c;break;}}
+   if(!controlObject)controlObject=findSourceController(r,manager,note);
    if(controlObject){recoveredSourceNotes.insert(note);existing[note]=controlObject;r.call(controlObject,"Start");}
   }
   if(controlObject&&near&&!r.get<bool>(controlObject,"isVisible")){r.put(controlObject,"isVisible",true);r.call(controlObject,"NoteMove");}
@@ -1002,9 +1018,9 @@ void visuals(Runtime&r,P progress){
    double end=start+((int)scalar(n[@"type"])==3?scalar(n[@"pmDuration"]):0);
    NSDictionary*decor=data[li][@"pmDecor"];bool cover=decor[@"isCover"]?[decor[@"isCover"]boolValue]:true;
    if((int)scalar(n[@"type"])!=3&&!cover)end=std::numeric_limits<double>::infinity();
-   fakeSchedule.push_back(fakeNotes.size());fakeNotes.push_back({n,(int)li,[side isEqualToString:@"notesBelow"],start,end,chordTimes[(float)start]>1});
+   fakeSchedule.push_back(fakeNotes.size());fakeNotes.push_back({n,sourceVisual(n),(int)li,[side isEqualToString:@"notesBelow"],start,end,chordTimes[(float)start]>1});
   }
-  std::stable_sort(fakeSchedule.begin(),fakeSchedule.end(),[](size_t a,size_t b){return fakeNotes[a].start<fakeNotes[b].start;});
+  std::stable_sort(fakeSchedule.begin(),fakeSchedule.end(),[](size_t a,size_t b){return fakeNotes[a].end<fakeNotes[b].end;});
   fakeScheduleReady=true;
  }
  auto hideFake=[&](size_t i){
@@ -1020,9 +1036,12 @@ void visuals(Runtime&r,P progress){
  fakeLastTime=now;
  float worldSpeed=r.staticValue<float>(r.klass("LevelInformation"),"Speed","System.Single");
  std::map<int,SourceFrameLine>fakePoses;
- for(size_t i:fakeSchedule){auto&f=fakeNotes[i];if(f.line<0||f.line>=total||now>=f.end){if(activeFakes.erase(i))hideFake(i);continue;}
+ // Retire visible sprites once, then seek past expired fake performances.
+ for(auto it=activeFakes.begin();it!=activeFakes.end();){if(now>=fakeNotes[*it].end){hideFake(*it);it=activeFakes.erase(it);}else ++it;}
+ auto firstFake=std::lower_bound(fakeSchedule.begin(),fakeSchedule.end(),double(now),[](size_t i,double t){return fakeNotes[i].end<t;});
+ for(auto entry=firstFake;entry!=fakeSchedule.end();++entry){size_t i=*entry;auto&f=fakeNotes[i];if(f.line<0||f.line>=total||now>=f.end){if(activeFakes.erase(i))hideFake(i);continue;}
   auto pose=fakePoses.find(f.line);if(pose==fakePoses.end())pose=fakePoses.emplace(f.line,sourceFrameLine(r,r.at(lineList,f.line),data[f.line],f.line,info,now)).first;
-  bool near=sourceVisualNear(r,pose->second,f.note,now,f.start,(int)scalar(f.note[@"type"])==3,f.below,scalar(f.note[@"positionX"]),worldSpeed);
+  bool near=sourceVisualNear(r,pose->second,f.visual,now,f.start,(int)scalar(f.note[@"type"])==3,f.below,scalar(f.note[@"positionX"]),worldSpeed);
   if(near)activeFakes.insert(i);else if(activeFakes.erase(i))hideFake(i);
  }
  if(activeFakes.empty())return;
