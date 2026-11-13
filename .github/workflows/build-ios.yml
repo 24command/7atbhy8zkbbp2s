@@ -13,10 +13,16 @@ permissions:
   contents: read
 jobs:
   build:
-    runs-on: macos-15
+    # Avoid the capacity-constrained macOS ARM host pool; target remains iOS arm64.
+    runs-on: macos-15-intel
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - name: Show build environment
+        run: |
+          echo "Build host: $(uname -m); framework target: iOS arm64"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
       - name: Test portable gameplay core
         run: bash ios/tests/run_core_tests.sh
       - name: Test generated arm64 judge trampolines
@@ -58,6 +64,7 @@ jobs:
         run: |
           file "$RUNNER_TEMP/out/PhiMod.framework/PhiMod"
           xcrun lipo -info "$RUNNER_TEMP/out/PhiMod.framework/PhiMod"
+          xcrun lipo -verify_arch arm64 "$RUNNER_TEMP/out/PhiMod.framework/PhiMod"
           codesign --verify --verbose "$RUNNER_TEMP/out/PhiMod.framework"
           python3 - "$RUNNER_TEMP/out/PhiMod.framework/PhiMod" <<'PY'
           import sys
