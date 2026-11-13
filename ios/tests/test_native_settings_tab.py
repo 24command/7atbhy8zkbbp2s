@@ -46,4 +46,11 @@ class NativeSettingsTab(unittest.TestCase):
   self.assertNotIn('projectTab(r)',press)
   self.assertIn('if(!r.alive(canvas))return;',s)
   self.assertIn('if(nativeAdvanced){projectTab(r);[editor layoutEditor];}',s)
+ def test_native_selection_readback_and_optional_preview_isolation(self):
+  native=(R/'PMNativeModSettings.inc').read_text(encoding='utf8')
+  self.assertIn('"currentTab")!=nativeTabIndex',native)
+  self.assertIn('"get_activeInHierarchy"',native)
+  self.assertIn('MOD settings revision 20261114-b',native)
+  scene=(R/'PMSceneUI.mm').read_text(encoding='utf8')
+  self.assertIn('MOD optional preview mute:',scene)
 if __name__=='__main__':unittest.main()

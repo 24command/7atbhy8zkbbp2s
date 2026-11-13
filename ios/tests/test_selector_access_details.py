@@ -14,8 +14,15 @@ class SelectorDetails(unittest.TestCase):
   for text in ('lastSlot!=slot','for(int i=0;i<count;++i)','"lockMask"','"selectorItemUpside"','"selectorItemDownside"','"unlockType",blocked?0:-1'):self.assertIn(text,block)
  def test_native_scroll_popup_and_isolated_click(self):
   s=(ROOT/'PhiMod/Sources/PMUnlockDetails.inc').read_text(encoding='utf-8')
-  for text in ('"CreateMessageBox"','"ScrollRect"','"RectMask2D"','"set_content"','"set_verticalNormalizedPosition"','"set_onClick"','"Cancel"'):self.assertIn(text,s)
+  for text in ('"CreateMessageBox"','"ScrollRect"','"RectMask2D"','"set_content"','"set_verticalNormalizedPosition"','"Cancel"'):self.assertIn(text,s)
   self.assertNotIn('UIAlertController',s)
+  button=s.split('void showRequirementButton(',1)[1].split('void openRequirementPopup(',1)[0]
+  self.assertNotIn('"Instantiate"',button)
+  self.assertNotIn('"startButton"',button)
+  for marker in ('"set_targetGraphic"','"set_raycastTarget"','"set_ignoreParentGroups"','"set_blocksRaycasts"','"get_rect"','"TransformPoint"'):
+   self.assertIn(marker,button)
+  self.assertIn('\\u67e5\\u770b\\u89e3\\u9501\\u6761\\u4ef6',button)
+
   u=(ROOT/'PhiMod/Sources/PMUnlockRuntime.mm').read_text(encoding='utf-8');self.assertIn('showRequirementButton(r,tip,details)',u)
   self.assertIn('lockUIDetails=[tips componentsJoinedByString:@"\\n\\n"]',u)
 if __name__=='__main__':unittest.main()

@@ -76,6 +76,12 @@ void makeNativeSettings(Runtime&r,P setting){
   float top=1;r.call(scroll,"set_verticalNormalizedPosition",{"System.Single"},{&top});
   registerNativeTab(r,setting,r.component(root,r.type("UnityEngine","Animator")),content);
   changeNativeTab(r,setting,nativeTabIndex);
+  // ChangeTab selects via the registered arrays (verified in iOS 4.0.3).
+  // A clone of an inactive original frame can retain disabled raycast flags.
+  P group=r.component(root,r.type("UnityEngine","CanvasGroup"));
+  if(r.alive(group)){bool yes=true;float alpha=1;r.call(group,"set_alpha",{"System.Single"},{&alpha});r.call(group,"set_interactable",{"System.Boolean"},{&yes});r.call(group,"set_blocksRaycasts",{"System.Boolean"},{&yes});}
+  if(r.get<int>(setting,"currentTab")!=nativeTabIndex||!r.unbox<bool>(r.call(root,"get_activeInHierarchy")))throw std::runtime_error("Native MOD tab did not become active");
+  PMDiagnosticsWrite("MOD settings revision 20261114-b: native tab=3 active; no Canvas projection");
   PMDiagnosticsWrite("MOD native fourth settings tab created: distinct viewport/content/itemsHolder");
  }catch(...){clearNativeSettings(r);throw;}
 }

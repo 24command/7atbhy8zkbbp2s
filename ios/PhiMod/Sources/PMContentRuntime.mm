@@ -52,11 +52,13 @@ std::map<int,StoryVisual>storyVisuals;
 std::set<int>failedVisualLines;
 std::map<int,P>plainLineRenderers;std::map<int,double>storyRetry;std::set<int>storyReported;
 NSArray*storyFiles=nil;bool storyIndexed=false;P storyFrameCamera=nullptr;float storyFrameWidth=0;std::map<std::string,P>storySprites;P storyMaterial=nullptr;
-struct Fake{NSDictionary*note;SourceVisual visual;int line;bool below;double start,end;bool chord;};
+struct Fake{NSDictionary*note;SourceVisual visual;int line,type;float x;bool below;double start,end;bool chord;};
 struct FakeVisualCache{P transform=nullptr;P capTransforms[2]{};Bounds bounds{};bool shown=false;bool capShown[2]{false,false};bool colorSet=false,scaleSet=false,positionSet=false;Color color{};V3 scale{},position{};};
 std::map<size_t,FakeVisualCache>fakeVisualCache;
 std::vector<size_t>fakeSchedule;std::set<size_t>activeFakes;size_t fakeCursor=0;bool fakeScheduleReady=false;double fakeLastTime=0;
 struct ControlPoint{double x,value;int easing;};
+struct VisualTrack{std::vector<phimod::rpe::Event> events;};
+std::map<std::pair<NSArray*,int>,VisualTrack>visualTracks;
 std::map<NSArray*,std::vector<ControlPoint>>controlCache;
 phimod::FrameCache<int,double>sourceFloorFrame;phimod::FrameCache<NSDictionary*,bool>sourceAlphaFrame;
 std::vector<Fake>fakeNotes;std::map<int,std::vector<phimod::RpeFloorSegment>>sourceFloors;std::map<size_t,std::pair<uint32_t,uint32_t>>fakeHoldEnds;std::map<size_t,uint32_t>fakeRenderers;std::map<size_t,V3>fakeScales;std::map<size_t,double>fakeRetryAt;std::set<size_t>failedFakes;std::vector<uint32_t>visualRoots;
@@ -212,7 +214,7 @@ P audio(Runtime&r,NSString*path){
  }catch(...){r.gchandle_free(clipRoot);throw;}
 }
 NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=[[key stringByReplacingOccurrencesOfString:id withString:@""]lowercaseString];*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":[lower containsString:@"blur"]?@"blur":@"image";return id;}
-void clearVisuals(Runtime&r){clearSkew(r);clearHud(r);restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();extrasBoundChart=nullptr;recoveredSourceNotes.clear();sourceCandidates.clear();sourceCandidatesReady=false;noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();plainLineRenderers.clear();failedVisualLines.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();sourceFloorFrame.clear();sourceAlphaFrame.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();uiControlLines.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
+void clearVisuals(Runtime&r){clearSkew(r);clearHud(r);restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();extrasBoundChart=nullptr;recoveredSourceNotes.clear();sourceCandidates.clear();sourceCandidatesReady=false;noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();plainLineRenderers.clear();failedVisualLines.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();visualTracks.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();sourceFloorFrame.clear();sourceAlphaFrame.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();uiControlLines.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
 struct ChapterCoverFit{P sprite=nullptr;uint32_t image=0;};std::map<P,ChapterCoverFit>chapterCoverFits;
 void fitExpandedChapterCover(Runtime&r,P loader){
  if(!r.alive(loader))return;P image=r.get<P>(loader,"_image");if(!r.alive(image))return;P sprite=r.call(image,"get_sprite");if(!r.alive(sprite))return;
@@ -679,7 +681,12 @@ bool sourceNotesHidden(NSDictionary*line,double now){
  double q=end>start?std::clamp((now-start)/(end-start),0.,1.):1.;
  return scalar(event[@"start"])+(scalar(event[@"end"])-scalar(event[@"start"]))*q<0;});
 }
-double trackValue(NSArray*a,double now,double fallback,int channel=-1){NSDictionary*last=eventAt(a,now);return last?visualEvent(last,channel).value(now):fallback;}
+double trackValue(NSArray*a,double now,double fallback,int channel=-1){
+ if(!a.count)return fallback;auto key=std::make_pair(a,channel);auto it=visualTracks.find(key);
+ if(it==visualTracks.end()){VisualTrack track;track.events.reserve(a.count);for(NSDictionary*event in a)track.events.push_back(visualEvent(event,channel));it=visualTracks.emplace(key,std::move(track)).first;}
+ const auto&events=it->second.events;auto event=std::upper_bound(events.begin(),events.end(),now,[](double time,const auto&e){return time<e.s;});
+ return event==events.begin()?fallback:(event-1)->value(now);
+}
 
 #include "PMRPEHudRuntime.inc"
 
@@ -691,22 +698,24 @@ float notePerspectiveWidth(Runtime&r,NSDictionary*decor,float now){
  if(frame!=cachedFrame){cachedFrame=frame;width=0;P camera=r.stat(r.type("UnityEngine","Camera"),"get_main");if(r.alive(camera))width=2*r.unbox<float>(r.call(camera,"get_orthographicSize"))*std::min(16.f/9.f,r.unbox<float>(r.call(camera,"get_aspect")));}
  return width;
 }
-double control(NSDictionary*d,NSString*key,double distance){
- NSArray*points=d[key];if(!points.count)return [key isEqualToString:@"skewControl"]?0:1;
+const std::vector<ControlPoint>*controlTrack(NSDictionary*d,NSString*key){
+ NSArray*points=d[key];if(!points.count)return nullptr;
  auto found=controlCache.find(points);
  if(found==controlCache.end()){
   NSString*value=[key substringToIndex:key.length-7];std::vector<ControlPoint>cached;cached.reserve(points.count);
   for(NSDictionary*p in points)cached.push_back({scalar(p[@"x"]),scalar(p[value],[key isEqualToString:@"skewControl"]?0:1),(int)scalar(p[@"easing"],1)});
-  std::stable_sort(cached.begin(),cached.end(),[](const auto&a,const auto&b){return a.x<b.x;});
-  found=controlCache.emplace(points,std::move(cached)).first;
+  std::stable_sort(cached.begin(),cached.end(),[](const auto&a,const auto&b){return a.x<b.x;});found=controlCache.emplace(points,std::move(cached)).first;
  }
- const auto&track=found->second;
+ return &found->second;
+}
+double controlValue(const std::vector<ControlPoint>*points,double distance,double fallback=1){
+ if(!points)return fallback;const auto&track=*points;
  if(distance<=track.front().x)return track.front().value;
- auto next=std::lower_bound(track.begin(),track.end(),distance,[](const auto&p,double x){return p.x<x;});
- if(next==track.end())return track.back().value;
+ auto next=std::lower_bound(track.begin(),track.end(),distance,[](const auto&p,double x){return p.x<x;});if(next==track.end())return track.back().value;
  const auto&a=*(next-1);const auto&b=*next;double q=b.x>a.x?(distance-a.x)/(b.x-a.x):1;
  return a.value+(b.value-a.value)*phimod::rpe::ease(b.easing,q);
 }
+double control(NSDictionary*d,NSString*key,double distance){return controlValue(controlTrack(d,key),distance,[key isEqualToString:@"skewControl"]?0:1);}
 #include "PMRPESkewRuntime.inc"
 
 P addComponent(Runtime&r,P go,P type){return r.call(go,"AddComponent",{"System.Type"},{r.type_get_object(r.class_get_type(type))});}
@@ -858,12 +867,12 @@ bool hasNoteController(Runtime&r,P line,int index,bool above){
  return findSourceController(r,manager,note)!=nullptr;
 }
 SourceVisual sourceVisual(NSDictionary*n){return {scalar(n[@"floorPosition"]),scalar(n[@"pmEndFloor"],scalar(n[@"floorPosition"])),scalar(n[@"pmRawSpeed"],1),scalar(n[@"pmYOffset"]),scalar(n[@"pmSize"],1),scalar(n[@"pmAlpha"],1),scalar(n[@"pmVisible"],999999)};}
-struct SourceFrameLine{P owner;phimod::RpePlanePose pose;double floor;NSDictionary*source;NSDictionary*decor;bool hidden,cover;double incline,width;bool alphaControl,yControl,posControl,sizeControl;};
+struct SourceFrameLine{P owner;phimod::RpePlanePose pose;double floor;NSDictionary*source;NSDictionary*decor;bool hidden,cover;double incline,width;const std::vector<ControlPoint>*alphaControl,*yControl,*posControl,*sizeControl;};
 SourceFrameLine sourceFrameLine(Runtime&r,P owner,NSDictionary*source,int index,P info,double now){
  P tr=r.call(owner,"get_transform");V3 zero{0,0,0},x{1,0,0},y{0,1,0};
  V3 origin=r.unbox<V3>(r.call(tr,"TransformPoint",{"UnityEngine.Vector3"},{&zero})),right=r.unbox<V3>(r.call(tr,"TransformPoint",{"UnityEngine.Vector3"},{&x})),up=r.unbox<V3>(r.call(tr,"TransformPoint",{"UnityEngine.Vector3"},{&y}));
  NSDictionary*d=source[@"pmDecor"];double incline=trackValue(d[@"inclineEvents"],now,0);
- return {owner,{origin.x,origin.y,right.x-origin.x,right.y-origin.y,up.x-origin.x,up.y-origin.y},sourceFloorFor(r,info,index,now),source,d,sourceNotesHidden(source,now),d[@"isCover"]?[d[@"isCover"]boolValue]:true,incline,std::fabs(incline)>1e-6?notePerspectiveWidth(r,d,now):0,[d[@"alphaControl"]count]>0,[d[@"yControl"]count]>0,[d[@"posControl"]count]>0,[d[@"sizeControl"]count]>0};
+ return {owner,{origin.x,origin.y,right.x-origin.x,right.y-origin.y,up.x-origin.x,up.y-origin.y},sourceFloorFor(r,info,index,now),source,d,sourceNotesHidden(source,now),d[@"isCover"]?[d[@"isCover"]boolValue]:true,incline,std::fabs(incline)>1e-6?notePerspectiveWidth(r,d,now):0,controlTrack(d,@"alphaControl"),controlTrack(d,@"yControl"),controlTrack(d,@"posControl"),controlTrack(d,@"sizeControl")};
 }
 bool sourceVisualNear(Runtime&r,const SourceFrameLine&line,const SourceVisual&n,double now,double start,bool hold,bool below,float x,float world){
  (void)r;
@@ -872,12 +881,12 @@ bool sourceVisualNear(Runtime&r,const SourceFrameLine&line,const SourceVisual&n,
  if(!phimod::rpeVisibleAt(n,now,start,line.hidden))return false;
  double delta=n.floor-line.floor;
  if(rpeCovered(line.cover,now,start,n.floor,line.floor,n.raw))return false;
- NSDictionary*d=line.decor;double distance=delta*rpeFloorToDistance+n.yOffset;
- if(line.alphaControl&&control(d,@"alphaControl",distance)<=0)return false;
- auto geometry=rpeGeometry(delta,n.endFloor-line.floor,0,n.raw,n.yOffset,line.yControl?control(d,@"yControl",distance):1,world,hold&&now>=start);
- x=rpeHorizontalPosition(x,hold,line.posControl?control(d,@"posControl",distance):1,line.incline,geometry.head,line.width);
+ double distance=delta*rpeFloorToDistance+n.yOffset;
+ if(line.alphaControl&&controlValue(line.alphaControl,distance)<=0)return false;
+ auto geometry=rpeGeometry(delta,n.endFloor-line.floor,0,n.raw,n.yOffset,line.yControl?controlValue(line.yControl,distance):1,world,hold&&now>=start);
+ x=rpeHorizontalPosition(x,hold,line.posControl?controlValue(line.posControl,distance):1,line.incline,geometry.head,line.width);
  double head=below?-geometry.head:geometry.head,tail=hold?(below?-geometry.tail:geometry.tail):head;
- return phimod::rpeVisualNear(line.pose,x,head,tail,n.size*(line.sizeControl?control(d,@"sizeControl",distance):1));
+ return phimod::rpeVisualNear(line.pose,x,head,tail,n.size*(line.sizeControl?controlValue(line.sizeControl,distance):1));
 }
 void recoverSourceNotes(Runtime&r,P manager){
  if(!currentChart)return;P progress=r.get<P>(manager,"progressControl"),judge=r.get<P>(manager,"judgeControl"),info=r.get<P>(manager,"levelInformation");
@@ -901,6 +910,8 @@ void recoverSourceNotes(Runtime&r,P manager){
   const auto&candidate=*it;
   if(candidate.end<now-.25||candidate.line<0||candidate.line>=count||candidate.line>=(int)sourceLines.count)continue;
   bool due=now>=candidate.start-2&&now<=candidate.end+.25;
+   // Exact authored alpha/visible-time rejection; due notes still reach native judgement.
+   if(!due&&!phimod::rpeVisibleAt(candidate.visual,now,candidate.start,false))continue;
   if(!controlsIndexed){for(const char*field:{"clickControls","dragControls","holdControls","flickControls"}){P list=r.get<P>(manager,field);for(int i=0,n=r.count(list);i<n;++i){P c=r.at(list,i);if(c)existing[r.get<P>(c,"noteInfor")]=c;}}controlsIndexed=true;}
   P note=candidate.note;auto present=existing.find(note);P controlObject=present==existing.end()?nullptr:present->second;
   // Native NoteMove already applied source geometry to visible live controls.
@@ -1018,7 +1029,7 @@ void visuals(Runtime&r,P progress){
    double end=start+((int)scalar(n[@"type"])==3?scalar(n[@"pmDuration"]):0);
    NSDictionary*decor=data[li][@"pmDecor"];bool cover=decor[@"isCover"]?[decor[@"isCover"]boolValue]:true;
    if((int)scalar(n[@"type"])!=3&&!cover)end=std::numeric_limits<double>::infinity();
-   fakeSchedule.push_back(fakeNotes.size());fakeNotes.push_back({n,sourceVisual(n),(int)li,[side isEqualToString:@"notesBelow"],start,end,chordTimes[(float)start]>1});
+   fakeSchedule.push_back(fakeNotes.size());fakeNotes.push_back({n,sourceVisual(n),(int)li,(int)scalar(n[@"type"],1),(float)scalar(n[@"positionX"]),[side isEqualToString:@"notesBelow"],start,end,chordTimes[(float)start]>1});
   }
   std::stable_sort(fakeSchedule.begin(),fakeSchedule.end(),[](size_t a,size_t b){return fakeNotes[a].end<fakeNotes[b].end;});
   fakeScheduleReady=true;
@@ -1040,8 +1051,9 @@ void visuals(Runtime&r,P progress){
  for(auto it=activeFakes.begin();it!=activeFakes.end();){if(now>=fakeNotes[*it].end){hideFake(*it);it=activeFakes.erase(it);}else ++it;}
  auto firstFake=std::lower_bound(fakeSchedule.begin(),fakeSchedule.end(),double(now),[](size_t i,double t){return fakeNotes[i].end<t;});
  for(auto entry=firstFake;entry!=fakeSchedule.end();++entry){size_t i=*entry;auto&f=fakeNotes[i];if(f.line<0||f.line>=total||now>=f.end){if(activeFakes.erase(i))hideFake(i);continue;}
+  if(!phimod::rpeVisibleAt(f.visual,now,f.start,false)){if(activeFakes.erase(i))hideFake(i);continue;}
   auto pose=fakePoses.find(f.line);if(pose==fakePoses.end())pose=fakePoses.emplace(f.line,sourceFrameLine(r,r.at(lineList,f.line),data[f.line],f.line,info,now)).first;
-  bool near=sourceVisualNear(r,pose->second,f.visual,now,f.start,(int)scalar(f.note[@"type"])==3,f.below,scalar(f.note[@"positionX"]),worldSpeed);
+  bool near=sourceVisualNear(r,pose->second,f.visual,now,f.start,f.type==3,f.below,f.x,worldSpeed);
   if(near)activeFakes.insert(i);else if(activeFakes.erase(i))hideFake(i);
  }
  if(activeFakes.empty())return;

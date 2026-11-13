@@ -5,7 +5,7 @@ end=s.index("void finishNoteGeometry(",start)
 s=s[start:end]
 assert s.index("if(ended)") < s.index('r.call(tr,"set_localScale"')
 assert 'if(sourceGeometry&&!controlMissed' in s
-assert 'color.a=(sourceGeometry&&!controlMissed)?alpha:std::min(color.a,alpha);' in s
+assert 'color.a=(sourceGeometry&&!controlMissed&&(hold||now<=start))?alpha:std::min(color.a,alpha);' in s
 assert 'std::vector<const char*>{{' not in s
 assert 'catch(...)' not in s
 print("PASS terminal controller guard, miss-fade preservation, and continuous source alpha")

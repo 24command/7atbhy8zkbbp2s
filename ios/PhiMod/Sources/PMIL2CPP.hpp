@@ -12,6 +12,7 @@
 #include <vector>
 #include <array>
 #include <map>
+#include <set>
 #include <initializer_list>
 #include <type_traits>
 #include <algorithm>
@@ -72,6 +73,7 @@ struct Runtime {
     P (*array_new)(P,uintptr_t)=nullptr;
     uintptr_t (*array_length)(P)=nullptr;
     std::map<std::pair<P,std::string>,P> fieldCache;
+    std::set<std::pair<P,const void*>> checkedValueClasses;
     std::map<std::string,P> typeCache;
     std::map<std::string,P,std::less<>> gameClassCache;
     std::map<std::pair<P,std::string>,P> methodCache;
@@ -268,6 +270,10 @@ struct Runtime {
     }
     template<class T> void checkClass(P c) {
         if(!c)throw std::runtime_error("Missing field/value class");
+        // IL2CPP metadata is immutable for the process lifetime. Validate each
+        // exact C++ type/class pair once, never skip the first ABI/type check.
+        static const char typeToken=0;auto key=std::make_pair(c,static_cast<const void*>(&typeToken));
+        if(checkedValueClasses.count(key))return;
         if constexpr(std::is_same_v<T,P>) {
             if(class_is_valuetype(c))throw std::runtime_error("Value type used as object reference");
         } else {
@@ -279,6 +285,7 @@ struct Runtime {
             if constexpr(std::is_same_v<T,float>)expected="System.Single";
             if(expected&&!typeIs(class_get_type(c),expected))throw std::runtime_error("Primitive type contract mismatch");
         }
+        checkedValueClasses.insert(key);
     }
     template<class T> T get(P obj,const char *name) {P f=objectField(obj,name);checkClass<T>(class_from_type(field_get_type(f)));T v{};field_get_value(obj,f,&v);return v;}
     template<class T> void put(P obj,const char *name,T value){

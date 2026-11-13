@@ -4,26 +4,53 @@ void clearRequirementUI(Runtime&r){
  if(requirementPopup){P popup=target(r,requirementPopup);if(r.alive(popup))try{r.call(popup,"Cancel");}catch(...){}r.gchandle_free(requirementPopup);requirementPopup=0;}
  if(requirementRoot){P go=target(r,requirementRoot);if(r.alive(go))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{go});r.gchandle_free(requirementRoot);requirementRoot=0;}requirementButton=nullptr;
 }
+// This is deliberately NOT a clone of Start/Select: their CanvasGroups,
+// animators and sliced decorations inherit the locked song's disabled state.
+P requirementObject(Runtime&r,const char*name,P parent){
+ P object=r.object_new(r.type("UnityEngine","GameObject"));uint32_t handle=r.gchandle_new(object,false);
+ try{r.call(object,".ctor",{"System.String"},{r.string_new(name)});
+  P rect=r.call(object,"AddComponent",{"System.Type"},{r.type_get_object(r.class_get_type(r.type("UnityEngine","RectTransform")))});
+  bool no=false;r.call(rect,"SetParent",{"UnityEngine.Transform","System.Boolean"},{parent,&no});
+  int layer=r.unbox<int>(r.call(r.call(parent,"get_gameObject"),"get_layer"));r.call(object,"set_layer",{"System.Int32"},{&layer});
+ }catch(...){r.gchandle_free(handle);throw;}r.gchandle_free(handle);return object;
+}
+P requirementComponent(Runtime&r,P object,const char*ns,const char*name){return r.call(object,"AddComponent",{"System.Type"},{r.type_get_object(r.class_get_type(r.type(ns,name)))});}
 void showRequirementButton(Runtime&r,P tip,bool visible){
+ bool no=false,yes=true;
  if(visible&&!requirementRoot){
-  P selector=target(r,lockUIOwner);if(!r.alive(selector)||!r.alive(tip))return;
-  P source=r.get<P>(selector,"startButton"),challenge=r.get<P>(selector,"challengeSongSelectorControl");if(r.alive(challenge)){P select=r.get<P>(challenge,"selectButton");if(r.alive(select))source=select;}
-  P tipTr=r.call(tip,"get_transform"),parent=r.call(tipTr,"get_parent");bool no=false;
-  P clone=r.stat(r.type("UnityEngine","Object"),"Instantiate",{"UnityEngine.Object","UnityEngine.Transform","System.Boolean"},{r.call(source,"get_gameObject"),parent,&no});requirementRoot=r.gchandle_new(clone,false);
-  requirementButton=r.component(clone,r.type("UnityEngine.UI","Button"));
-  P animators=r.children(clone,r.type("UnityEngine","Animator"));for(uintptr_t i=0;animators&&i<r.array_length(animators);++i)r.call(r.arrayAt(animators,int(i)),"set_enabled",{"System.Boolean"},{&no});
-  P evt=r.object_new(r.nested(r.type("UnityEngine.UI","Button"),"ButtonClickedEvent"));uint32_t root=r.gchandle_new(evt,false);
-  try{r.call(evt,".ctor");r.call(requirementButton,"set_onClick",{"UnityEngine.UI.Button.ButtonClickedEvent"},{evt});}catch(...){r.gchandle_free(root);throw;}r.gchandle_free(root);
-  P labels=r.children(clone,r.type("UnityEngine.UI","Text"));for(uintptr_t i=0;labels&&i<r.array_length(labels);++i){P label=r.arrayAt(labels,int(i));r.call(label,"set_text",{"System.String"},{r.managedString(i?@"":@"\u67e5\u770b\u89e3\u9501\u8981\u6c42")});int font=24;r.call(label,"set_fontSize",{"System.Int32"},{&font});r.call(label,"set_resizeTextForBestFit",{"System.Boolean"},{&no});}
+  if(!r.alive(tip))return;P parent=r.call(r.call(tip,"get_transform"),"get_parent");
+  P object=requirementObject(r,"PhiMod Unlock Details",parent);requirementRoot=r.gchandle_new(object,false);
+  try{
+   P rect=r.call(object,"get_transform"),image=requirementComponent(r,object,"UnityEngine.UI","Image");
+   // Clean light button, like the native selector's actions, without copying
+   // their sprite atlas crop or stretching a full Start-button hierarchy.
+   TipColor background{.94f,.96f,.98f,1};r.call(image,"set_color",{"UnityEngine.Color"},{&background});
+   r.call(image,"set_maskable",{"System.Boolean"},{&no});r.call(image,"set_raycastTarget",{"System.Boolean"},{&yes});
+   P group=requirementComponent(r,object,"UnityEngine","CanvasGroup");
+   r.call(group,"set_ignoreParentGroups",{"System.Boolean"},{&yes});r.call(group,"set_interactable",{"System.Boolean"},{&yes});r.call(group,"set_blocksRaycasts",{"System.Boolean"},{&yes});
+   requirementButton=requirementComponent(r,object,"UnityEngine.UI","Button");
+   r.call(requirementButton,"set_targetGraphic",{"UnityEngine.UI.Graphic"},{image});r.call(requirementButton,"set_interactable",{"System.Boolean"},{&yes});
+   P caption=requirementObject(r,"Caption",rect),label=requirementComponent(r,caption,"UnityEngine.UI","Text"),labelRect=r.call(caption,"get_transform");
+   TipSize low{0,0},high{1,1},padding{-32,-8},zero{0,0};
+   r.call(labelRect,"set_anchorMin",{"UnityEngine.Vector2"},{&low});r.call(labelRect,"set_anchorMax",{"UnityEngine.Vector2"},{&high});r.call(labelRect,"set_sizeDelta",{"UnityEngine.Vector2"},{&padding});r.call(labelRect,"set_anchoredPosition",{"UnityEngine.Vector2"},{&zero});
+   r.call(label,"set_font",{"UnityEngine.Font"},{r.call(tip,"get_font")});r.call(label,"set_text",{"System.String"},{r.managedString(@"\u67e5\u770b\u89e3\u9501\u6761\u4ef6")});
+   int font=28,center=4,overflow=1;r.call(label,"set_fontSize",{"System.Int32"},{&font});r.call(label,"set_alignment",{"UnityEngine.TextAnchor"},{&center});r.call(label,"set_horizontalOverflow",{"UnityEngine.HorizontalWrapMode"},{&overflow});
+   r.call(label,"set_resizeTextForBestFit",{"System.Boolean"},{&no});r.call(label,"set_raycastTarget",{"System.Boolean"},{&no});r.call(label,"set_maskable",{"System.Boolean"},{&no});
+   TipColor foreground{.09f,.12f,.17f,1};r.call(label,"set_color",{"UnityEngine.Color"},{&foreground});
+   PMDiagnosticsWrite("Unlock details independent native button ready");
+  }catch(...){clearRequirementUI(r);throw;}
  }
- P go=target(r,requirementRoot);if(!r.alive(go))return;
- if(visible){P tipTr=r.call(tip,"get_transform"),tr=r.call(go,"get_transform");
-  for(const char*field:{"anchorMin","anchorMax","pivot","sizeDelta","anchoredPosition"}){std::string get=std::string("get_")+field,set=std::string("set_")+field;TipSize value=r.unbox<TipSize>(r.call(tipTr,get.c_str()));if(!strcmp(field,"sizeDelta"))value.y=std::max(value.y,48.f);r.call(tr,set.c_str(),{"UnityEngine.Vector2"},{&value});}
-  struct V3{float x,y,z;};V3 one{1,1,1};r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&one});bool yes=true;r.call(requirementButton,"set_interactable",{"System.Boolean"},{&yes});
+ P object=target(r,requirementRoot);if(!r.alive(object))return;
+ if(visible){P tipRect=r.call(tip,"get_transform"),rect=r.call(object,"get_transform");
+  // Use the tip's actual rectangle, not its stretch-anchor sizeDelta (often 0).
+  struct Rect{float x,y,w,h;};Rect bounds=r.unbox<Rect>(r.call(tipRect,"get_rect"));
+  struct V3{float x,y,z;};V3 center{bounds.x+bounds.w*.5f,bounds.y+bounds.h*.5f,0};
+  V3 world=r.unbox<V3>(r.call(tipRect,"TransformPoint",{"UnityEngine.Vector3"},{&center})),one{1,1,1};
+  TipSize anchor{.5f,.5f},size{std::clamp(bounds.w,240.f,420.f),64.f};
+  r.call(rect,"set_anchorMin",{"UnityEngine.Vector2"},{&anchor});r.call(rect,"set_anchorMax",{"UnityEngine.Vector2"},{&anchor});r.call(rect,"set_pivot",{"UnityEngine.Vector2"},{&anchor});
+  r.call(rect,"set_sizeDelta",{"UnityEngine.Vector2"},{&size});r.call(rect,"set_localScale",{"UnityEngine.Vector3"},{&one});r.call(rect,"set_position",{"UnityEngine.Vector3"},{&world});r.call(rect,"SetAsLastSibling");
  }
- lockActive(r,go,visible);
- // The cloned button supplies the visible caption while the original Text
- // remains available for fit measurement and automatic short-text restoration.
+ lockActive(r,object,visible);
  if(tip){bool enabled=!visible;r.call(tip,"set_enabled",{"System.Boolean"},{&enabled});}
 }
 void openRequirementPopup(Runtime&r,NSString*text){

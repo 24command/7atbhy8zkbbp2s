@@ -41,4 +41,19 @@ class RuntimePerformanceFixes(unittest.TestCase):
   self.assertIn('(e.fullCompiler&&e.full.discards)?MTLLoadActionLoad:MTLLoadActionDontCare',s)
   compiler=(ROOT/'PhiMod/Core/PMFullShaderCompiler.cpp').read_text(encoding='utf8')
   self.assertIn('result.msl.find("discard_fragment")',compiler)
+ def test_custom_cpu_reduces_repeated_decoding_without_new_culling(self):
+  s=source('PMContentRuntime.mm')
+  self.assertIn('visualTracks.clear()',s)
+  self.assertIn('visualTracks.find(key)',s)
+  self.assertIn('controlTrack(d,@"alphaControl")',s)
+  near=s.split('bool sourceVisualNear(',1)[1].split('void recoverSourceNotes(',1)[0]
+  self.assertNotIn('control(d,',near)
+  self.assertIn('controlValue(line.alphaControl,distance)',near)
+  self.assertIn('if(!due&&!phimod::rpeVisibleAt',s)
+  self.assertIn('f.start,f.type==3,f.below,f.x,worldSpeed',s)
+  self.assertIn('RPE CPU split (300 frames)',source('PMHookBackend.mm'))
+ def test_metadata_validation_is_cached_only_after_success(self):
+  s=source('PMIL2CPP.hpp').split('template<class T> void checkClass(',1)[1].split('template<class T> T get(',1)[0]
+  self.assertLess(s.index('Primitive type contract mismatch'),s.index('checkedValueClasses.insert(key)'))
+  self.assertIn('static const char typeToken',s)
 if __name__=='__main__': unittest.main()

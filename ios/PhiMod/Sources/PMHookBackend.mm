@@ -96,7 +96,7 @@ void restartPracticeSession(){
 }
 bool heartbeatDue(std::chrono::steady_clock::time_point &last,uint64_t count){
  auto now=std::chrono::steady_clock::now();
- if(count==1||last.time_since_epoch().count()==0||now-last>=std::chrono::milliseconds(750)){last=now;return true;}
+ if(count==1||last.time_since_epoch().count()==0||now-last>=std::chrono::milliseconds(count<8?750:4000)){last=now;return true;}
  return false;
 }
 void logProgressSnapshot(Runtime&r,P p,const char*source,uint64_t count){
@@ -567,18 +567,21 @@ void onNoteManager(P self,P mi){
  bool profile=pmcontent::customLevel();auto nativeStart=std::chrono::steady_clock::now();
  orig<VoidFn>(h::noteManager)(self,mi);
  auto nativeEnd=std::chrono::steady_clock::now();
- pmfeatures::flushHitEffects(R());
+ pmfeatures::flushHitEffects(R());auto fxEnd=std::chrono::steady_clock::now();
    if(applying())try{pmmodes::frame(R(),self);}catch(const std::exception&e){fault(e);}
+ auto modesEnd=std::chrono::steady_clock::now();
  // Native NoteUpdateManager.Update calls JudgeLineControl.UpdateInfo for all
  // lines. Apply custom visibility afterwards, never from a competing Update.
  try{pmcontent::recoverSourceNotes(R(),self);}catch(const std::exception&e){static std::string previous;if(previous!=e.what()){previous=e.what();diagf("Source note recovery failed: %s",e.what());}}
+ auto recoveryEnd=std::chrono::steady_clock::now();
  try{auto&r=R();pmcontent::visuals(r,r.get<P>(self,"progressControl"));}catch(const std::exception&e){static std::string previous;if(previous!=e.what()){previous=e.what();diagf("Post-note-manager visuals failed: %s",e.what());}}
  if(profile){
-  static P owner=nullptr;static unsigned frames=0;static double nativeMs=0,customMs=0,peakMs=0;
-  if(owner!=self){owner=self;frames=0;nativeMs=customMs=peakMs=0;}
+  static P owner=nullptr;static unsigned frames=0;static double nativeMs=0,customMs=0,peakMs=0,fxMs=0,modesMs=0,recoveryMs=0,visualsMs=0;
+  if(owner!=self){owner=self;frames=0;nativeMs=customMs=peakMs=fxMs=modesMs=recoveryMs=visualsMs=0;}
   auto done=std::chrono::steady_clock::now();double a=std::chrono::duration<double,std::milli>(nativeEnd-nativeStart).count(),b=std::chrono::duration<double,std::milli>(done-nativeEnd).count();
   nativeMs+=a;customMs+=b;peakMs=std::max(peakMs,a+b);
-  if(++frames==300){diagf("RPE CPU profile (300 frames): native=%.2fms custom=%.2fms peak=%.2fms; excludes GPU",nativeMs/frames,customMs/frames,peakMs);frames=0;nativeMs=customMs=peakMs=0;}
+  auto ms=[](auto start,auto end){return std::chrono::duration<double,std::milli>(end-start).count();};fxMs+=ms(nativeEnd,fxEnd);modesMs+=ms(fxEnd,modesEnd);recoveryMs+=ms(modesEnd,recoveryEnd);visualsMs+=ms(recoveryEnd,done);
+  if(++frames==300){diagf("RPE CPU profile (300 frames): native=%.2fms custom=%.2fms peak=%.2fms; excludes GPU",nativeMs/frames,customMs/frames,peakMs);diagf("RPE CPU split (300 frames): fx=%.2fms modes=%.2fms recovery=%.2fms visuals=%.2fms",fxMs/frames,modesMs/frames,recoveryMs/frames,visualsMs/frames);frames=0;nativeMs=customMs=peakMs=fxMs=modesMs=recoveryMs=visualsMs=0;}
  }
 }
 P onSkinInstantiate(P original,P mi){P clone=orig<P(*)(P,P)>(h::skinInstantiate)(original,mi);

@@ -294,7 +294,8 @@ bool press(Runtime&r,P button){if(pressNativeSetting(r,button))return true;auto 
   // Native ChangeTab updates all tab animations and slider. Hide entire old
   // frames so Misc footer/social links cannot remain below the MOD page.
   P frames=target(r,originalFrames);for(int i=0;frames&&i<(int)r.array_length(frames);++i)stash(r,hidden,go(r,r.arrayAt(frames,i)),"get_activeSelf","SetActive",false);
-  for(const char*name:{"audioSource1","audioSource2"}){P src=r.get<P>(self,name);if(src)stash(r,mutes,r.get<P>(src,"audioSource"),"get_mute","set_mute",true);}
+  // Optional preview muting must not roll back an already-visible native page.
+  for(const char*name:{"audioSource1","audioSource2"})try{P src=r.get<P>(self,name);if(r.alive(src)){P audio=r.get<P>(src,"audioSource");if(r.alive(audio))stash(r,mutes,audio,"get_mute","set_mute",true);}}catch(const std::exception&e){PMDiagnosticsWrite((std::string("MOD optional preview mute: ")+e.what()).c_str());}
   // Native page uses Unity layout, not the optional UIKit advanced-panel anchor.
  }catch(const std::exception&e){NSString*message=[NSString stringWithFormat:@"MOD settings: %s",e.what()];settingsLeave(r);reportModTabFailure(message);}}
  @catch(NSException*e){NSString*message=[NSString stringWithFormat:@"MOD settings: %@",e.reason];settingsLeave(r);reportModTabFailure(message);}return true;
