@@ -25,7 +25,7 @@ One diagnostic line records the resulting scale for device comparisons.
 - Skip skin post-processing when no skin is active.
 - Full GLSL compilation classifies generated MSL discard operations. Non-discard
   passes skip the redundant full-screen preservation blit and use DontCare load.
-  Discard shaders retain the original copy/load behavior. Resolution, pass order,
+  Discard and output sample-mask shaders retain the original copy/load behavior. Resolution, pass order,
   sampling, scope and shader uniforms are unchanged.
 - Prepare videos near their start, rather than allocating all future decoders at
   chart entry. Keep the existing video size/aspect/clock and hardware playback.

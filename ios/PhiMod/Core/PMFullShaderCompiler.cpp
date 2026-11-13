@@ -87,8 +87,8 @@ Program compile(const std::string&source){
  auto msl=compiler.get_msl_options();msl.platform=spirv_cross::CompilerMSL::Options::iOS;msl.set_msl_version(2,3);compiler.set_msl_options(msl);
  compiler.rename_entry_point("main",result.entry,spv::ExecutionModelFragment);result.msl=compiler.compile()+vertexSource();
  // Inspect generated MSL (after macros/helpers), not raw GLSL substring guesses.
- // Only shaders able to discard fragments require copying old output pixels.
- result.discards=result.msl.find("discard_fragment")!=std::string::npos||result.msl.find("demote_to_helper")!=std::string::npos;
+ // Discard and output coverage masks both require preserving untouched pixels.
+ result.discards=result.msl.find("discard_fragment")!=std::string::npos||result.msl.find("demote_to_helper")!=std::string::npos||result.msl.find("sample_mask")!=std::string::npos;
  return result;
 }
 void put(std::vector<uint8_t>&bytes,const Uniform&u,unsigned index,double value){

@@ -28,6 +28,7 @@ int main(int argc,char**argv){
  assert(sawDefault);
  auto discard=fixture("discard-helper","uniform float time; uniform sampler2D screenTexture; varying vec2 uv; vec4 helper(vec2 p){if(p.x<0.25)discard;return texture2D(screenTexture,p+vec2(sin(time)*.01,0));}void main(){gl_FragColor=helper(uv);}");
  assert(discard.discards);
+ auto masked=fixture("sample-mask","varying vec2 uv;void main(){gl_SampleMask[0]=uv.x<0.5?0:-1;gl_FragColor=vec4(1.);}");assert(masked.discards);
  fixture("macro-loop","uniform sampler2D screenTexture; varying vec2 uv;\n#define N 3\nvec4 sampleLater(vec2 p);void main(){vec4 c=vec4(0);for(int i=0;i<N;++i)c+=sampleLater(uv);gl_FragColor=c/float(N);}vec4 sampleLater(vec2 p){return textureLod(screenTexture,p,0.0);}");
  bool rejectedSampler=false;try{pmfullshader::compile("uniform sampler2D extra;varying vec2 uv;void main(){gl_FragColor=texture2D(extra,uv);}");}catch(const std::exception&){rejectedSampler=true;}assert(rejectedSampler);
  bool failed=false;try{pmfullshader::compile("void main(){ BAD SYNTAX }");}catch(...){failed=true;}assert(failed);
