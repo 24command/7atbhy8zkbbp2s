@@ -129,5 +129,7 @@ class NativeSettingsTab(unittest.TestCase):
   self.assertIn('V2 min{0,1},max{1,1}',native)
   self.assertNotIn('set_anchorMax",{"UnityEngine.Vector2"},{&topLeft}',native)
   self.assertIn('contentRect.w<=0||holderRect.w<=0',native)
+  self.assertIn('protect=childPath(r,navigation,tr,path)',native)
+  self.assertIn('tabSlider=r.get<P>(setting,"sliderController")',native)
   self.assertIn('"get_sortingOrder"))+1',native)
 if __name__=='__main__':unittest.main()
