@@ -30,5 +30,10 @@ int main(){using namespace phimod;
  parents[5]=3;parents[6]=3;parents[7]=1;frames={5,3,7};assert(settingsFrameHost(frames,parent,rect)==1);
  parents[1]=8;assert(settingsFrameHost(frames,parent,[](int n){return n==8;})==8);
  parents[7]=9;assert(settingsFrameHost(frames,parent,rect)==0);
+ // Scene host can be a plain Transform: the caller provides canvas sizing.
+ parents[7]=1;parents[1]=0;assert(settingsFrameHost(frames,parent,[](int){return true;})==1);
+ // Separate managed wrappers for the same native ancestor must compare equal.
+ auto aliases=[](int n){if(n==5)return 11;if(n==6)return 21;if(n==7)return 31;return 0;};
+ assert(settingsFrameHost(std::array<int,3>{5,6,7},aliases,[](int){return true;},[](int a,int b){return a==b||(a>10&&b>10&&a%10==b%10);})==11);
  std::puts("PASS duplicate fourth-tab request, internal/foreign owner isolation and native tab exit");
 }

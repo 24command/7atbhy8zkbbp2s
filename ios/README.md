@@ -8,6 +8,12 @@ Start with [HP_PRACTICE_20261018.md](HP_PRACTICE_20261018.md) for this revision,
 build/test checklist, and [GAMEPLAY_UI_PORT.md](GAMEPLAY_UI_PORT.md) for scope
 and safety boundaries. Portable C++ cores were rebuilt and run with local MSVC. Source-contract, metadata, judge-patch, and real-image hook-gate checks have passed on Windows. This revision still needs the macOS Apple SDK build and real-device verification.
 
+## MOD host / tab backdrop / startup opacity (2026-11-14)
+
+Fix the reported `Shared native settings frame host not found` failure: accept a common plain Transform, compare Unity native object identity, and provide explicit canvas sizing/input when no rectangular host exists. Fallback hosts stay outside frames hidden during native tab changes. Expand the existing SettingTabController background polygon to cover MOD, retaining its native style and left edge. Runtime marker: `settings-host-v6-20261114`.
+
+On initialization only, saved bubble opacity **below 0.15** resets to the default **0.96** (both snapshot and legacy settings). Exactly 0.15 or higher is retained; 0–1 remains editable for the current run. No new hooks or content reimport. Device acceptance: open MOD from each original tab, check the complete dark tab strip, return/Back, and restart at 0.149 versus 0.15.
+
 ## Sparse/locked difficulty selection (2026-11-14)
 
 Merged-chart unlock state is now published before refreshing native score text and the selected-difficulty slider. Missing slots are disabled rather than playable zero-level entries; repeated selection of the current slot is disabled. Custom groups retain real EZ/HD/IN/AT indices and fall back to an existing difficulty on selection. Missing-difficulty list rows hide the grade. Button overrides are restored on song/difficulty/scene changes, and sparse UI work is cached by selection/library revision rather than scanning every frame. The unlock-details button is narrower and offset right to leave more room for AT. No new hooks or chart reimport. Device checks: locked AT -> unlocked IN score/highlight, repeated IN taps, missing HD/AT, then return to official songs.

@@ -185,7 +185,7 @@ void settingsLeave(Runtime&r,const char*reason){if(nativeTabSwitch)return;tabTap
  P owner=target(r,settingRoot);if(r.alive(owner)){P tabs=r.get<P>(owner,"tabAnimators");int index=r.get<int>(owner,"currentTab");if(tabs&&index>=0&&uintptr_t(index)<r.array_length(tabs)){P tr=transform(r,r.arrayAt(tabs,index)),slider=r.get<P>(owner,"sliderController");V2 pos=r.unbox<V2>(r.call(tr,"get_anchoredPosition")),size=r.unbox<V2>(r.call(tr,"get_sizeDelta"));if(slider)r.call(slider,"MoveTo",{"System.Single","System.Single"},{&pos.x,&size.x});}}
 }
 void selectorOff(Runtime&r){clearSelector(r);}
-void selectorFrame(Runtime&r,P self){runtime=&r;if(modEditorOpen)settingsLeave(r,"selector-active");if(settingRoot){dispose(r,tabRoot,true);dispose(r,settingRoot,false);tabButton=tabText=nullptr;}
+void selectorFrame(Runtime&r,P self){runtime=&r;if(modEditorOpen)settingsLeave(r,"selector-active");if(settingRoot){clearTabBackdrop(r);dispose(r,tabRoot,true);dispose(r,settingRoot,false);tabButton=tabText=nullptr;}
  if(target(r,selectorRoot)!=self)makeSelector(r,self);if(!built)return;
  NSDictionary*s=[[PMSettings shared] snapshot];bool visible=[s[@"showShortcuts"] boolValue]&&r.unbox<bool>(r.call(go(r,mirrorTransform),"get_activeInHierarchy"))&&!r.get<bool>(self,"exit");
  V3 position=r.unbox<V3>(r.call(mirrorTransform,"get_localPosition")),scale=r.unbox<V3>(r.call(mirrorTransform,"get_localScale"));
@@ -243,7 +243,7 @@ void reportModTabFailure(NSString*message){
 }
 void settingsFrame(Runtime&r,P self){runtime=&r;
  if(target(r,settingRoot)!=self){
-  settingsLeave(r,"settings-owner-change");dispose(r,tabRoot,true);dispose(r,settingRoot,false);
+  settingsLeave(r,"settings-owner-change");clearTabBackdrop(r);dispose(r,tabRoot,true);dispose(r,settingRoot,false);
   settingRoot=r.gchandle_new(self,false);tabButton=tabText=nullptr;tabFailed=false;
  }
  if(tabFailed)return;
@@ -285,6 +285,7 @@ void settingsFrame(Runtime&r,P self){runtime=&r;
  }
  bool enabled=r.get<float>(self,"leaveTime")<=0;r.call(tabButton,"set_interactable",{"System.Boolean"},{&enabled});
  r.text(tabText,"MOD");
+ try{extendTabBackdrop(r);}catch(const std::exception&e){tabBackdropFailed=true;PMDiagnosticsWrite((std::string("MOD tab background: ")+e.what()).c_str());}
  PMModEditor*editor=[PMModEditor shared];if(modEditorOpen&&editor.hidden&&!nativeSettingsRoot){settingsLeave(r,"missing-native-page");return;}
  if(!modEditorOpen&&pollModTabTouch(r,self)){PMDiagnosticsWrite("MOD tab touch fallback activation");press(r,tabButton);}
  if(modEditorOpen&&nativeSettingsRoot)pollNativeSettings(r);

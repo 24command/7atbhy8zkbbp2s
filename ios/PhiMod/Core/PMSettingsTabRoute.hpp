@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <functional>
 namespace phimod {
 enum class SettingsTabRoute { Original, LeaveMod, OpenMod, KeepMod };
 inline SettingsTabRoute settingsTabRoute(bool owns,bool internal,bool modActive,int index){
@@ -9,16 +10,16 @@ inline SettingsTabRoute settingsTabRoute(bool owns,bool internal,bool modActive,
 }
 // Use a STRICT common ancestor, never an individual tab or its private host.
 // This keeps the MOD frame alive when any of the three original tabs hides.
-template<class Node,class Parent,class IsRect>
-Node settingsFrameHost(const std::array<Node,3>&frames,Parent parent,IsRect isRect){
+template<class Node,class Parent,class IsRect,class Same=std::equal_to<Node>>
+Node settingsFrameHost(const std::array<Node,3>&frames,Parent parent,IsRect isRect,Same same={}){
  Node candidate=parent(frames[0]);
  for(int depth=0;candidate!=Node{}&&depth<32;++depth,candidate=parent(candidate)){
   bool common=true;
   for(Node frame:frames){
-   if(frame==candidate){common=false;break;}
+   if(same(frame,candidate)){common=false;break;}
    Node node=parent(frame);int steps=0;
-   while(node!=Node{}&&node!=candidate&&steps++<32)node=parent(node);
-   if(node!=candidate){common=false;break;}
+   while(node!=Node{}&&!same(node,candidate)&&steps++<32)node=parent(node);
+   if(!same(node,candidate)){common=false;break;}
   }
   if(common&&isRect(candidate))return candidate;
  }

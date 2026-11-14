@@ -12,9 +12,9 @@ class ManagementResources(unittest.TestCase):
  def test_search_dismisses_whole_picker(self):
   s=source('PMUnlockEditor.mm');self.assertIn('container=self.navigationController?:self',s)
   self.assertIn('[presenter dismissViewControllerAnimated:YES completion:',s)
- def test_zero_is_session_only(self):
+ def test_low_opacity_is_session_only(self):
   s=source('PMSettings.mm');self.assertIn('@"opacity":@[@0,@1]',s)
-  self.assertIn('if(opacity&&[opacity doubleValue]==0)',s)
+  self.assertIn('if(opacity&&[opacity doubleValue]<0.15)',s)
   snapshot=s[s.index('- (NSDictionary *)snapshot'):s.index('- (BOOL)validateSnapshot')]
   self.assertNotIn('setObject:',snapshot)
  def test_native_settings_use_game_factories(self):

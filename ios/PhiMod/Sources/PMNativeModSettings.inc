@@ -39,7 +39,36 @@ void clearNativeSettings(Runtime&r){
  for(uint32_t*h:{&originalFrames,&originalTabs,&originalContents})if(*h){r.gchandle_free(*h);*h=0;}nativeTabIndex=-1;
  nativeStableFrames=0;tabTap.reset();nativeOptions.clear();nativeActions.clear();nativeSettingsManager=nullptr;nativeAdvanced=false;dispose(r,nativeSettingsRoot,true);
 }
-bool childPath(Runtime&r,P source,P node,std::vector<int>&path){for(int depth=0;node&&node!=source&&depth<32;++depth){path.push_back(r.unbox<int>(r.call(node,"GetSiblingIndex")));node=r.call(node,"get_parent");}return node==source;}
+uint32_t tabBackdropRoot=0;V2 tabBackdropSize{},tabBackdropPosition{};bool tabBackdropFailed=false;
+void clearTabBackdrop(Runtime&r){
+ if(tabBackdropRoot){r.gchandle_free(tabBackdropRoot);tabBackdropRoot=0;}tabBackdropFailed=false;
+}
+void extendTabBackdrop(Runtime&r){
+ if(tabBackdropFailed)return;
+ if(!tabBackdropRoot){
+  P node=transform(r,target(r,tabRoot)),layout=nullptr;
+  for(int depth=0;node&&depth<32;++depth,node=r.call(node,"get_parent")){layout=r.component(go(r,node),r.klass("SettingTabController"));if(r.alive(layout))break;}
+  if(!r.alive(layout)){tabBackdropFailed=true;PMDiagnosticsWrite("MOD tab background: controller not found");return;}
+  P background=r.get<P>(layout,"background"),rect=r.call(background,"get_rectTransform");
+  // Native Refresh sizes only its three stock titles. Extend its SAME polygon,
+  // preserving its left edge, slope, color and sibling order (no input overlay).
+  auto area=r.unbox<sceneimpl::Rect>(r.call(rect,"get_rect"));auto tab=bounds(r,target(r,tabRoot),rect);
+  float extra=std::max(0.f,tab.r+std::fabs(area.h)*.27f+12.f-(area.x+area.w));
+  V2 pivot=r.unbox<V2>(r.call(rect,"get_pivot"));tabBackdropSize=r.unbox<V2>(r.call(rect,"get_sizeDelta"));tabBackdropPosition=r.unbox<V2>(r.call(rect,"get_anchoredPosition"));
+  tabBackdropSize.x+=extra;tabBackdropPosition.x+=extra*pivot.x;
+  tabBackdropRoot=r.gchandle_new(rect,false);
+ }
+ P rect=target(r,tabBackdropRoot);if(!r.alive(rect)){clearTabBackdrop(r);return;}
+ V2 size=r.unbox<V2>(r.call(rect,"get_sizeDelta")),position=r.unbox<V2>(r.call(rect,"get_anchoredPosition"));
+ if(std::fabs(size.x-tabBackdropSize.x)>.1f)r.call(rect,"set_sizeDelta",{"UnityEngine.Vector2"},{&tabBackdropSize});
+ if(std::fabs(position.x-tabBackdropPosition.x)>.1f)r.call(rect,"set_anchoredPosition",{"UnityEngine.Vector2"},{&tabBackdropPosition});
+}
+bool sameNativeTransform(Runtime&r,P a,P b){return a==b||(a&&b&&r.unbox<bool>(r.stat(r.type("UnityEngine","Object"),"op_Equality",{"UnityEngine.Object","UnityEngine.Object"},{a,b})));}
+P enclosingCanvas(Runtime&r,P node){
+ for(int depth=0;node&&depth<64;++depth,node=r.call(node,"get_parent")){P canvas=r.component(go(r,node),r.type("UnityEngine","Canvas"));if(r.alive(canvas))return canvas;}
+ return nullptr;
+}
+bool childPath(Runtime&r,P source,P node,std::vector<int>&path){for(int depth=0;node&&!sameNativeTransform(r,node,source)&&depth<64;++depth){path.push_back(r.unbox<int>(r.call(node,"GetSiblingIndex")));node=r.call(node,"get_parent");}return sameNativeTransform(r,node,source);}
 P mappedTransform(Runtime&r,P source,P clone,P node){std::vector<int>path;if(!childPath(r,source,node,path))throw std::runtime_error("Settings template reference lies outside its frame");for(auto i=path.rbegin();i!=path.rend();++i){int index=*i;clone=r.call(clone,"GetChild",{"System.Int32"},{&index});}return clone;}
 P appendSettingArray(Runtime&r,P old,P type,P extra){int count=(int)r.array_length(old);P array=r.array_new(type,count+1);uint32_t root=r.gchandle_new(array,false);try{for(int i=0;i<=count;++i){P value=i==count?extra:r.arrayAt(old,i);r.invokeOn(r.resolve(r.type("System","Array"),"SetValue",{"System.Object","System.Int32"}),array,{value,&i});}}catch(...){r.gchandle_free(root);throw;}r.gchandle_free(root);return array;}
 void registerNativeTab(Runtime&r,P setting,P frame,P content){
@@ -68,7 +97,7 @@ void showNativePath(Runtime&r,P node,P root){
  for(int depth=0;node&&depth<32;++depth){
   P object=go(r,node);active(r,object,true);P group=r.component(object,r.type("UnityEngine","CanvasGroup"));
   if(r.alive(group)){float one=1;bool yes=true;r.call(group,"set_alpha",{"System.Single"},{&one});r.call(group,"set_interactable",{"System.Boolean"},{&yes});r.call(group,"set_blocksRaycasts",{"System.Boolean"},{&yes});}
-  if(node==root)return;node=r.call(node,"get_parent");
+  if(sameNativeTransform(r,node,root))return;node=r.call(node,"get_parent");
  }throw std::runtime_error("MOD content path escaped its independent frame");
 }
 phimod::UIRegion nativeWideViewport(Runtime&r,P setting,P frames){
@@ -108,13 +137,24 @@ void makeNativeSettings(Runtime&r,P setting){
  P sourceTransform=transform(r,sourceFrame);
  if(r.array_length(frames)!=3)throw std::runtime_error("Unexpected original settings frame count");
  std::array<P,3>frameTransforms{transform(r,r.arrayAt(frames,0)),transform(r,r.arrayAt(frames,1)),transform(r,r.arrayAt(frames,2))};
- P parent=phimod::settingsFrameHost(frameTransforms,[&](P node){return r.call(node,"get_parent");},[&](P node){return r.alive(r.component(go(r,node),r.type("UnityEngine","RectTransform")));});
- if(!parent)throw std::runtime_error("Shared native settings frame host not found");
+ // Frame animators can live under an ordinary Transform, not a RectTransform.
+ // Compare Unity object identity rather than requiring identical managed wrappers.
+ P parent=phimod::settingsFrameHost(frameTransforms,[&](P node){return r.call(node,"get_parent");},[](P){return true;},[&](P a,P b){return sameNativeTransform(r,a,b);});
+ P sourceCanvas=enclosingCanvas(r,transform(r,source));
+ if(!r.alive(sourceCanvas))throw std::runtime_error("Native settings canvas unavailable");
+ P canvasRoot=r.call(sourceCanvas,"get_rootCanvas");
+ if(!parent)parent=r.call(transform(r,canvasRoot),"get_parent"); // Scene-root sibling for disconnected canvases.
+ // A fallback host must also be outside every frame that ChangeTab hides.
+ for(int depth=0;parent&&depth<64;++depth){bool inside=false;for(P frame:frameTransforms){std::vector<int>path;if(childPath(r,frame,parent,path)){inside=true;break;}}if(!inside)break;parent=r.call(parent,"get_parent");}
+
+ P parentRectObject=parent?r.component(go(r,parent),r.type("UnityEngine","RectTransform")):nullptr;
+ bool rectHost=r.alive(parentRectObject);
+
  int fromTab=std::clamp(r.get<int>(setting,"currentTab"),0,2);P visibleFrame=r.arrayAt(frames,fromTab);
- auto body=bounds(r,visibleFrame,parent);auto parentRect=r.unbox<sceneimpl::Rect>(r.call(parent,"get_rect"));
- auto bodyRegion=phimod::settingsBody({body.l,body.b,body.r,body.t},{parentRect.x,parentRect.y,parentRect.x+parentRect.w,parentRect.y+parentRect.h});
+ phimod::UIRegion bodyRegion{0,0,1,1};
+ if(rectHost){auto body=bounds(r,visibleFrame,parent);auto parentRect=r.unbox<sceneimpl::Rect>(r.call(parentRectObject,"get_rect"));bodyRegion=phimod::settingsBody({body.l,body.b,body.r,body.t},{parentRect.x,parentRect.y,parentRect.x+parentRect.w,parentRect.y+parentRect.h});}
  auto wideRegion=nativeWideViewport(r,setting,frames);
- int frameLayer=r.unbox<int>(r.call(parent,"get_childCount"));
+ int frameLayer=parent?r.unbox<int>(r.call(parent,"get_childCount")):0;
  for(P frameTr:frameTransforms){std::vector<int>path;if(childPath(r,parent,frameTr,path)&&!path.empty())frameLayer=std::min(frameLayer,path.back());}
  P root=clone(r,go(r,sourceFrame),parent,nativeSettingsRoot);active(r,root,false);
  r.call(root,"set_name",{"System.String"},{r.string_new("PhiMod Settings Frame")});
@@ -131,6 +171,26 @@ void makeNativeSettings(Runtime&r,P setting){
   P copiedAnimators=r.children(root,r.type("UnityEngine","Animator"));bool no=false;
   for(uintptr_t i=0;copiedAnimators&&i<r.array_length(copiedAnimators);++i)r.call(r.arrayAt(copiedAnimators,int(i)),"set_enabled",{"System.Boolean"},{&no});
   nativeManualLayout(r,cloneTransform);nativeRectRegion(r,cloneTransform,bodyRegion);
+  if(!rectHost){
+   // A non-RectTransform parent has no anchor rectangle. Use the original
+   // root canvas dimensions, not a zero-sized stretch rectangle or hidden pose.
+   P canvasTr=transform(r,canvasRoot);auto rect=r.unbox<sceneimpl::Rect>(r.call(canvasTr,"get_rect"));
+   V2 center{.5f,.5f},size{rect.w,rect.h};
+   r.call(cloneTransform,"set_anchorMin",{"UnityEngine.Vector2"},{&center});r.call(cloneTransform,"set_anchorMax",{"UnityEngine.Vector2"},{&center});r.call(cloneTransform,"set_sizeDelta",{"UnityEngine.Vector2"},{&size});
+   V3 position=r.unbox<V3>(r.call(canvasTr,"get_position"));r.call(cloneTransform,"set_position",{"UnityEngine.Vector3"},{&position});
+   P canvas=r.component(root,r.type("UnityEngine","Canvas"));
+   if(!r.alive(canvas))canvas=r.call(root,"AddComponent",{"System.Type"},{r.type_get_object(r.class_get_type(r.type("UnityEngine","Canvas")))});
+   int mode=r.enumValue(r.call(canvasRoot,"get_renderMode"),"UnityEngine.RenderMode");r.call(canvas,"set_renderMode",{"UnityEngine.RenderMode"},{&mode});
+   r.call(canvas,"set_worldCamera",{"UnityEngine.Camera"},{r.call(canvasRoot,"get_worldCamera")});
+   float distance=r.unbox<float>(r.call(canvasRoot,"get_planeDistance")),factor=r.unbox<float>(r.call(canvasRoot,"get_scaleFactor"));
+   r.call(canvas,"set_planeDistance",{"System.Single"},{&distance});r.call(canvas,"set_scaleFactor",{"System.Single"},{&factor});
+   bool enabled=true;r.call(canvas,"set_enabled",{"System.Boolean"},{&enabled});
+   if(mode==2){V3 scale=r.unbox<V3>(r.call(canvasTr,"get_lossyScale"));struct Q{float x,y,z,w;};Q rotation=r.unbox<Q>(r.call(canvasTr,"get_rotation"));r.call(cloneTransform,"set_localScale",{"UnityEngine.Vector3"},{&scale});r.call(cloneTransform,"set_rotation",{"UnityEngine.Quaternion"},{&rotation});}
+   int layer=r.unbox<int>(r.call(canvasRoot,"get_sortingLayerID")),order=r.unbox<int>(r.call(canvasRoot,"get_sortingOrder"));
+   r.call(canvas,"set_sortingLayerID",{"System.Int32"},{&layer});r.call(canvas,"set_sortingOrder",{"System.Int32"},{&order});
+   if(!r.alive(r.component(root,r.type("UnityEngine.UI","GraphicRaycaster"))))r.call(root,"AddComponent",{"System.Type"},{r.type_get_object(r.class_get_type(r.type("UnityEngine.UI","GraphicRaycaster")))});
+   PMDiagnosticsWrite("MOD page uses independent canvas under non-rectangular scene host");
+  }
   P scrollTransform=mappedTransform(r,sourceTransform,cloneTransform,transform(r,source));
   P scroll=r.component(go(r,scrollTransform),r.type("UnityEngine.UI","ScrollRect"));
   P content=mappedTransform(r,sourceTransform,cloneTransform,r.get<P>(original,"content"));
@@ -148,7 +208,7 @@ void makeNativeSettings(Runtime&r,P setting){
   else if(scrollTransform==cloneTransform||!childPath(r,scrollTransform,viewport,viewportPath)){
    r.call(viewport,"SetParent",{"UnityEngine.Transform","System.Boolean"},{cloneTransform,&no});nativeManualLayout(r,viewport);nativeRectRegion(r,viewport,wideRegion);
   }else{
-   for(P node=viewport;node!=scrollTransform;node=r.call(node,"get_parent"))nativeRectRegion(r,node,{0,0,1,1});
+   for(P node=viewport;!sameNativeTransform(r,node,scrollTransform);node=r.call(node,"get_parent"))nativeRectRegion(r,node,{0,0,1,1});
   }
   for(P item:{content,holder}){
    std::vector<int>path;if(!childPath(r,cloneTransform,item,path))throw std::runtime_error("MOD content is outside its cloned frame");
