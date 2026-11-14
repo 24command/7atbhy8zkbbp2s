@@ -33,4 +33,15 @@ class SourceVisibility(unittest.TestCase):
   self.assertNotIn('notePerspectiveWidth(',near)
   self.assertNotIn('trackValue(',near)
   self.assertNotIn('if(start>now+8)',block)
+ def test_spatial_index_retains_precise_gate_and_due_notes(self):
+  s=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text('utf8')
+  recovery=s.split('void recoverSourceNotes(',1)[1].split('void visuals(',1)[0]
+  self.assertIn('index.floors.query(low,high,emit);index.due.query(now,now,emit)',recovery)
+  self.assertIn('else for(size_t i:index.all)emit(i)',recovery)
+  self.assertIn('line.incline==0',recovery)
+  self.assertIn('recoveryUnitControl(line.yControl)',recovery)
+  self.assertIn('recoveryUnitControl(line.sizeControl)',recovery)
+  self.assertIn('sourceVisualNear(',recovery)
+  self.assertIn('sourceRecoveryIndexes.clear();sourceRecoveryWork.clear();',s)
+  self.assertIn('index.all.back()<firstIndex',recovery)
 if __name__=='__main__':unittest.main()

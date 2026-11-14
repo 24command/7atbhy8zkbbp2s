@@ -4,6 +4,7 @@
 #include "../Core/PMUIInteraction.hpp"
 #include "../Core/PMSelectorDifficulty.hpp"
 #include "../Core/PMRPEVisibility.hpp"
+#include "../Core/PMIntervalIndex.hpp"
 #include "../Core/PMFrameCache.hpp"
 #include "../Core/PMCachedRPETrack.hpp"
 #include "../Core/PMCoverGeometry.hpp"
@@ -57,6 +58,9 @@ std::set<P>recoveredSourceNotes;
 using SourceVisual=phimod::RpeVisualValues;
 struct SourceCandidate{P note;NSDictionary*source;SourceVisual visual;int line,index,type;bool above;double start,end;float x;};
 std::vector<SourceCandidate>sourceCandidates;bool sourceCandidatesReady=false;
+struct SourceRecoveryIndex{std::vector<size_t>all;phimod::IntervalIndex floors,due;bool simple=true;};
+std::map<int,SourceRecoveryIndex>sourceRecoveryIndexes;std::vector<size_t>sourceRecoveryWork;
+
 
 P extrasBoundChart=nullptr;
 std::map<std::string,std::map<int,NSDictionary*>>variants;std::map<P,NSDictionary*>extras;std::map<P,V3>noteScales,lineScales;std::map<int,uint32_t>decorText,decorImage;
@@ -235,7 +239,7 @@ P audio(Runtime&r,NSString*path){
  }catch(...){r.gchandle_free(clipRoot);throw;}
 }
 NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=[[key stringByReplacingOccurrencesOfString:id withString:@""]lowercaseString];*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":[lower containsString:@"blur"]?@"blur":@"image";return id;}
-void clearVisuals(Runtime&r){clearSkew(r);clearHud(r);restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();extrasBoundChart=nullptr;recoveredSourceNotes.clear();sourceCandidates.clear();sourceCandidatesReady=false;noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();plainLineRenderers.clear();failedVisualLines.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();visualTracks.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();sourceFloorFrame.clear();sourceAlphaFrame.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();uiControlLines.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
+void clearVisuals(Runtime&r){clearSkew(r);clearHud(r);restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();extrasBoundChart=nullptr;recoveredSourceNotes.clear();sourceCandidates.clear();sourceCandidatesReady=false;sourceRecoveryIndexes.clear();sourceRecoveryWork.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();plainLineRenderers.clear();failedVisualLines.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();visualTracks.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();sourceFloorFrame.clear();sourceAlphaFrame.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();uiControlLines.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
 struct ChapterCoverFit{P sprite=nullptr;uint32_t image=0;};std::map<P,ChapterCoverFit>chapterCoverFits;
 void fitExpandedChapterCover(Runtime&r,P loader){
  if(!r.alive(loader))return;P image=r.get<P>(loader,"_image");if(!r.alive(image))return;P sprite=r.call(image,"get_sprite");if(!r.alive(sprite))return;
@@ -757,7 +761,7 @@ void beforeInformation(Runtime&r,P level){
    }
   }
  }
- extras.swap(bound);extrasBoundChart=chart;sourceCandidates.clear();sourceCandidatesReady=false;
+ extras.swap(bound);extrasBoundChart=chart;sourceCandidates.clear();sourceCandidatesReady=false;sourceRecoveryIndexes.clear();sourceRecoveryWork.clear();
  log([NSString stringWithFormat:@"Content source binding: notes=%lu reordered=%lu (serialized identity, before mode edits)",(unsigned long)extras.size(),(unsigned long)reordered]);
 }
 
@@ -993,6 +997,7 @@ bool sourceVisualNear(Runtime&r,const SourceFrameLine&line,const SourceVisual&n,
  double head=below?-geometry.head:geometry.head,tail=hold?(below?-geometry.tail:geometry.tail):head;
  return phimod::rpeVisualNear(line.pose,x,head,tail,n.size*(line.sizeControl?controlValue(line.sizeControl,distance):1));
 }
+bool recoveryUnitControl(const std::vector<ControlPoint>*points){if(!points)return true;for(const auto&p:*points)if(p.value!=1)return false;return true;}
 void recoverSourceNotes(Runtime&r,P manager){
  if(!currentChart)return;P progress=r.get<P>(manager,"progressControl"),judge=r.get<P>(manager,"judgeControl"),info=r.get<P>(manager,"levelInformation");
  if(!r.get<bool>(info,"chartLoaded"))return;
@@ -1007,12 +1012,25 @@ void recoverSourceNotes(Runtime&r,P manager){
    sourceCandidates.push_back({note,n,sourceVisual(n),line/2,r.get<int>(note,"noteIndex"),type,line%2==0,start,start+(type==3?r.get<float>(note,"holdTime"):0),r.get<float>(note,"positionX")});
   }
   std::stable_sort(sourceCandidates.begin(),sourceCandidates.end(),[](const auto&a,const auto&b){return a.end<b.end;});
+  for(size_t i=0;i<sourceCandidates.size();++i){const auto&c=sourceCandidates[i];auto&index=sourceRecoveryIndexes[c.line];index.all.push_back(i);const auto&v=c.visual;index.simple=index.simple&&v.raw==1&&v.yOffset==0&&v.size==1&&std::isfinite(v.floor)&&std::isfinite(v.endFloor)&&std::isfinite(c.start)&&std::isfinite(c.end);}
+  for(auto&entry:sourceRecoveryIndexes){auto&index=entry.second;if(!index.simple)continue;std::vector<phimod::IntervalIndex::Entry>floors,due;floors.reserve(index.all.size());due.reserve(index.all.size());for(size_t i:index.all){const auto&c=sourceCandidates[i];double tail=c.type==3?c.visual.endFloor:c.visual.floor;floors.push_back({std::min(c.visual.floor,tail),std::max(c.visual.floor,tail),i});due.push_back({c.start-2,c.end+.25,i});}index.floors.reset(std::move(floors));index.due.reset(std::move(due));}
+  sourceRecoveryWork.reserve(sourceCandidates.size());
+  size_t eligible=0;for(const auto&entry:sourceRecoveryIndexes)if(entry.second.simple)eligible+=entry.second.all.size();log([NSString stringWithFormat:@"Recovery spatial index: %lu notes, %lu simple candidates; precise visibility retained",(unsigned long)sourceCandidates.size(),(unsigned long)eligible]);
   sourceCandidatesReady=true;
  }
  std::map<int,SourceFrameLine>poses;std::map<P,P>existing;bool controlsIndexed=false;
- // Binary lifetime cursor also handles practice seeks backwards without rebuilding.
- for(auto it=phimod::rpeFirstUnexpired(sourceCandidates,now-.25);it!=sourceCandidates.end();++it){
-  const auto&candidate=*it;
+ // Union spatial candidates with the full native judgement window, including
+ // long active Holds. There is no future-time cutoff and no limit on results.
+ sourceRecoveryWork.clear();auto first=phimod::rpeFirstUnexpired(sourceCandidates,now-.25);size_t firstIndex=size_t(first-sourceCandidates.begin());
+ auto emit=[&](size_t i){if(i>=firstIndex)sourceRecoveryWork.push_back(i);};
+ for(auto&entry:sourceRecoveryIndexes){int lineIndex=entry.first;auto&index=entry.second;if(index.all.empty()||index.all.back()<firstIndex)continue;if(lineIndex<0||lineIndex>=count||lineIndex>=(int)sourceLines.count)continue;
+  auto pose=poses.emplace(lineIndex,sourceFrameLine(r,r.at(lines,lineIndex),sourceLines[lineIndex],lineIndex,info,now)).first;const auto&line=pose->second;double low=0,high=0;
+  bool indexed=index.simple&&line.incline==0&&recoveryUnitControl(line.yControl)&&recoveryUnitControl(line.posControl)&&recoveryUnitControl(line.sizeControl)&&phimod::recoveryFloorWindow(line.floor,line.pose.y,line.pose.xy,line.pose.yy,world,low,high);
+  if(indexed){index.floors.query(low,high,emit);index.due.query(now,now,emit);}else for(size_t i:index.all)emit(i);
+ }
+ std::sort(sourceRecoveryWork.begin(),sourceRecoveryWork.end());sourceRecoveryWork.erase(std::unique(sourceRecoveryWork.begin(),sourceRecoveryWork.end()),sourceRecoveryWork.end());
+ for(size_t candidateIndex:sourceRecoveryWork){
+  const auto&candidate=sourceCandidates[candidateIndex];
   if(candidate.end<now-.25||candidate.line<0||candidate.line>=count||candidate.line>=(int)sourceLines.count)continue;
   bool due=now>=candidate.start-2&&now<=candidate.end+.25;
    // Exact authored alpha/visible-time rejection; due notes still reach native judgement.
