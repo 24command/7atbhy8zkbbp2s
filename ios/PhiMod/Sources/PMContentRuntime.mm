@@ -451,9 +451,18 @@ void selectorLoadingFrame(Runtime&r,P selector){
  }
 }
 P sparseSelector=nullptr,sparseItem=nullptr;int sparseSlot=-1,sparseCount=-1;NSUInteger sparseRevision=NSUIntegerMax;
-std::vector<std::pair<uint32_t,bool>>sparseButtons;
+struct SparseButton{uint32_t root;bool previous,desired;};std::vector<SparseButton>sparseButtons;
+std::vector<std::pair<uint32_t,int>>sparsePlaceholders;
+void maintainSparseSlots(Runtime&r){
+ for(auto entry:sparseButtons){P button=target(r,entry.root);if(r.alive(button)&&r.unbox<bool>(r.call(button,"get_interactable"))!=entry.desired){bool enabled=entry.desired;r.call(button,"set_interactable",{"System.Boolean"},{&enabled});}}
+ for(auto entry:sparsePlaceholders){P info=target(r,entry.first);if(!info)continue;P text=r.get<P>(info,"difficulty");NSString*value=r.string(r.call(text,"get_text"));
+  if([value isEqualToString:@"?"]||[value isEqualToString:@"-"])continue;
+  NSString*name=@[@"EZ",@"HD",@"IN",@"AT"][entry.second];r.call(info,"HideInfo",{"System.String"},{r.managedString(name)});
+ }
+}
 void clearSparseButtons(Runtime&r){
- for(auto entry:sparseButtons){P button=target(r,entry.first);if(r.alive(button)){bool enabled=entry.second;r.call(button,"set_interactable",{"System.Boolean"},{&enabled});}r.gchandle_free(entry.first);}
+ for(auto entry:sparseButtons){P button=target(r,entry.root);if(r.alive(button)){bool enabled=entry.previous;r.call(button,"set_interactable",{"System.Boolean"},{&enabled});}r.gchandle_free(entry.root);}
+ for(auto entry:sparsePlaceholders)r.gchandle_free(entry.first);sparsePlaceholders.clear();
  sparseButtons.clear();sparseSelector=sparseItem=nullptr;sparseSlot=sparseCount=-1;sparseRevision=NSUIntegerMax;
 }
 void selectorLoadingEnd(Runtime&r,bool finishSelected){
@@ -516,7 +525,7 @@ void selectorDifficultyUI(Runtime&r,P selector){
  P items=r.call(selector,"get_SongItems");int count=r.count(items),index=r.get<int>(selector,"nowSong"),slot=r.get<int>(selector,"nowLevel");
  if(slot<0||slot>3||index<0||index>=count)return;
  P selectedItem=r.at(items,index);NSUInteger revision=PMContentStore.shared.revision;
- if(sparseSelector==selector&&sparseItem==selectedItem&&sparseSlot==slot&&sparseCount==count&&sparseRevision==revision)return;
+ if(sparseSelector==selector&&sparseItem==selectedItem&&sparseSlot==slot&&sparseCount==count&&sparseRevision==revision){maintainSparseSlots(r);return;}
  clearSparseButtons(r);
  for(int j=0;j<count;++j){P item=r.at(items,j),song=r.get<P>(item,"songInfo");NSString*id=r.string(r.get<P>(song,"songsId"));auto group=variants.find(id.UTF8String?:"");
   if(group==variants.end()||![id hasPrefix:@"pm_"])continue;
@@ -527,10 +536,10 @@ void selectorDifficultyUI(Runtime&r,P selector){
   if(j!=index)continue;
   P bar=r.get<P>(selector,"levelBarController"),infos=bar?r.get<P>(bar,"levelInfos"):nullptr;
   for(int i=0;infos&&i<4&&uintptr_t(i)<r.array_length(infos);++i){P info=r.arrayAt(infos,i);if(!info)continue;bool available=group->second.count(i)!=0;
-   if(!available){P text=r.get<P>(info,"difficulty");NSString*value=r.string(r.call(text,"get_text"));if(![value isEqualToString:@"?"]){NSString*name=@[@"EZ",@"HD",@"IN",@"AT"][i];r.call(info,"HideInfo",{"System.String"},{r.managedString(name)});}}
+   if(!available){sparsePlaceholders.push_back({r.gchandle_new(info,false),i});P text=r.get<P>(info,"difficulty");NSString*value=r.string(r.call(text,"get_text"));if(![value isEqualToString:@"?"]){NSString*name=@[@"EZ",@"HD",@"IN",@"AT"][i];r.call(info,"HideInfo",{"System.String"},{r.managedString(name)});}}
    P rect=r.get<P>(info,"mainObject"),object=r.call(rect,"get_gameObject"),buttons=r.children(object,r.type("UnityEngine.UI","Button"));
    bool enabled=available&&i!=slot; // Missing and already-selected slots cannot be clicked.
-   for(uintptr_t k=0;buttons&&k<r.array_length(buttons);++k){P button=r.arrayAt(buttons,int(k));bool previous=r.unbox<bool>(r.call(button,"get_interactable"));sparseButtons.push_back({r.gchandle_new(button,false),previous});if(previous!=enabled)r.call(button,"set_interactable",{"System.Boolean"},{&enabled});}
+   for(uintptr_t k=0;buttons&&k<r.array_length(buttons);++k){P button=r.arrayAt(buttons,int(k));bool previous=r.unbox<bool>(r.call(button,"get_interactable"));sparseButtons.push_back({r.gchandle_new(button,false),previous,enabled});if(previous!=enabled)r.call(button,"set_interactable",{"System.Boolean"},{&enabled});}
   }
  }
  sparseSelector=selector;sparseItem=selectedItem;sparseSlot=slot;sparseCount=count;sparseRevision=revision;

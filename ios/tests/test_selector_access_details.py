@@ -84,12 +84,12 @@ class SparseDifficultyTests(unittest.TestCase):
   self.assertLess(f.index('pmunlock::tick'),f.index('selectorDifficultyUI'))
   self.assertIn('availableDifficulty(mask,level)',c)
   self.assertIn('bool enabled=available&&i!=slot',c)
-  self.assertIn('sparseButtons.push_back({r.gchandle_new(button,false),previous})',c)
+  self.assertIn('sparseButtons.push_back({r.gchandle_new(button,false),previous,enabled})',c)
   self.assertIn('clearSparseButtons(r);',c.split('void selectorLoadingEnd(',1)[1])
   sparse=c.split('void selectorDifficultyUI(',1)[1].split('// Native difficulty bars assume',1)[0]
   self.assertIn('if(!present)',sparse)
   self.assertIn('"HideInfo"',sparse)
-  self.assertIn('sparseRevision==revision)return;',sparse)
+  self.assertIn('sparseRevision==revision){maintainSparseSlots(r);return;}',sparse)
  def test_unlock_slot_refreshes_text_and_selection(self):
   s=(ROOT/'PhiMod/Sources/PMUnlockRuntime.mm').read_text(encoding='utf8')
   block=s.split('bool blocked=lockUIBlocked,playable=!blocked;',1)[1].split('P mask=',1)[0]
