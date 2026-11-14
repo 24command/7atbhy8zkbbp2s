@@ -20,9 +20,9 @@ class EditorEntry(unittest.TestCase):
   s=(R/'PMSceneUI.mm').read_text(encoding='utf-8')
   press=s[s.index('bool press('):]
   self.assertNotIn('int tab=2;',press)
-  self.assertIn('target(r,originalFrames)',press)
+  self.assertNotIn('target(r,originalFrames)',press)
   native=(R/'PMNativeModSettings.inc').read_text(encoding='utf-8')
-  self.assertIn('"tabScrollContents"',native)
+  self.assertIn('hideNativeBody(r,canvasTr,body)',native)
   self.assertIn('"itemsHolder",holder',native)
   self.assertIn('restore(r,hidden,"SetActive")',s)
 if __name__=='__main__':unittest.main()

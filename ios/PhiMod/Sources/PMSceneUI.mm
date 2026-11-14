@@ -11,6 +11,7 @@
 #include "PMContentRuntime.hpp"
 #include "../Core/PMSettingsTabRoute.hpp"
 #include "../Core/PMUIInteraction.hpp"
+#include "../Core/PMModSettingsLayout.hpp"
 #include "../Core/PMBuildInfo.hpp"
 #include <algorithm>
 #include <array>
@@ -305,9 +306,7 @@ bool press(Runtime&r,P button){if(pressNativeSetting(r,button))return true;auto 
  modEditorOpen=true;
  @try{try{
   makeNativeSettings(r,self);
-  // Native ChangeTab updates all tab animations and slider. Hide entire old
-  // frames so Misc footer/social links cannot remain below the MOD page.
-  P frames=target(r,originalFrames);for(int i=0;frames&&i<(int)r.array_length(frames);++i)stash(r,hidden,go(r,r.arrayAt(frames,i)),"get_activeSelf","SetActive",false);
+  // makeNativeSettings owns only the original body branches; never hide the root Canvas.
   // Optional preview muting must not roll back an already-visible native page.
   for(const char*name:{"audioSource1","audioSource2"})try{P src=r.get<P>(self,name);if(r.alive(src)){P audio=r.get<P>(src,"audioSource");if(r.alive(audio))stash(r,mutes,audio,"get_mute","set_mute",true);}}catch(const std::exception&e){PMDiagnosticsWrite((std::string("MOD optional preview mute: ")+e.what()).c_str());}
   // Native page uses Unity layout, not the optional UIKit advanced-panel anchor.

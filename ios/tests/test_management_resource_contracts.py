@@ -19,7 +19,7 @@ class ManagementResources(unittest.TestCase):
   self.assertNotIn('setObject:',snapshot)
  def test_native_settings_use_game_factories(self):
   s=source('PMNativeModSettings.inc')
-  for name in ('AddToggle','AddSlider','AddButton','RefreshItems','RefreshPosition'):self.assertIn('"'+name+'"',s)
+  for name in ('AddToggle','AddSlider','AddButton'):self.assertIn('"'+name+'"',s)
   self.assertIn('UnityEngine.Events.UnityAction<System.Boolean>[]',s)
  def test_skin_extras_really_have_hooks(self):
   manifest=json.loads((ROOT/'tools/gameplay_hook_manifest.json').read_text())

@@ -4,5 +4,5 @@
 #endif
 namespace phimod {
 inline constexpr char buildRevision[]=PM_BUILD_REVISION;
-inline constexpr char settingsRevision[]="settings-host-v6-20261114";
+inline constexpr char settingsRevision[]="settings-scroll-v7-20261115";
 }
