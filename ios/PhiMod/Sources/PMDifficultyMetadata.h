@@ -9,6 +9,6 @@ static inline NSArray<NSNumber*>*PMDifficultyRGB(id input){
  if(![input isKindOfClass:NSString.class])return nil;
  NSString*s=[input stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];if(!s.length)return @[];
  NSArray*parts=[s componentsSeparatedByString:@","];if(parts.count!=3)return nil;NSMutableArray*out=[NSMutableArray new];
- for(NSString*part in parts){NSScanner*scanner=[NSScanner scannerWithString:part];int n;if(![scanner scanInt:&n]||!scanner.isAtEnd||n<0||n>255)return nil;[out addObject:@(n)];}return out;
+ for(NSString*part in parts){NSScanner*scanner=[NSScanner scannerWithString:[part stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]];int n;if(![scanner scanInt:&n]||!scanner.isAtEnd||n<0||n>255)return nil;[out addObject:@(n)];}return out;
 }
 static inline NSString*PMDifficultyRecordLevel(NSDictionary*s){int slot=PMStockDifficulty(s[@"level"]);return slot<0?@"AT":@[@"EZ",@"HD",@"IN",@"AT"][slot];}

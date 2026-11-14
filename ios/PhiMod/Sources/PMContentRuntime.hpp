@@ -15,6 +15,7 @@ void selectorLoadingEnd(pmbridge::Runtime&,bool finishSelected);
 void prepareSelectorItems(pmbridge::Runtime&,void*selector);
 void selectorFrame(pmbridge::Runtime&,void*selector);
 NSDictionary*selectedDifficulty(NSString*group,int slot);
+NSDictionary*difficultyForSong(pmbridge::Runtime&,void*song,int slot);
 bool ownsDifficultyButton(void*button);
 bool pressDifficultyButton(pmbridge::Runtime&,void*button);
 void freezeChallengeDifficulties(pmbridge::Runtime&);
