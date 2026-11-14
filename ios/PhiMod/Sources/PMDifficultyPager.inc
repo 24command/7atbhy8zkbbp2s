@@ -69,7 +69,7 @@ void difficultyPager(Runtime&r,P selector){
   difficultyCells.push_back(makeDifficultyCell(r,tr,font,4));difficultyCells.push_back(makeDifficultyCell(r,tr,font,5));difficultyDirty=true;
  }
  int slot=r.get<int>(selector,"nowLevel");auto&members=variants[difficultyGroup.UTF8String];NSDictionary*current=members.count(slot)?members[slot]:nil;
- size_t selectedIndex=SIZE_MAX;for(size_t i=0;i<difficultyEntries.size();++i)if(difficultyEntries[i]&&difficultyEntries[i]==current){selectedIndex=i;break;}
+ size_t selectedIndex=std::numeric_limits<size_t>::max();for(size_t i=0;i<difficultyEntries.size();++i)if(difficultyEntries[i]&&difficultyEntries[i]==current){selectedIndex=i;break;}
  size_t count=phimod::difficultyPageSize(difficultyEntries.size(),difficultyPage);float width=100,barWidth=float(count)*width;
  // The original animator must use page-local width, never logical chart count.
  for(const char*field:{"targetBarWidth","currentBarWidth"})r.put(bar,field,barWidth);
@@ -82,8 +82,8 @@ void difficultyPager(Runtime&r,P selector){
   else{difficultyText(r,r.get<P>(info,"level"),name);difficultyText(r,r.get<P>(info,"difficulty"),PMDifficultyText(chart));}
   for(auto&c:difficultyCells)if(c.entry==i){bool enabled=chart&&entry!=selectedIndex;r.call(c.button,"set_interactable",{"System.Boolean"},{&enabled});}
  }
- bool selectedHere=selectedIndex!=SIZE_MAX&&selectedIndex/4==difficultyPage;
- if(selectedHere){int local=int(selectedIndex%4),number=int(PMDifficultyNumber(current[@"difficulty"]));r.call(slider,"JumpToLevel",{"System.Int32","System.Int32","System.Single"},{&local,&number,&width});r.call(slider,"Show");
+ bool selectedHere=selectedIndex!=std::numeric_limits<size_t>::max()&&selectedIndex/4==difficultyPage;
+ if(selectedHere){int local=int(selectedIndex%4),number=int(PMDifficultyNumber(current[@"difficulty"]));if(difficultyDirty||r.get<int>(slider,"targetLevel")!=local||r.get<int>(slider,"targetDifficulty")!=number)r.call(slider,"JumpToLevel",{"System.Int32","System.Int32","System.Single"},{&local,&number,&width});r.call(slider,"Show");
   difficultyText(r,r.get<P>(slider,"levelText"),PMDifficultyName(current[@"level"]));difficultyText(r,r.get<P>(slider,"difficultyText"),PMDifficultyText(current));
   P colors=r.get<P>(slider,"levelColor");int stock=PMStockDifficulty(current[@"level"]);Color color=r.unbox<Color>(r.arrayAt(colors,stock<0?3:stock));NSArray*rgb=PMDifficultyRGB(current[@"difficultyRGB"]?:@"");if(rgb.count==3){color.r=[rgb[0]floatValue]/255.f;color.g=[rgb[1]floatValue]/255.f;color.b=[rgb[2]floatValue]/255.f;}r.call(r.get<P>(slider,"background"),"set_color",{"UnityEngine.Color"},{&color});
  }else r.call(slider,"Hide");

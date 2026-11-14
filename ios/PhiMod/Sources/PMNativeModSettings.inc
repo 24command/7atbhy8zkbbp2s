@@ -173,6 +173,8 @@ void makeNativeSettings(Runtime&r,P setting){
   // Otherwise a clone made while Gameplay is hidden keeps writing its hidden pose.
   P copiedAnimators=r.children(root,r.type("UnityEngine","Animator"));bool no=false;
   for(uintptr_t i=0;copiedAnimators&&i<r.array_length(copiedAnimators);++i)r.call(r.arrayAt(copiedAnimators,int(i)),"set_enabled",{"System.Boolean"},{&no});
+  P scalers=r.children(root,r.type("UnityEngine.UI","CanvasScaler"));for(uintptr_t i=0;scalers&&i<r.array_length(scalers);++i)r.call(r.arrayAt(scalers,int(i)),"set_enabled",{"System.Boolean"},{&no});
+  P canvases=r.children(root,r.type("UnityEngine","Canvas"));for(uintptr_t i=0;canvases&&i<r.array_length(canvases);++i)r.call(r.arrayAt(canvases,int(i)),"set_overrideSorting",{"System.Boolean"},{&no});
   nativeManualLayout(r,cloneTransform);nativeRectRegion(r,cloneTransform,bodyRegion);
   P scrollTransform=mappedTransform(r,sourceTransform,cloneTransform,transform(r,source));
   P scroll=r.component(go(r,scrollTransform),r.type("UnityEngine.UI","ScrollRect"));
