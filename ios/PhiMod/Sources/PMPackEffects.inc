@@ -1,5 +1,5 @@
 // Resource-pack runtime: uses native effect/sound calls, never score callbacks.
-struct PackEffect{uint32_t go=0,source=0;P renderer=nullptr;double start=0;int frame=-1;bool initialized=false;P transform=nullptr,sourceTransform=nullptr;};
+struct PackEffect{uint32_t go=0,source=0;P renderer=nullptr;double start=0;int frame=-1;bool initialized=false;P transform=nullptr,sourceTransform=nullptr,referenceRenderer=nullptr;};
 bool packEffectsPending=false,packEffectPlacementLogged=false;
 std::vector<PackEffect>packEffects;std::vector<P>packFrames;
 std::map<int,uint32_t>packClips;uint32_t packAudioSource=0;
@@ -35,7 +35,25 @@ void finishPackEffects(Runtime&r){
   if(!r.alive(source)){e.initialized=true;e.start=now-packFxDuration;continue;}
   V3 position=r.unbox<V3>(r.call(e.sourceTransform,"get_position"));
   V3 nativeScale=r.unbox<V3>(r.call(e.sourceTransform,"get_lossyScale"));
+  // Transform scale already contains the native note-size setting. Match the
+  // sprite's local dimensions as well; a fixed 1.5-unit custom frame is not
+  // necessarily the same size as the original effect sprite.
   V3 scale{nativeScale.x*packFxScale,nativeScale.y*packFxScale,nativeScale.z};
+  if(r.alive(e.referenceRenderer)){
+   P reference=r.call(e.referenceRenderer,"get_sprite"),replacement=packFrames.front();
+   if(r.alive(reference)&&r.alive(replacement)){
+    Rect a=r.unbox<Rect>(r.call(reference,"get_rect")),b=r.unbox<Rect>(r.call(replacement,"get_rect"));
+    float ap=r.unbox<float>(r.call(reference,"get_pixelsPerUnit")),bp=r.unbox<float>(r.call(replacement,"get_pixelsPerUnit"));
+    P tr=r.call(e.referenceRenderer,"get_transform");V3 visual=r.unbox<V3>(r.call(tr,"get_lossyScale"));
+    if(a.w>0&&b.w>0&&ap>0&&bp>0){
+     float ratio=(a.w/ap)/(b.w/bp);
+     if(std::isfinite(ratio)&&std::isfinite(visual.x)&&std::isfinite(visual.y)){
+      // Uniform atlas calibration preserves rectangular pack-frame aspect ratio.
+      scale={visual.x*ratio*packFxScale,visual.y*ratio*packFxScale,visual.z};
+     }
+    }
+   }
+  }
   r.call(e.transform,"set_position",{"UnityEngine.Vector3"},{&position});
   r.call(e.transform,"set_localScale",{"UnityEngine.Vector3"},{&scale});
   r.call(e.renderer,"set_sprite",{"UnityEngine.Sprite"},{packFrames.front()});
@@ -44,7 +62,7 @@ void finishPackEffects(Runtime&r){
   // Phira effects stay at the emission point, not the later moving note/line.
   if(!packEffectPlacementLogged){logf("Skin hit effect placed after native move: scale=%.3f,%.3f pack=%.3f",scale.x,scale.y,packFxScale);packEffectPlacementLogged=true;}
   r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{source});
-  r.gchandle_free(e.source);e.source=0;e.sourceTransform=nullptr;
+  r.gchandle_free(e.source);e.source=0;e.sourceTransform=nullptr;e.referenceRenderer=nullptr;
  }
  packEffectsPending=false;
 }

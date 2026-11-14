@@ -8,6 +8,10 @@ Start with [HP_PRACTICE_20261018.md](HP_PRACTICE_20261018.md) for this revision,
 build/test checklist, and [GAMEPLAY_UI_PORT.md](GAMEPLAY_UI_PORT.md) for scope
 and safety boundaries. Portable C++ cores were rebuilt and run with local MSVC. Source-contract, metadata, judge-patch, and real-image hook-gate checks have passed on Windows. This revision still needs the macOS Apple SDK build and real-device verification.
 
+## Custom hit-effect sizing (2026-11-14)
+
+Custom hit frames now account for the original effect sprite's world-unit width and child transform, in addition to the native effect transform that already includes note-size settings. Atlas calibration is uniform to preserve the pack frame aspect ratio; `hitFxScale` still applies once. Effects without a valid sprite reference retain the previous native-transform fallback. Placement remains deferred until native positioning finishes. No new hooks or skin reimport; compare small/default/large note sizes on device.
+
 ## Skin audio import fix (2026-11-14)
 
 Skin archives may contain WAV or MP3 data named `click.ogg`, `drag.ogg` or `flick.ogg`. Audio import now detects container headers and uses a temporary correctly named file for decoding, retaining the original resource. Vorbis PCM also goes through the shared AAC sample-rate converter; temporary files are cleaned up. Errors identify the resource, detected format and decoder cause. Existing skins need no reimport unless their earlier import failed; retry failed packs with the rebuilt framework. No new hooks.

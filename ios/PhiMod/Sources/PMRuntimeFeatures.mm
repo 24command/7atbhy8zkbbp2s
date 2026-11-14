@@ -414,8 +414,16 @@ void skinEffectCreated(Runtime&r,void*original,void*clone,void*control){
   if(control){P noteRenderer=r.get<P>(control,hold?"_holdSpriteRenderer":"_spriteRenderer");if(r.alive(noteRenderer)){order=std::max(order,r.unbox<int>(r.call(noteRenderer,"get_sortingOrder"))+1);sorting=r.unbox<int>(r.call(noteRenderer,"get_sortingLayerID"));}}
   r.call(renderer,"set_sortingLayerID",{"System.Int32"},{&sorting});r.call(renderer,"set_sortingOrder",{"System.Int32"},{&order});Color tint=packFxTinted?(good?packGood:packPerfect):Color{1,1,1,1};r.call(renderer,"set_color",{"UnityEngine.Color"},{&tint});
   if(packFxRotate&&control){P line=r.get<P>(control,"judgeLine");struct Q{float x,y,z,w;};Q q=r.unbox<Q>(r.call(r.call(line,"get_transform"),"get_rotation"));r.call(r.call(go,"get_transform"),"set_rotation",{"UnityEngine.Quaternion"},{&q});}
+  // Prefer the widest valid native sprite over decorative particle renderers.
+  // Its transform stays alive through the rooted source effect until placement.
+  P referenceRenderer=nullptr;float referenceWidth=0;
+  P sprites=r.children(clone,r.type("UnityEngine","SpriteRenderer"));
+  for(uintptr_t i=0;sprites&&i<r.array_length(sprites);++i){P candidate=r.arrayAt(sprites,int(i)),sprite=r.call(candidate,"get_sprite");if(!r.alive(sprite))continue;
+   Rect rect=r.unbox<Rect>(r.call(sprite,"get_rect"));float ppu=r.unbox<float>(r.call(sprite,"get_pixelsPerUnit"));
+   if(ppu>0&&std::isfinite(rect.w)&&rect.w/ppu>referenceWidth){referenceWidth=rect.w/ppu;referenceRenderer=candidate;}
+  }
   P transform=r.call(go,"get_transform"),sourceTransform=r.call(clone,"get_transform");
-  uint32_t sourceRoot=r.gchandle_new(clone,false);packEffects.push_back({handle,sourceRoot,renderer,0,-1,false,transform,sourceTransform});packEffectsPending=true;
+  uint32_t sourceRoot=r.gchandle_new(clone,false);packEffects.push_back({handle,sourceRoot,renderer,0,-1,false,transform,sourceTransform,referenceRenderer});packEffectsPending=true;
   bool no=false;for(uintptr_t i=0;native&&i<r.array_length(native);++i)r.call(r.arrayAt(native,int(i)),"set_enabled",{"System.Boolean"},{&no});
  }catch(...){if(r.alive(go))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{go});r.gchandle_free(handle);throw;}
 }

@@ -17,6 +17,14 @@ class RuntimePerformanceFixes(unittest.TestCase):
   self.assertNotIn('"set_position"',update)
   hook=source('PMHookBackend.mm').split('void onNoteManager(',1)[1].split('P onSkinInstantiate(',1)[0]
   self.assertLess(hook.index('orig<VoidFn>(h::noteManager)'),hook.index('pmfeatures::flushHitEffects'))
+ def test_hit_effect_matches_native_sprite_size_without_double_note_scale(self):
+  fx=source('PMPackEffects.inc').split('void finishPackEffects(',1)[1].split('void updatePackEffects(',1)[0]
+  self.assertIn('(a.w/ap)/(b.w/bp)',fx)
+  self.assertIn('visual.x*ratio*packFxScale',fx)
+  self.assertIn('visual.y*ratio*packFxScale',fx)
+  self.assertNotIn('"noteScale"',fx)
+  self.assertLess(fx.index('referenceRenderer'),fx.index('"set_enabled"'))
+  self.assertIn('referenceWidth=rect.w/ppu',source('PMRuntimeFeatures.mm'))
  def test_video_avoids_eager_decode_and_repeated_constant_setters(self):
   s=source('PMRuntimeFeatures.mm')
   self.assertIn('std::upper_bound(a.begin(),a.end(),now',s)
