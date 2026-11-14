@@ -3,6 +3,7 @@
 namespace pmscene {
 void selectorFrame(pmbridge::Runtime&,void*);
 void selectorOff(pmbridge::Runtime&);
+bool settingsPreviewSuspended(pmbridge::Runtime&,void*);
 void settingsFrame(pmbridge::Runtime&,void*);
 void settingsLeave(pmbridge::Runtime&,const char* reason="external");
 bool settingsTabRequest(pmbridge::Runtime&,void* owner,int index);

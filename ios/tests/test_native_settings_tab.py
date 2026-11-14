@@ -49,6 +49,13 @@ class NativeSettingsTab(unittest.TestCase):
   self.assertIn('"sliderController"',self.native)
   self.assertIn('"MoveTo"',self.native)
   self.assertIn('nativeHeaderPlaced',self.native)
+  self.assertIn('nativePreviewObjects',self.native)
+  self.assertIn('nativePreviewMute',self.native)
+  hook=(R/'PMHookBackend.mm').read_text('utf8')
+  self.assertIn('if(!pmscene::settingsPreviewSuspended(R(),self))orig<VoidFn>',hook)
+  self.assertIn('for(const char*field:{"previewNoteHolder","judgeLine","clickPosition"})',self.native)
+  self.assertIn('"judgeLine"',self.native)
+  self.assertIn('restore(r,nativePreviewObjects,"SetActive")',self.native)
   self.assertIn('positionNativeHeader(r)',self.native)
   self.assertIn('stash(r,nativeHeaderAnimations,r.arrayAt(tabs,i)',self.native)
  def test_scroll_resize_preserves_scroll_position(self):
@@ -78,7 +85,7 @@ class NativeSettingsTab(unittest.TestCase):
   self.assertIn('sceneimpl::Rect rect=r.unbox<sceneimpl::Rect>',self.native)
   self.assertNotIn('Rect rect=r.unbox<Rect>',self.native)
   self.assertIn('phimod::settingsRevision',self.native)
-  self.assertIn('MOD optional preview mute:',self.scene)
+  self.assertIn('restored exactly once',self.scene)
  def test_original_tab_backdrop_still_extends(self):
   for marker in ('r.get<P>(layout,"background")','tabBackdropPosition.x+=extra*pivot.x','tab.r+std::fabs(area.h)*.27f+12.f'):self.assertIn(marker,self.native)
   self.assertIn('extendTabBackdrop(r)',self.scene)

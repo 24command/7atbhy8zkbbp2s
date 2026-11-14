@@ -544,6 +544,12 @@ void prepareSelectorItems(Runtime&r,P selector){
 void selectorDifficultyUI(Runtime&r,P selector){
 
  if(r.get<bool>(selector,"exit"))return;
+ // Native row pooling/SetText can rewrite a missing grade to 0 without
+ // changing the selected item or difficulty cache key. Reconcile live rows.
+ P liveItems=r.call(selector,"get_SongItems");int liveSlot=r.get<int>(selector,"nowLevel");
+ for(int j=0;j<r.count(liveItems);++j){P item=r.at(liveItems,j),song=r.get<P>(item,"songInfo");NSString*id=r.string(r.get<P>(song,"songsId"));auto group=variants.find(id.UTF8String?:"");if(group==variants.end())continue;bool present=group->second.count(liveSlot)!=0;
+  for(const char*field:{"selectorItemUpside","selectorItemDownside"}){P row=r.get<P>(item,field);if(!r.alive(row))continue;P label=r.get<P>(row,"difficulty");if(!r.alive(label))continue;if(!present&&![r.string(r.call(label,"get_text"))isEqualToString:@""])r.call(label,"set_text",{"System.String"},{r.managedString(@"")});}
+ }
  if(hasDifficultyPager(selector)){difficultyPager(r,selector);return;}
  P items=r.call(selector,"get_SongItems");int count=r.count(items),index=r.get<int>(selector,"nowSong"),slot=r.get<int>(selector,"nowLevel");
  if(slot<0||slot>3||index<0||index>=count)return;

@@ -5,7 +5,7 @@ uint32_t nativeSettingsRoot=0;P nativeSettingsManager=nullptr;bool nativeAdvance
 struct NativeOption{P item;NSString*key;float last;bool slider;};std::vector<NativeOption>nativeOptions;std::map<P,int>nativeActions;
 struct NativeRow{P item;int kind;};std::vector<NativeRow>nativeRows;
 P nativeScroll=nullptr,nativeViewport=nullptr,nativeContent=nullptr,nativeHolder=nullptr;
-std::vector<std::pair<uint32_t,bool>>nativeBodies,nativeHeaderAnimations;
+std::vector<std::pair<uint32_t,bool>>nativeBodies,nativeHeaderAnimations,nativePreviewObjects,nativePreviewMute;
 struct NativeHeaderLabel{uint32_t root;Color color;bool selected;};std::vector<NativeHeaderLabel>nativeHeaderLabels;
 phimod::UITapGate tabTap;P tabTouchOwner=nullptr;int nativeStableFrames=0;
 bool nativeTabSwitch=false;int nativePreviousTab=0,nativeTabIndex=-1;
@@ -68,7 +68,7 @@ void clearNativeSettings(Runtime&r){
  nativeActions.clear();nativeOptions.clear();nativeRows.clear();nativeSettingsManager=nullptr;
  nativeScroll=nativeViewport=nativeContent=nativeHolder=nullptr;nativeAdvanced=false;nativeLayoutSize={};nativeHeaderPlaced=false;nativeStableFrames=0;tabTap.reset();
  // Remove the overlay first, then restore only the body objects we own.
- dispose(r,nativeSettingsRoot,true);restore(r,nativeBodies,"SetActive");restore(r,nativeHeaderAnimations,"set_enabled");
+ dispose(r,nativeSettingsRoot,true);restore(r,nativeBodies,"SetActive");restore(r,nativeHeaderAnimations,"set_enabled");restore(r,nativePreviewObjects,"SetActive");restore(r,nativePreviewMute,"set_mute");
  for(auto&entry:nativeHeaderLabels){P label=target(r,entry.root);try{if(r.alive(label))color(r,label,entry.color);}catch(...){}r.gchandle_free(entry.root);}nativeHeaderLabels.clear();
  P owner=target(r,settingRoot);if(wasOpen&&r.alive(owner)&&r.get<float>(owner,"leaveTime")<=0)changeNativeTab(r,owner,previous);
 }
@@ -133,6 +133,9 @@ void makeNativeSettings(Runtime&r,P setting){
   // Keep native Canvas/navigation in its valid original state. MOD is an
   // independent page, not a fourth index in the three-element animator arrays.
   changeNativeTab(r,setting,0);
+  for(const char*field:{"previewNoteHolder","judgeLine","clickPosition"}){P object=r.get<P>(setting,field);if(!r.alive(object))continue;P gameObject=field==std::string("previewNoteHolder")?go(r,object):object;stash(r,nativePreviewObjects,gameObject,"get_activeSelf","SetActive",false);}
+  for(const char*field:{"audioSource1","audioSource2"}){P source=r.get<P>(setting,field);if(!r.alive(source))continue;P audio=r.get<P>(source,"audioSource");if(r.alive(audio))stash(r,nativePreviewMute,audio,"get_mute","set_mute",true);r.call(source,"Pause");}
+
   for(int i=0;i<3;++i)stash(r,nativeHeaderAnimations,r.arrayAt(tabs,i),"get_enabled","set_enabled",false);
   P ownAnimator=r.component(target(r,tabRoot),r.type("UnityEngine","Animator"));if(r.alive(ownAnimator))stash(r,nativeHeaderAnimations,ownAnimator,"get_enabled","set_enabled",false);
   P body=transform(r,source),parent=r.call(body,"get_parent");for(int depth=0;parent&&!sameNativeTransform(r,parent,canvasTr)&&depth<64;++depth){body=parent;parent=r.call(body,"get_parent");}

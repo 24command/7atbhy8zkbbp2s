@@ -242,6 +242,7 @@ void reportModTabFailure(NSString*message){
  [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
  [host presentViewController:alert animated:YES completion:nil];
 }
+bool settingsPreviewSuspended(Runtime&r,void*self){return modEditorOpen&&target(r,settingRoot)==self&&r.get<float>(self,"leaveTime")<=0;}
 void settingsFrame(Runtime&r,P self){runtime=&r;
  if(target(r,settingRoot)!=self){
   settingsLeave(r,"settings-owner-change");clearTabBackdrop(r);dispose(r,tabRoot,true);dispose(r,settingRoot,false);
@@ -307,8 +308,7 @@ bool press(Runtime&r,P button){if(pressNativeSetting(r,button))return true;auto 
  @try{try{
   makeNativeSettings(r,self);
   // makeNativeSettings owns only the original body branches; never hide the root Canvas.
-  // Optional preview muting must not roll back an already-visible native page.
-  for(const char*name:{"audioSource1","audioSource2"})try{P src=r.get<P>(self,name);if(r.alive(src)){P audio=r.get<P>(src,"audioSource");if(r.alive(audio))stash(r,mutes,audio,"get_mute","set_mute",true);}}catch(const std::exception&e){PMDiagnosticsWrite((std::string("MOD optional preview mute: ")+e.what()).c_str());}
+  // Preview mute/pause is owned by makeNativeSettings and restored exactly once.
   // Native page uses Unity layout, not the optional UIKit advanced-panel anchor.
  }catch(const std::exception&e){NSString*message=[NSString stringWithFormat:@"MOD settings: %s",e.what()];settingsLeave(r,"page-create-failed");reportModTabFailure(message);}}
  @catch(NSException*e){NSString*message=[NSString stringWithFormat:@"MOD settings: %@",e.reason];settingsLeave(r,"page-create-failed");reportModTabFailure(message);}return true;
