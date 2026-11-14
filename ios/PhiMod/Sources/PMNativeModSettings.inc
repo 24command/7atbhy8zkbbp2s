@@ -210,6 +210,10 @@ void makeNativeSettings(Runtime&r,P setting){
   }else{
    for(P node=viewport;!sameNativeTransform(r,node,scrollTransform);node=r.call(node,"get_parent"))nativeRectRegion(r,node,{0,0,1,1});
   }
+  // The source animator owns the entire Canvas. Do not activate cloned Stats,
+  // TabBar or account-page controllers while building the MOD page.
+  int branchCount=r.unbox<int>(r.call(cloneTransform,"get_childCount"));
+  for(int i=0;i<branchCount;++i){P branch=r.call(cloneTransform,"GetChild",{"System.Int32"},{&i});bool keep=false;for(P node:{scrollTransform,viewport,content,holder}){std::vector<int>path;if(childPath(r,branch,node,path)){keep=true;break;}}if(!keep)active(r,go(r,branch),false);}
   // Keep the serialized stretched top anchors and pivots from level10:
   // Content: min=(0,1), max=(1,1), pivot=(1,1); Items pivot=(0,1).
   // RefreshItems computes slanted insets using those anchors. Collapsing max.x

@@ -123,6 +123,8 @@ class NativeSettingsTab(unittest.TestCase):
   native=(R/'PMNativeModSettings.inc').read_text(encoding='utf8')
   self.assertIn('sourceIsRootCanvas?r.call(transform(r,canvasRoot),"get_parent")',native)
   self.assertIn('bool enable=sourceIsRootCanvas&&sameNativeTransform',native)
+  self.assertIn('if(!keep)active(r,go(r,branch),false)',native)
+  self.assertLess(native.index('if(!keep)active(r,go(r,branch),false)'),native.index('active(r,root,true)'))
   self.assertIn('else{nativeManualLayout(r,cloneTransform);nativeRectRegion',native)
   self.assertIn('V2 min{0,1},max{1,1}',native)
   self.assertNotIn('set_anchorMax",{"UnityEngine.Vector2"},{&topLeft}',native)
