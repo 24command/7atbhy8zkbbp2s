@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/phimod-content.XXXXXX")"
-trap 'rm -f "$OUT/core" "$OUT/host" "$OUT/unlock" "$OUT/text" "$OUT/cover" "$OUT/pcm" "$OUT/compact" "$OUT/trash" "$OUT/opacity" "$OUT/framecache" "$OUT/visibility"; rmdir "$OUT"' EXIT
+trap 'rm -f "$OUT/core" "$OUT/host" "$OUT/unlock" "$OUT/text" "$OUT/cover" "$OUT/pcm" "$OUT/compact" "$OUT/trash" "$OUT/opacity" "$OUT/framecache" "$OUT/visibility" "$OUT/export"; rmdir "$OUT"' EXIT
 clang++ -std=c++17 -Wall -Wextra -Werror "$ROOT/tests/PMRPECoreTest.cpp" -o "$OUT/core"
 clang++ -std=c++17 -Wall -Wextra -Werror "$ROOT/tests/PMCoverGeometryTest.cpp" -o "$OUT/cover"
 "$OUT/cover"
@@ -29,3 +29,6 @@ clang++ -std=c++17 -Wall -Wextra -Werror "$ROOT/tests/PMFrameCacheTest.cpp" -o "
 
 clang++ -std=c++17 -Wall -Wextra -Werror "$ROOT/tests/PMRPEVisibilityTest.cpp" -o "$OUT/visibility"
 "$OUT/visibility"
+
+clang++ -std=c++17 -fobjc-arc -framework Foundation "$ROOT/tests/PMExportArchiveTest.mm" "$ROOT/PhiMod/Sources/PMArchive.mm" "$ROOT/PhiMod/Vendor/PMZipVendor.cpp" -o "$OUT/export"
+"$OUT/export"

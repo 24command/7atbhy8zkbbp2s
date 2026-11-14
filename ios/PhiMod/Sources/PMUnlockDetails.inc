@@ -27,7 +27,7 @@ void acquireRequirementInput(Runtime&r,P owner){
  for(const char*field:{"startFingerPosition","startListPosition","listMoveSpeed"})r.field(type,field,"System.Single",false);
  for(const char*field:{"disableSongSelector","fingerOnSongList"})r.field(type,field,"System.Boolean",false);
  requirementPreviousDisabled=r.get<bool>(owner,"disableSongSelector");requirementInputOwner=r.gchandle_new(owner,false);
- try{if(!requirementPreviousDisabled)r.put(owner,"disableSongSelector",true);resetRequirementGesture(r,owner);}catch(...){releaseRequirementInput(r);throw;}
+ try{guardLockedPreview(r,lockUIItem,lockUIManaged&&lockUIBlocked);if(!requirementPreviousDisabled)r.put(owner,"disableSongSelector",true);resetRequirementGesture(r,owner);}catch(...){releaseRequirementInput(r);throw;}
  PMDiagnosticsWrite("Unlock details owns selector input; native scrolling suspended");
 }
 void clearRequirementScroll(Runtime&r){

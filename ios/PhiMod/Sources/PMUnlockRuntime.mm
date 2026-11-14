@@ -376,8 +376,31 @@ void fitLockTip(Runtime&r,P tip,bool blocked){
  }
  if(r.unbox<int>(r.call(tip,"get_fontSize"))!=fittedFont)r.call(tip,"set_fontSize",{"System.Int32"},{&fittedFont});
 }
+uint32_t lockedPreviewRoot=0,lockedAudioRoot=0;
+bool lockedPreviewMute=false,lockedAudioMute=false;
+void releaseLockedPreview(Runtime&r){
+ P preview=target(r,lockedPreviewRoot),audio=target(r,lockedAudioRoot);
+ if(r.alive(preview))r.put(preview,"mute",lockedPreviewMute);
+ if(r.alive(audio))r.call(audio,"set_mute",{"System.Boolean"},{&lockedAudioMute});
+ for(uint32_t*root:{&lockedPreviewRoot,&lockedAudioRoot})if(*root){r.gchandle_free(*root);*root=0;}
+}
+void guardLockedPreview(Runtime&r,P item,bool blocked){
+ P preview=blocked&&r.alive(item)?r.get<P>(item,"previewClipPlayer"):nullptr;
+ if(target(r,lockedPreviewRoot)!=preview)releaseLockedPreview(r);
+ if(!r.alive(preview))return;
+ if(!lockedPreviewRoot){lockedPreviewMute=r.get<bool>(preview,"mute");lockedPreviewRoot=r.gchandle_new(preview,false);}
+ r.put(preview,"mute",true);
+ // Loading/preview coroutines run independently of SongSelector.Update and its input lock.
+ P player=r.get<P>(preview,"audioPlayer"),audio=r.alive(player)?r.get<P>(player,"audioSource"):nullptr;
+ if(target(r,lockedAudioRoot)!=audio){
+  P old=target(r,lockedAudioRoot);if(r.alive(old))r.call(old,"set_mute",{"System.Boolean"},{&lockedAudioMute});
+  if(lockedAudioRoot)r.gchandle_free(lockedAudioRoot);lockedAudioRoot=0;
+  if(r.alive(audio)){lockedAudioMute=r.unbox<bool>(r.call(audio,"get_mute"));lockedAudioRoot=r.gchandle_new(audio,false);}
+ }
+ if(r.alive(audio)){bool yes=true;r.call(audio,"set_mute",{"System.Boolean"},{&yes});}
+}
 #include "PMUnlockDetails.inc"
-void resetLockUI(Runtime&r){clearRequirementUI(r);restoreLockTip(r);if(lockUIOwner)r.gchandle_free(lockUIOwner);lockUIOwner=0;lockUIItem=nullptr;lockUISlot=-1;lockUIManaged=false;lockUIRequirement=nil;lockUIEvaluate=0;}
+void resetLockUI(Runtime&r){releaseLockedPreview(r);clearRequirementUI(r);restoreLockTip(r);if(lockUIOwner)r.gchandle_free(lockUIOwner);lockUIOwner=0;lockUIItem=nullptr;lockUISlot=-1;lockUIManaged=false;lockUIRequirement=nil;lockUIEvaluate=0;}
 void songLockUI(Runtime&r,P selector,double now){
  P items=r.call(selector,"get_SongItems");int index=r.get<int>(selector,"nowSong"),slot=r.get<int>(selector,"nowLevel");
  if(index<0||index>=r.count(items)||slot<0||slot>3)return;
@@ -404,8 +427,9 @@ void songLockUI(Runtime&r,P selector,double now){
   if(target(r,lockUIOwner)!=selector){if(lockUIOwner)r.gchandle_free(lockUIOwner);lockUIOwner=r.gchandle_new(selector,false);}
   lockUIItem=item;lockUISlot=slot;lockUIRevision=revision;lockUIEvaluate=now;
  }
- if(!lockUIManaged){showRequirementButton(r,nullptr,false);return;}
+ if(!lockUIManaged){releaseLockedPreview(r);showRequirementButton(r,nullptr,false);return;}
  bool blocked=lockUIBlocked,playable=!blocked;
+ guardLockedPreview(r,item,blocked);
  // Refresh only AFTER refreshListLocks publishes the current slot's lock state.
  if(changed||previousBlocked!=blocked){
   r.put(item,"unlockType",blocked?0:-1);r.call(selector,"SetText");
@@ -470,6 +494,7 @@ bool selectorModalUpdate(Runtime&r,void*selector){
  if(!requirementInputOwner||selector!=target(r,requirementInputOwner))return false;
  try{
   if(!r.alive(selector)||r.get<bool>(selector,"exit")){clearRequirementUI(r);return true;}
+  guardLockedPreview(r,lockUIItem,lockUIManaged&&lockUIBlocked);
   pollRequirementDialog(r);
   bool modal=requirementPopup||requirementFallbackPending;
   P input=r.type("UnityEngine","Input");int touches=r.unbox<int>(r.stat(input,"get_touchCount")),left=0;

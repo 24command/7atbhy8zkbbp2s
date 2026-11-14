@@ -99,4 +99,17 @@ class SparseDifficultyTests(unittest.TestCase):
   s=(ROOT/'PhiMod/Sources/PMUnlockDetails.inc').read_text(encoding='utf8')
   self.assertIn('std::clamp(bounds.w,210.f,250.f)',s)
   self.assertIn('bounds.w*.5f+48.f',s)
+class LockedPreviewTests(unittest.TestCase):
+ def test_preview_guard_survives_modal_and_restores_native_mute(self):
+  runtime=(ROOT/'PhiMod/Sources/PMUnlockRuntime.mm').read_text(encoding='utf8')
+  detail=(ROOT/'PhiMod/Sources/PMUnlockDetails.inc').read_text(encoding='utf8')
+  self.assertIn('guardLockedPreview(r,item,blocked)',runtime)
+  modal=runtime.split('bool selectorModalUpdate(',1)[1].split('bool selectorButtonBlocked(',1)[0]
+  self.assertLess(modal.index('guardLockedPreview'),modal.index('pollRequirementDialog'))
+  acquire=detail.split('void acquireRequirementInput(',1)[1].split('void clearRequirementScroll(',1)[0]
+  self.assertLess(acquire.index('guardLockedPreview'),acquire.index('resetRequirementGesture(r,owner)'))
+  release=runtime.split('void releaseLockedPreview(',1)[1].split('void guardLockedPreview(',1)[0]
+  self.assertIn('lockedPreviewMute',release);self.assertIn('lockedAudioMute',release)
+  self.assertNotIn('AudioListener',release)
+  self.assertIn('void resetLockUI(Runtime&r){releaseLockedPreview(r)',runtime)
 if __name__=='__main__':unittest.main()

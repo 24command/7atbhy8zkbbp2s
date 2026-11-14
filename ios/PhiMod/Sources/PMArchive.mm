@@ -24,16 +24,37 @@ static NSArray<NSString*>*PMExtractArchiveImpl(NSString*archive,NSString*destina
 NSArray<NSString*>*PMExtractArchive(NSString*archive,NSString*destination,NSError**error){return PMExtractArchiveImpl(archive,destination,100000,1024ull*1024*1024,512ull*1024*1024,error);}
 NSArray<NSString*>*PMExtractArchiveLimited(NSString*archive,NSString*destination,NSUInteger maxEntries,unsigned long long maxUncompressed,unsigned long long maxFile,NSError**error){return PMExtractArchiveImpl(archive,destination,maxEntries,maxUncompressed,maxFile,error);}
 BOOL PMCreateArchive(NSString*folder,NSString*output,NSError**error){
- // NSURL enumeration may canonicalize /var to /private/var on Apple systems.
- // Derive archive-relative names from the same canonical root as enumerated URLs.
  folder=folder.stringByStandardizingPath.stringByResolvingSymlinksInPath;
  NSString*prefix=[folder stringByAppendingString:@"/"];
- mz_zip_archive zip{};if(!mz_zip_writer_init_file(&zip,output.fileSystemRepresentation,0)){if(error)*error=PMArchiveError(@"无法创建导出文件");return NO;}BOOL ok=YES;
- NSDirectoryEnumerator*entries=[NSFileManager.defaultManager enumeratorAtURL:[NSURL fileURLWithPath:folder] includingPropertiesForKeys:@[NSURLIsRegularFileKey,NSURLIsSymbolicLinkKey] options:NSDirectoryEnumerationSkipsHiddenFiles errorHandler:nil];
- NSMutableArray<NSURL*>*ordered=[NSMutableArray new];for(NSURL*url in entries)[ordered addObject:url];
- [ordered sortUsingComparator:^NSComparisonResult(NSURL*a,NSURL*b){BOOL am=[a.path isEqualToString:[folder stringByAppendingPathComponent:@"chapter.json"]],bm=[b.path isEqualToString:[folder stringByAppendingPathComponent:@"chapter.json"]];if(am!=bm)return am?NSOrderedAscending:NSOrderedDescending;return [a.path compare:b.path];}];
- for(NSURL*url in ordered){NSNumber*file=nil,*symlink=nil;[url getResourceValue:&file forKey:NSURLIsRegularFileKey error:nil];[url getResourceValue:&symlink forKey:NSURLIsSymbolicLinkKey error:nil];if(symlink.boolValue){ok=NO;break;}if(!file.boolValue)continue;NSString*path=url.path.stringByStandardizingPath.stringByResolvingSymlinksInPath;
- if(![path hasPrefix:prefix]){ok=NO;break;}
- NSString*name=[path substringFromIndex:prefix.length];if(!mz_zip_writer_add_file(&zip,name.UTF8String,url.fileSystemRepresentation,nullptr,0,MZ_BEST_SPEED)){ok=NO;break;}}
- if(ok)ok=mz_zip_writer_finalize_archive(&zip);mz_zip_writer_end(&zip);if(!ok&&error)*error=PMArchiveError(@"导出压缩包失败");return ok;
+ // Publish only a finalized archive; failed exports never leave a corrupt shareable ZIP.
+ NSString*temporary=[output stringByAppendingFormat:@".%@.partial",NSUUID.UUID.UUIDString];
+ mz_zip_archive zip{};if(!mz_zip_writer_init_file(&zip,temporary.fileSystemRepresentation,0)){if(error)*error=PMArchiveError(@"Unable to create export archive");return NO;}
+ BOOL ok=YES;NSFileManager*fm=NSFileManager.defaultManager;
+ @try{
+  __block NSError*scanError=nil;
+  NSDirectoryEnumerator*entries=[fm enumeratorAtURL:[NSURL fileURLWithPath:folder] includingPropertiesForKeys:@[NSURLIsRegularFileKey,NSURLIsSymbolicLinkKey] options:NSDirectoryEnumerationSkipsHiddenFiles errorHandler:^BOOL(NSURL*url,NSError*failure){scanError=failure;return NO;}];
+  NSMutableArray<NSURL*>*ordered=[NSMutableArray new];for(NSURL*url in entries)[ordered addObject:url];
+  if(!entries||scanError){ok=NO;if(error)*error=scanError?:PMArchiveError(@"Unable to enumerate export assets");}
+  NSString*manifest=[folder stringByAppendingPathComponent:@"chapter.json"];
+  [ordered sortUsingComparator:^NSComparisonResult(NSURL*a,NSURL*b){BOOL am=[a.path isEqualToString:manifest],bm=[b.path isEqualToString:manifest];if(am!=bm)return am?NSOrderedAscending:NSOrderedDescending;return [a.path compare:b.path];}];
+  NSSet*encoded=[NSSet setWithArray:@[@"zip",@"pez",@"png",@"jpg",@"jpeg",@"webp",@"gif",@"mp3",@"ogg",@"m4a",@"mp4",@"mov",@"flac"]];
+  for(NSURL*url in ordered){if(!ok)break;@autoreleasepool{
+   NSNumber*file=nil,*symlink=nil;
+   if(![url getResourceValue:&file forKey:NSURLIsRegularFileKey error:nil]||![url getResourceValue:&symlink forKey:NSURLIsSymbolicLinkKey error:nil]||symlink.boolValue){ok=NO;continue;}
+   if(!file.boolValue)continue;NSString*path=url.path.stringByStandardizingPath.stringByResolvingSymlinksInPath;
+   if(![path hasPrefix:prefix]){ok=NO;continue;}
+   NSString*name=[path substringFromIndex:prefix.length];
+   // Encoded media is already compressed; retain fast deflate for JSON/TSV/PCM.
+   mz_uint level=[encoded containsObject:path.pathExtension.lowercaseString]?MZ_NO_COMPRESSION:MZ_BEST_SPEED;
+   ok=mz_zip_writer_add_file(&zip,name.UTF8String,url.fileSystemRepresentation,nullptr,0,level);
+  }}
+  if(ok)ok=mz_zip_writer_finalize_archive(&zip);
+ }@catch(NSException*exception){ok=NO;if(error)*error=PMArchiveError(exception.reason);}
+ @finally{mz_zip_writer_end(&zip);}
+ if(ok){
+  if([fm fileExistsAtPath:output])ok=[fm replaceItemAtURL:[NSURL fileURLWithPath:output] withItemAtURL:[NSURL fileURLWithPath:temporary] backupItemName:nil options:0 resultingItemURL:nil error:error];
+  else ok=[fm moveItemAtPath:temporary toPath:output error:error];
+ }
+ if(!ok){[fm removeItemAtPath:temporary error:nil];if(error&&!*error)*error=PMArchiveError(@"Export failed; check free storage and asset files");}
+ return ok;
 }
