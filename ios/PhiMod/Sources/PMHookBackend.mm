@@ -174,6 +174,7 @@ void onAwake(P self,P mi){
  try{frozenOptions=PMReadOptions([[PMSettings shared] snapshot]);diagf("LevelControl.Awake options assisted=%d hp=%d hpMax=%.1f hpD=[%.1f,%.1f,%.1f,%.1f]",frozenOptions.assisted(),frozenOptions.hpEnabled,frozenOptions.hpMax,frozenOptions.hpDelta[0],frozenOptions.hpDelta[1],frozenOptions.hpDelta[2],frozenOptions.hpDelta[3]);if(!broken){pmhp::prepare(R(),self,frozenOptions);diagf("HP prepare ok active=%d normalized=%.3f",pmhp::active(),pmhp::normalized());pmmodes::prepare(R(),self,frozenOptions);pmpractice::prepare(R(),frozenOptions);diagf("Chart modes and practice prepare ok");}}catch(const std::exception&e){diagf("LevelControl.Awake prepare failed: %s",e.what());fault(e);}
  diagf("LevelControl.Awake calling original hpActive=%d",pmhp::active());
  orig<VoidFn>(h::levelAwake)(self,mi);
+ try{pmcontent::difficultyIntro(R(),self);}catch(const std::exception&e){diagf("Difficulty intro: %s",e.what());}
  diagf("LevelControl.Awake returned");
 }
 void onDestroy(P self,P mi){
@@ -539,7 +540,7 @@ void onLevelInformation(P self,P mi){
  if(!broken)try{pmcontent::beforeInformation(R(),self);}catch(const std::exception&e){fault(e);}
  orig<VoidFn>(h::levelInfo)(self,mi);
  diagf("LevelControl.SetInformation original returned n=%llu",(unsigned long long)count);
- if(!broken)try{pmmodes::afterInformation(R(),self);pmcontent::afterChart(R(),self);pmfeatures::afterChart(R(),self);}catch(const std::exception&e){fault(e);}
+ if(!broken)try{pmmodes::afterInformation(R(),self);pmcontent::afterChart(R(),self);pmfeatures::afterChart(R(),self);pmcontent::difficultyIntro(R(),self);}catch(const std::exception&e){fault(e);}
  diagf("LevelControl.SetInformation finished n=%llu",(unsigned long long)count);
 }
 void onAssetCtor(P self,P key,P mi){try{if(pmcontent::assetConstructor(R(),self,key))return;}catch(const std::exception&e){diagf("Content ctor: %s",e.what());}orig<void(*)(P,P,P)>(h::assetCtor)(self,key,mi);}

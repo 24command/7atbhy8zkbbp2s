@@ -572,6 +572,7 @@ void selectorDifficultyUI(Runtime&r,P selector){
 }
 // Native difficulty bars assume a continuous EZ..AT prefix. Custom groups may be sparse.
 void selectorFrame(Runtime&r,P selector){
+ prepareDifficultyGroup(r,selector);
  static P lastSelector=nullptr,lastItem=nullptr;static int lastLevel=-1,lastMask=0;
  if(r.get<bool>(selector,"exit")||r.get<bool>(selector,"isMoving")){lastItem=nullptr;return;}
  P items=r.call(selector,"get_SongItems");int n=r.count(items),index=r.get<int>(selector,"nowSong");

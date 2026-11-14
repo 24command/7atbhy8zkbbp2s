@@ -20,6 +20,7 @@ bool ownsDifficultyButton(void*button);
 bool pressDifficultyButton(pmbridge::Runtime&,void*button);
 void freezeChallengeDifficulties(pmbridge::Runtime&,void*selector=nullptr);
 void difficultySelectorOff(pmbridge::Runtime&);
+void difficultyIntro(pmbridge::Runtime&,void*level);
 void difficultyGameplayLabel(pmbridge::Runtime&,void*progress);
 void selectorDifficultyUI(pmbridge::Runtime&,void*selector);
 NSDictionary*officialSnapshot();NSDictionary*cachedOfficialSnapshot();NSDictionary*command(NSString*action,NSString*identifier,int slot);
