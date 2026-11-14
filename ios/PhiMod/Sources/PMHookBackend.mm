@@ -485,8 +485,9 @@ P onResultStart(P self,P mi){
   return orig<P(*)(P,P)>(h::resultStart)(self,mi);
  }
  bool onResultMove(P iterator,P mi){
-  if(!guard.load())return orig<JudgeFn>(h::resultMove)(iterator,mi);
   bool more=orig<JudgeFn>(h::resultMove)(iterator,mi);
+  try{pmcontent::difficultyResultLabel(R(),iterator);}catch(const std::exception&e){diagf("Difficulty result display: %s",e.what());}
+  if(!guard.load())return more;
   if(!more){
    resultPresented=true;inResult=false;
    try{if(attempt&&attempt->phase()==phimod::Phase::Result)attempt->finishResult();}
@@ -624,10 +625,10 @@ void onHoldMove(P self,P mi){
 }
 template<h::Index i>void onNoteMove(P self,P mi){pmfeatures::beforeNoteMove(R(),self,false);orig<VoidFn>(i)(self,mi);pmfeatures::noteMoved(R(),self,false);try{pmcontent::noteMoved(R(),self,false);pmcontent::finishNoteGeometry(R(),self,false);}catch(const std::exception&e){diagf("RPE note visual/skin failed: %s",e.what());}if(applying())try{pmmodes::moved(R(),self);}catch(const std::exception&e){fault(e);}}
 void onNormalStart(P self,P mi){
- try{if(pmunlock::beforeStart(R(),self,^{try{pmcontent::selectorLoadingEnd(R(),true);}catch(const std::exception&e){diagf("Selector loading resume: %s",e.what());}orig<VoidFn>(h::normalStart)(self,mi);}))return;}
+ try{if(pmunlock::beforeStart(R(),self,^{try{pmcontent::selectorLoadingEnd(R(),true);}catch(const std::exception&e){diagf("Selector loading resume: %s",e.what());}orig<VoidFn>(h::normalStart)(self,mi);try{pmcontent::difficultyTransitionLabel(R(),self);}catch(const std::exception&e){diagf("Difficulty transition: %s",e.what());}}))return;}
  catch(const std::exception&e){diagf("Unlock start gate failed: %s",e.what());return;}
  try{pmcontent::selectorLoadingEnd(R(),true);}catch(const std::exception&e){diagf("Selector loading start: %s",e.what());}
- orig<VoidFn>(h::normalStart)(self,mi);
+ orig<VoidFn>(h::normalStart)(self,mi);try{pmcontent::difficultyTransitionLabel(R(),self);}catch(const std::exception&e){diagf("Difficulty transition: %s",e.what());}
 }
 using MainlineCheckFn=void(*)(P,P,int*,P*,bool*,P*,P);
 void onMainlineCheckSongUnlock(P self,P songID,int*unlockType,P*chartUnlocked,bool*appeared,P*unlockInfo,P mi){
@@ -674,6 +675,7 @@ void onSelector(P self,P mi){
  bool access=false;if(!contentBoundary("Selector chapter access",[&]{access=pmunlock::selectorAccess(R(),self);})||!access)return;
  contentBoundary("Selector content prepare",[&]{pmcontent::prepareSelectorItems(R(),self);pmcontent::selectorLoadingBegin(R(),self);});
  if(!difficultyTouch)orig<VoidFn>(h::selector)(self,mi);
+ contentBoundary("Difficulty transition display",[&]{pmcontent::difficultyTransitionLabel(R(),self);});
  contentBoundary("Selector shortcuts",[&]{pmscene::selectorFrame(R(),self);});
  contentBoundary("Selector content",[&]{pmcontent::selectorFrame(R(),self);});
  contentBoundary("Selector unlock",[&]{pmunlock::tick(R(),self);});

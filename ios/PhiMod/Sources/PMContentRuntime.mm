@@ -1,5 +1,6 @@
 #import "PMDifficultyMetadata.h"
 #include "../Core/PMDifficultyPages.hpp"
+#include "../Core/PMDifficultyArrowGeometry.hpp"
 #include "../Core/PMUIInteraction.hpp"
 #include "../Core/PMSelectorDifficulty.hpp"
 #include "../Core/PMRPEVisibility.hpp"
@@ -34,6 +35,7 @@ void clearDifficultyPager(Runtime&r);
 void difficultyPager(Runtime&r,P selector);
 void prepareDifficultyGroup(Runtime&r,P selector);
 void selectExistingDifficulty(Runtime&r,P selector,P item,int requested);
+void reconcileDifficultyButtons(Runtime&r,P selector);
 bool hasDifficultyPager(P selector);
 
 namespace {
@@ -553,7 +555,7 @@ void selectorDifficultyUI(Runtime&r,P selector){
   auto members=variants.find(selectedID.UTF8String?:"");if(infos&&members!=variants.end())for(int i=0;i<4&&uintptr_t(i)<r.array_length(infos);++i){auto member=members->second.find(i);if(member==members->second.end())continue;P label=r.get<P>(r.arrayAt(infos,i),"difficulty");NSString*value=PMDifficultyText(member->second);if(r.alive(label)&&![r.string(r.call(label,"get_text"))isEqualToString:value])r.call(label,"set_text",{"System.String"},{r.managedString(value)});}
  }
 
- if(sparseSelector==selector&&sparseItem==selectedItem&&sparseSlot==slot&&sparseCount==count&&sparseRevision==revision){maintainSparseSlots(r);return;}
+ if(sparseSelector==selector&&sparseItem==selectedItem&&sparseSlot==slot&&sparseCount==count&&sparseRevision==revision){maintainSparseSlots(r);reconcileDifficultyButtons(r,selector);return;}
  clearSparseButtons(r);
  for(int j=0;j<count;++j){P item=r.at(items,j),song=r.get<P>(item,"songInfo");NSString*id=r.string(r.get<P>(song,"songsId"));auto group=variants.find(id.UTF8String?:"");
   if(group==variants.end()||![id hasPrefix:@"pm_"])continue;
@@ -570,6 +572,7 @@ void selectorDifficultyUI(Runtime&r,P selector){
    for(uintptr_t k=0;buttons&&k<r.array_length(buttons);++k){P button=r.arrayAt(buttons,int(k));bool previous=r.unbox<bool>(r.call(button,"get_interactable"));sparseButtons.push_back({r.gchandle_new(button,false),previous,enabled});if(previous!=enabled)r.call(button,"set_interactable",{"System.Boolean"},{&enabled});}
   }
  }
+ reconcileDifficultyButtons(r,selector);
  sparseSelector=selector;sparseItem=selectedItem;sparseSlot=slot;sparseCount=count;sparseRevision=revision;
 }
 // Native difficulty bars assume a continuous EZ..AT prefix. Custom groups may be sparse.

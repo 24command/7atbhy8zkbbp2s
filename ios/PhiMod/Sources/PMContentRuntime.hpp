@@ -21,6 +21,8 @@ bool ownsDifficultyButton(void*button);
 bool pressDifficultyButton(pmbridge::Runtime&,void*button);
 void freezeChallengeDifficulties(pmbridge::Runtime&,void*selector=nullptr);
 void difficultySelectorOff(pmbridge::Runtime&);
+void difficultyResultLabel(pmbridge::Runtime&,void*iterator);
+void difficultyTransitionLabel(pmbridge::Runtime&,void*selector);
 void difficultyIntro(pmbridge::Runtime&,void*level);
 void difficultyGameplayLabel(pmbridge::Runtime&,void*progress);
 void selectorDifficultyUI(pmbridge::Runtime&,void*selector);

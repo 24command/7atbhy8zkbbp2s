@@ -41,9 +41,28 @@ class ExtraDifficultyRouting(unittest.TestCase):
   self.assertIn('RectangleContainsScreenPoint',page)
   self.assertIn('difficultyTap.finish',page)
   self.assertIn('difficultyTouchEntry=-1',page)
-  self.assertIn('Quad{cut,0,1,1},Quad{0,0,1,0}',page)
+  self.assertIn('Quad{cut,0,0,1},Quad{0,0,1,1},Quad{-cut,0,1,0}',page)
   hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text('utf8')
   update=hook.split('void onSelector(',1)[1].split('void onSelectorOff(',1)[0]
   self.assertLess(update.index('difficultyInput'),update.index('orig<VoidFn>'))
   self.assertIn('if(!difficultyTouch)orig<VoidFn>',update)
+ def test_transition_and_result_display_use_metadata_not_numeric_transport(self):
+  page=(ROOT/'PhiMod/Sources/PMDifficultyPager.inc').read_text('utf8')
+  transition=page.split('void difficultyTransitionLabel(',1)[1].split('void difficultyResultLabel(',1)[0]
+  self.assertIn('r.get<P>(selector,"level"),PMDifficultyName',transition)
+  self.assertIn('r.get<P>(selector,"difficulty"),PMDifficultyText',transition)
+  self.assertNotIn('PMDifficultyNumber',transition)
+  hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text('utf8')
+  start=hook.split('void onNormalStart(',1)[1].split('using MainlineCheckFn',1)[0]
+  self.assertEqual(start.count('difficultyTransitionLabel'),2)
+  selector=hook.split('void onSelector(',1)[1].split('void onSelectorOff(',1)[0]
+  self.assertGreater(selector.index('difficultyTransitionLabel'),selector.index('orig<VoidFn>'))
+ def test_current_chart_reconciles_cached_button_restoration(self):
+  source=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text('utf8')
+  self.assertIn('maintainSparseSlots(r);reconcileDifficultyButtons(r,selector);return;',source)
+  page=(ROOT/'PhiMod/Sources/PMDifficultyPager.inc').read_text('utf8')
+  self.assertIn('void restoreDifficultyBar(Runtime&r,P selector){\n clearSparseButtons(r);',page)
+  reconcile=page.split('void reconcileDifficultyButtons(',1)[1].split('void selectExistingDifficulty(',1)[0]
+  self.assertIn('nativeDifficultyMask(r,r.at(items,index))',reconcile)
+  self.assertIn('i!=slot',reconcile)
 if __name__=='__main__':unittest.main()

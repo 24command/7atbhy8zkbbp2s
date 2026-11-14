@@ -79,7 +79,7 @@ class NativeSettingsTab(unittest.TestCase):
   self.assertNotIn('Rect rect=r.unbox<Rect>',native)
  def test_mod_page_does_not_inherit_hidden_gameplay_pose(self):
   native=(R/'PMNativeModSettings.inc').read_text(encoding='utf8')
-  self.assertIn('parent=transform(r,canvasRoot)',native)
+  self.assertIn('sourceIsRootCanvas=sameNativeTransform',native)
   self.assertIn('nativeRectRegion(r,cloneTransform,bodyRegion)',native)
   self.assertLess(native.index('copiedAnimators=r.children'),native.index('P addButton='))
   self.assertIn('for(int index:{1,2})',native)
@@ -101,7 +101,7 @@ class NativeSettingsTab(unittest.TestCase):
   self.assertIn('cloneGraphics=r.children',native)
   self.assertIn('get_rootCanvas',native)
   self.assertIn('PhiMod Settings Frame',native)
-  self.assertIn('frameLayer=std::min(frameLayer,path.back())',native)
+  self.assertIn('frameLayer=std::min(frameLayer,path.back()+1)',native)
   self.assertIn('"SetSiblingIndex"',native)
   self.assertNotIn('sourceTransform=transform(r,sourceFrame),parent=r.call(sourceTransform,"get_parent")',native)
  def test_original_backdrop_extends_to_mod_tab(self):
@@ -119,4 +119,13 @@ class NativeSettingsTab(unittest.TestCase):
   self.assertIn('index<0||index>=count',s)
   self.assertIn('std::vector<uint32_t>oldRows',s)
   self.assertLess(s.index('oldRows.push_back'),s.index('for(uint32_t saved:oldRows)'))
+ def test_root_canvas_clone_preserves_native_scaler_and_content_width(self):
+  native=(R/'PMNativeModSettings.inc').read_text(encoding='utf8')
+  self.assertIn('sourceIsRootCanvas?r.call(transform(r,canvasRoot),"get_parent")',native)
+  self.assertIn('bool enable=sourceIsRootCanvas&&sameNativeTransform',native)
+  self.assertIn('else{nativeManualLayout(r,cloneTransform);nativeRectRegion',native)
+  self.assertIn('V2 min{0,1},max{1,1}',native)
+  self.assertNotIn('set_anchorMax",{"UnityEngine.Vector2"},{&topLeft}',native)
+  self.assertIn('contentRect.w<=0||holderRect.w<=0',native)
+  self.assertIn('"get_sortingOrder"))+1',native)
 if __name__=='__main__':unittest.main()

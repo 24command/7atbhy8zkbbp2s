@@ -89,7 +89,7 @@ class SparseDifficultyTests(unittest.TestCase):
   sparse=c.split('void selectorDifficultyUI(',1)[1].split('// Native difficulty bars assume',1)[0]
   self.assertIn('if(!present)',sparse)
   self.assertIn('"HideInfo"',sparse)
-  self.assertIn('sparseRevision==revision){maintainSparseSlots(r);return;}',sparse)
+  self.assertIn('sparseRevision==revision){maintainSparseSlots(r);reconcileDifficultyButtons(r,selector);return;}',sparse)
  def test_unlock_slot_refreshes_text_and_selection(self):
   s=(ROOT/'PhiMod/Sources/PMUnlockRuntime.mm').read_text(encoding='utf8')
   block=s.split('bool blocked=lockUIBlocked,playable=!blocked;',1)[1].split('P mask=',1)[0]

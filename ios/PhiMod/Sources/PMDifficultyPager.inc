@@ -32,6 +32,14 @@ unsigned nativeDifficultyMask(Runtime&r,P item){
  unsigned mask=0;if(found!=variants.end()){for(auto&entry:found->second)if(entry.first>=0&&entry.first<4)mask|=1u<<entry.first;return mask;}
  P numbers=r.get<P>(song,"difficulty");for(int i=0;numbers&&i<4&&uintptr_t(i)<r.array_length(numbers);++i)if(r.unbox<float>(r.arrayAt(numbers,i))>0)mask|=1u<<i;return mask;
 }
+void reconcileDifficultyButtons(Runtime&r,P selector){
+ if(hasDifficultyPager(selector)||r.get<bool>(selector,"exit"))return;
+ P items=r.call(selector,"get_SongItems");int index=r.get<int>(selector,"nowSong"),slot=r.get<int>(selector,"nowLevel");if(index<0||index>=r.count(items))return;
+ unsigned mask=nativeDifficultyMask(r,r.at(items,index));P bar=r.get<P>(selector,"levelBarController");if(!r.alive(bar))return;P infos=r.get<P>(bar,"levelInfos");
+ for(int i=0;infos&&i<4&&uintptr_t(i)<r.array_length(infos);++i){P info=r.arrayAt(infos,i),rect=r.get<P>(info,"mainObject"),buttons=r.children(r.call(rect,"get_gameObject"),r.type("UnityEngine.UI","Button"));bool enabled=(mask&(1u<<i))&&i!=slot;
+  for(uintptr_t j=0;buttons&&j<r.array_length(buttons);++j){P button=r.arrayAt(buttons,int(j));if(r.unbox<bool>(r.call(button,"get_interactable"))!=enabled)r.call(button,"set_interactable",{"System.Boolean"},{&enabled});}
+ }
+}
 void selectExistingDifficulty(Runtime&r,P selector,P item,int requested){
  unsigned mask=nativeDifficultyMask(r,item);int selected=phimod::availableDifficulty(mask,requested);if(selected<0)return;
  int extent=0;for(int i=0;i<4;++i)if(mask&(1u<<i))extent=i+1;
@@ -43,6 +51,7 @@ void selectExistingDifficulty(Runtime&r,P selector,P item,int requested){
  recordSlot=-1;sparseSlot=-1;initializedSlot=-1;
 }
 void restoreDifficultyBar(Runtime&r,P selector){
+ clearSparseButtons(r);
  P items=r.call(selector,"get_SongItems");int index=r.get<int>(selector,"nowSong");if(index<0||index>=r.count(items))return;P item=r.at(items,index);
  int requested=r.get<int>(selector,"nowLevel");unsigned mask=nativeDifficultyMask(r,item);int chosen=phimod::availableDifficulty(mask,requested);if(chosen<0)return;
  selectExistingDifficulty(r,selector,item,chosen);
@@ -76,7 +85,7 @@ void prepareDifficultyGroup(Runtime&r,P selector){
 DifficultyCell makeDifficultyCell(Runtime&r,P parent,P font,int entry){
  DifficultyCell c;c.entry=entry;P go=difficultyObject(r,"PhiMod Difficulty",parent);c.root=r.gchandle_new(go,false);
  P tr=r.call(go,"get_transform");c.hitRect=tr;P group=difficultyComponent(r,go,"UnityEngine","CanvasGroup");bool receive=true;r.call(group,"set_ignoreParentGroups",{"System.Boolean"},{&receive});r.call(group,"set_interactable",{"System.Boolean"},{&receive});r.call(group,"set_blocksRaycasts",{"System.Boolean"},{&receive});c.graphic=difficultyComponent(r,go,"Lean.Gui","LeanPolygon");float fill=-1;r.call(c.graphic,"set_Thickness",{"System.Single"},{&fill});bool yes=true,no=false;
- P points=r.call(c.graphic,"get_Points");r.call(points,"Clear");struct Quad{float x,y,z,w;};for(Quad q: {Quad{0,0,0,0},Quad{12,0,0,1},Quad{12,0,1,1},Quad{0,0,1,0}})r.call(points,"Add",{"UnityEngine.Vector4"},{&q});r.call(c.graphic,"SetVerticesDirty");
+ P points=r.call(c.graphic,"get_Points");r.call(points,"Clear");struct Quad{float x,y,z,w;};for(Quad q: {Quad{12,0,0,1},Quad{0,0,1,1},Quad{-12,0,1,0},Quad{0,0,0,0}})r.call(points,"Add",{"UnityEngine.Vector4"},{&q});r.call(c.graphic,"SetVerticesDirty");
  r.call(c.graphic,"set_raycastTarget",{"System.Boolean"},{&yes});r.call(c.graphic,"set_maskable",{"System.Boolean"},{&no});
  c.button=difficultyComponent(r,go,"UnityEngine.UI","Button");r.call(c.button,"set_targetGraphic",{"UnityEngine.UI.Graphic"},{c.graphic});
  P caption=difficultyObject(r,"Caption",tr);c.label=difficultyComponent(r,caption,"UnityEngine.UI","Text");P labelTr=r.call(caption,"get_transform");V2 zero{0,0},one{1,1},pad{-10,-8};r.call(labelTr,"set_anchorMin",{"UnityEngine.Vector2"},{&zero});r.call(labelTr,"set_anchorMax",{"UnityEngine.Vector2"},{&one});r.call(labelTr,"set_sizeDelta",{"UnityEngine.Vector2"},{&pad});r.call(labelTr,"set_anchoredPosition",{"UnityEngine.Vector2"},{&zero});
@@ -120,8 +129,8 @@ void difficultyPager(Runtime&r,P selector){
  }else r.call(slider,"Hide");
  // Anchor each arrow to the actual first/last native cell, respecting native slant and scale.
  for(auto&c:difficultyCells)if(c.entry>=4){bool left=c.entry==4,show=left?phimod::difficultyPrevious(difficultyPage):phimod::difficultyNext(difficultyEntries.size(),difficultyPage);P go=target(r,c.root);r.call(go,"SetActive",{"System.Boolean"},{&show});if(!show)continue;
-  P endpoint=r.get<P>(r.arrayAt(infos,left?0:int(count)-1),"mainObject"),tr=r.call(go,"get_transform");Rect rect=r.unbox<Rect>(r.call(endpoint,"get_rect"));V3 local{left?rect.x-28:rect.x+rect.w+28,rect.y+rect.h*.5f,0},world=r.unbox<V3>(r.call(endpoint,"TransformPoint",{"UnityEngine.Vector3"},{&local}));V2 arrowSize{44,std::max(40.f,rect.h)};
-  float slope=std::fabs(r.unbox<float>(r.stat(r.type("Phigros.UI","MsgBox"),"get_InverseSlope"))),cut=std::min(arrowSize.x*.4f,arrowSize.y*slope);P points=r.call(c.graphic,"get_Points");r.call(points,"Clear");struct Quad{float x,y,z,w;};for(Quad q:{Quad{0,0,0,0},Quad{cut,0,0,1},Quad{cut,0,1,1},Quad{0,0,1,0}})r.call(points,"Add",{"UnityEngine.Vector4"},{&q});r.call(c.graphic,"SetVerticesDirty");
+  P endpoint=r.get<P>(r.arrayAt(infos,left?0:int(count)-1),"mainObject"),tr=r.call(go,"get_transform");Rect rect=r.unbox<Rect>(r.call(endpoint,"get_rect"));float slope=r.unbox<float>(r.stat(r.type("Phigros.UI","MsgBox"),"get_InverseSlope"));auto geometry=phimod::difficultyArrowGeometry(rect.h,slope,rect.x,rect.x+rect.w);V3 local{left?geometry.leftCenter:geometry.rightCenter,rect.y+rect.h*.5f,0},world=r.unbox<V3>(r.call(endpoint,"TransformPoint",{"UnityEngine.Vector3"},{&local}));V2 arrowSize{geometry.width,geometry.height};
+  float cut=geometry.cut;P points=r.call(c.graphic,"get_Points");r.call(points,"Clear");struct Quad{float x,y,z,w;};for(Quad q:{Quad{cut,0,0,1},Quad{0,0,1,1},Quad{-cut,0,1,0},Quad{0,0,0,0}})r.call(points,"Add",{"UnityEngine.Vector4"},{&q});r.call(c.graphic,"SetVerticesDirty");
   r.call(tr,"set_sizeDelta",{"UnityEngine.Vector2"},{&arrowSize});r.call(tr,"set_position",{"UnityEngine.Vector3"},{&world});difficultyText(r,c.label,left?@"←":@"→");bool yes=true;r.call(c.button,"set_interactable",{"System.Boolean"},{&yes});Color white{.94f,.96f,.98f,1},ink{.09f,.12f,.17f,1};r.call(c.graphic,"set_color",{"UnityEngine.Color"},{&white});r.call(c.label,"set_color",{"UnityEngine.Color"},{&ink});
  }
  if(current){difficultyText(r,r.get<P>(selector,"level"),PMDifficultyName(current[@"level"]));difficultyText(r,r.get<P>(selector,"difficulty"),PMDifficultyText(current));}
@@ -193,4 +202,23 @@ void difficultyIntro(Runtime&r,void*raw){
   if([old isEqualToString:transport])difficultyText(r,label,PMDifficultyName(chart[@"level"]));
   else if([old hasPrefix:[transport stringByAppendingString:@" Lv."]]||[old hasPrefix:[transport stringByAppendingString:@"  "]])difficultyText(r,label,caption);
  }
+}
+
+NSDictionary*difficultyDisplayChart(Runtime&r){
+ P start=r.get<P>(r.mainGame(),"levelStartInfo");if(!start)return nil;NSString*id=r.string(r.get<P>(start,"songsId"));
+ static NSString*cachedID=nil;static NSUInteger revision=NSUIntegerMax;static NSDictionary*cached=nil;NSUInteger current=PMContentStore.shared.revision;
+ if(![cachedID isEqualToString:id]||revision!=current){cachedID=id;revision=current;cached=nil;for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"]isEqualToString:id]){cached=s;break;}}
+ return cached;
+}
+void difficultyTransitionLabel(Runtime&r,void*raw){
+ P selector=raw;if(!r.alive(selector)||!r.get<bool>(selector,"exit"))return;NSDictionary*chart=difficultyDisplayChart(r);if(!chart)return;
+ // Verified serialized level7 fields point to StartInfos/SelectedSong/Level,
+ // not the gameplay intro prefab. Patch after native GameStart/Update writes.
+ difficultyText(r,r.get<P>(selector,"level"),PMDifficultyName(chart[@"level"]));
+ difficultyText(r,r.get<P>(selector,"difficulty"),PMDifficultyText(chart));
+}
+void difficultyResultLabel(Runtime&r,void*iterator){
+ P owner=r.get<P>(iterator,"<>4__this");if(!r.alive(owner))return;NSDictionary*chart=difficultyDisplayChart(r);if(!chart)return;
+ difficultyText(r,r.get<P>(owner,"songsLevel"),PMDifficultyName(chart[@"level"]));
+ difficultyText(r,r.get<P>(owner,"songsDifficulty"),PMDifficultyText(chart));
 }

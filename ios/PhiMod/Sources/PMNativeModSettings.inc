@@ -152,15 +152,17 @@ void makeNativeSettings(Runtime&r,P setting){
  // A fallback host must also be outside every frame that ChangeTab hides.
  for(int depth=0;parent&&depth<64;++depth){bool inside=false;for(P frame:frameTransforms){std::vector<int>path;if(childPath(r,frame,parent,path)){inside=true;break;}}if(!inside)break;parent=r.call(parent,"get_parent");}
 
- // Always share the live root Canvas/CanvasScaler. A second standalone canvas
- // mixes world and UI units and can move/stretch the entire settings page.
- parent=transform(r,canvasRoot);P parentRectObject=r.component(go(r,parent),r.type("UnityEngine","RectTransform"));
- if(!r.alive(parentRectObject))throw std::runtime_error("Settings root canvas has no RectTransform");
+ // Serialized level10 frameAnimators[0] is the ROOT Canvas, not Play.
+ // A root Canvas clone must retain its scaler/camera and remain outside the
+ // original animated canvas. A non-canvas frame can share the source canvas.
+ bool sourceIsRootCanvas=sameNativeTransform(r,sourceTransform,transform(r,canvasRoot));
+ parent=sourceIsRootCanvas?r.call(transform(r,canvasRoot),"get_parent"):transform(r,canvasRoot);
+ if(!sourceIsRootCanvas&&!r.alive(r.component(go(r,parent),r.type("UnityEngine","RectTransform"))))throw std::runtime_error("Settings canvas parent is not a RectTransform");
  int fromTab=std::clamp(r.get<int>(setting,"currentTab"),0,2);
  phimod::UIRegion bodyRegion{.11f,.08f,.94f,.86f};
- phimod::UIRegion wideRegion{0,0,1,1};
+ phimod::UIRegion wideRegion=sourceIsRootCanvas?bodyRegion:phimod::UIRegion{0,0,1,1};
  int frameLayer=parent?r.unbox<int>(r.call(parent,"get_childCount")):0;
- for(P frameTr:frameTransforms){std::vector<int>path;if(childPath(r,parent,frameTr,path)&&!path.empty())frameLayer=std::min(frameLayer,path.back());}
+ for(P frameTr:frameTransforms){std::vector<int>path;if(parent&&childPath(r,parent,frameTr,path)&&!path.empty())frameLayer=std::min(frameLayer,path.back()+1);}
  // Capture all source references before Instantiate/SetSiblingIndex can change sibling indices.
  std::array<std::vector<int>,4>templatePaths;std::array<P,4>templateNodes{transform(r,source),r.get<P>(original,"content"),r.get<P>(original,"viewport"),r.get<P>(original,"itemsHolder")};
  for(size_t i=0;i<templateNodes.size();++i)if(!childPath(r,sourceTransform,templateNodes[i],templatePaths[i]))throw std::runtime_error("Settings reference outside source frame");
@@ -172,8 +174,9 @@ void makeNativeSettings(Runtime&r,P setting){
  catch(...){r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{staging});r.gchandle_free(stagingRoot);throw;}
  r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{staging});r.gchandle_free(stagingRoot);
  r.call(root,"set_name",{"System.String"},{r.string_new("PhiMod Settings Frame")});
- // Stay in the native body layer, below navigation and popup siblings.
- r.call(transform(r,root),"SetSiblingIndex",{"System.Int32"},{&frameLayer});
+ // level10: FrameContainer owns an opaque Background. Insert AFTER that
+ // branch, before TabBar/navigation; index zero puts every MOD row behind it.
+ if(parent)r.call(transform(r,root),"SetSiblingIndex",{"System.Int32"},{&frameLayer});
  // Only the page visual/template is cloned. A copied Setting controller must
  // never run native Update or take ownership of the live settings session.
  P controllers=r.children(root,r.klass("Setting"));bool disabled=false;
@@ -184,9 +187,10 @@ void makeNativeSettings(Runtime&r,P setting){
   // Otherwise a clone made while Gameplay is hidden keeps writing its hidden pose.
   P copiedAnimators=r.children(root,r.type("UnityEngine","Animator"));bool no=false;
   for(uintptr_t i=0;copiedAnimators&&i<r.array_length(copiedAnimators);++i)r.call(r.arrayAt(copiedAnimators,int(i)),"set_enabled",{"System.Boolean"},{&no});
-  P scalers=r.children(root,r.type("UnityEngine.UI","CanvasScaler"));for(uintptr_t i=0;scalers&&i<r.array_length(scalers);++i)r.call(r.arrayAt(scalers,int(i)),"set_enabled",{"System.Boolean"},{&no});
+  P scalers=r.children(root,r.type("UnityEngine.UI","CanvasScaler"));for(uintptr_t i=0;scalers&&i<r.array_length(scalers);++i){P scaler=r.arrayAt(scalers,int(i));bool enable=sourceIsRootCanvas&&sameNativeTransform(r,transform(r,scaler),cloneTransform);r.call(scaler,"set_enabled",{"System.Boolean"},{&enable});}
   P canvases=r.children(root,r.type("UnityEngine","Canvas"));for(uintptr_t i=0;canvases&&i<r.array_length(canvases);++i)r.call(r.arrayAt(canvases,int(i)),"set_overrideSorting",{"System.Boolean"},{&no});
-  nativeManualLayout(r,cloneTransform);nativeRectRegion(r,cloneTransform,bodyRegion);
+  if(sourceIsRootCanvas){P canvas=r.component(root,r.type("UnityEngine","Canvas"));bool yes=true;r.call(canvas,"set_enabled",{"System.Boolean"},{&yes});int order=r.unbox<int>(r.call(canvasRoot,"get_sortingOrder"))+1;r.call(canvas,"set_sortingOrder",{"System.Int32"},{&order});}
+  else{nativeManualLayout(r,cloneTransform);nativeRectRegion(r,cloneTransform,bodyRegion);}
   P scrollTransform=followSettingsPath(r,cloneTransform,templatePaths[0],"scroll");
   P scroll=r.component(go(r,scrollTransform),r.type("UnityEngine.UI","ScrollRect"));
   P content=followSettingsPath(r,cloneTransform,templatePaths[1],"content");
@@ -206,9 +210,11 @@ void makeNativeSettings(Runtime&r,P setting){
   }else{
    for(P node=viewport;!sameNativeTransform(r,node,scrollTransform);node=r.call(node,"get_parent"))nativeRectRegion(r,node,{0,0,1,1});
   }
-   // Native manager positions rows from the top-left. Keep prefab sizes and
-   // hierarchy; stretching individual buttons changes their slanted shape.
-   for(P item:{content,holder}){V2 topLeft{0,1},zero{0,0};V3 one{1,1,1};r.call(item,"set_anchorMin",{"UnityEngine.Vector2"},{&topLeft});r.call(item,"set_anchorMax",{"UnityEngine.Vector2"},{&topLeft});r.call(item,"set_pivot",{"UnityEngine.Vector2"},{&topLeft});r.call(item,"set_anchoredPosition",{"UnityEngine.Vector2"},{&zero});r.call(item,"set_localScale",{"UnityEngine.Vector3"},{&one});}
+  // Keep the serialized stretched top anchors and pivots from level10:
+  // Content: min=(0,1), max=(1,1), pivot=(1,1); Items pivot=(0,1).
+  // RefreshItems computes slanted insets using those anchors. Collapsing max.x
+  // to zero yields a zero/negative content width and an entirely clipped page.
+  for(P item:{content,holder}){V2 min{0,1},max{1,1};V3 one{1,1,1};r.call(item,"set_anchorMin",{"UnityEngine.Vector2"},{&min});r.call(item,"set_anchorMax",{"UnityEngine.Vector2"},{&max});r.call(item,"set_localScale",{"UnityEngine.Vector3"},{&one});}
   std::vector<uint32_t>oldRows;int rowCount=r.unbox<int>(r.call(holder,"get_childCount"));
   for(int i=0;i<rowCount;++i){P row=r.call(holder,"GetChild",{"System.Int32"},{&i});oldRows.push_back(r.gchandle_new(row,false));}
   try{for(uint32_t saved:oldRows){P row=target(r,saved);if(!r.alive(row))continue;P object=go(r,row);bool world=false;active(r,object,false);r.call(row,"SetParent",{"UnityEngine.Transform","System.Boolean"},{nullptr,&world});r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{object});}}
@@ -235,6 +241,11 @@ void makeNativeSettings(Runtime&r,P setting){
    active(r,root,true);r.stat(r.type("UnityEngine","Canvas"),"ForceUpdateCanvases",{},{});
 
   r.call(nativeSettingsManager,"RefreshItems");r.call(nativeSettingsManager,"RefreshPosition");
+  r.stat(r.type("UnityEngine","Canvas"),"ForceUpdateCanvases",{},{});
+  auto contentRect=r.unbox<sceneimpl::Rect>(r.call(content,"get_rect")),holderRect=r.unbox<sceneimpl::Rect>(r.call(holder,"get_rect"));
+  if(contentRect.w<=0||holderRect.w<=0||r.unbox<int>(r.call(holder,"get_childCount"))==0)throw std::runtime_error("MOD native layout produced empty/zero-width content");
+  char geometry[180];snprintf(geometry,sizeof(geometry),"MOD layout widths content=%.1f items=%.1f rows=%d sibling=%d",contentRect.w,holderRect.w,r.unbox<int>(r.call(holder,"get_childCount")),r.unbox<int>(r.call(cloneTransform,"GetSiblingIndex")));PMDiagnosticsWrite(geometry);
+
   float top=1;r.call(scroll,"set_verticalNormalizedPosition",{"System.Single"},{&top});
   registerNativeTab(r,setting,r.component(root,r.type("UnityEngine","Animator")),content);
   changeNativeTab(r,setting,nativeTabIndex);
