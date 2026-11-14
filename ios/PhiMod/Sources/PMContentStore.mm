@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdio>
 #include "../Core/PMPCMImport.hpp"
+#include "../Core/PMAudioFileType.hpp"
 #include <functional>
 #define STB_VORBIS_HEADER_ONLY
 #include "../Vendor/stb/stb_vorbis.c"
@@ -76,11 +77,11 @@ NSDictionary*compactAudioSettings(double rate,int channels){
  if(channels<1||channels>8)channels=2;
  return @{AVFormatIDKey:@(kAudioFormatMPEG4AAC),AVSampleRateKey:@(rate),AVNumberOfChannelsKey:@(channels),AVEncoderBitRateKey:@(128000),AVEncoderAudioQualityKey:@(AVAudioQualityHigh)};
 }
-BOOL audio(NSString*source,NSString*destination,NSError**error){
+BOOL decodeAudio(NSString*source,NSString*destination,NSError**error){
  NSURL*url=[NSURL fileURLWithPath:source];NSError*openError=nil;AVAudioFile*input=[[AVAudioFile alloc]initForReading:url error:&openError];
  if(!input&&[source.pathExtension.lowercaseString isEqualToString:@"pcm"]){
   NSString*temporary=[destination.stringByDeletingLastPathComponent stringByAppendingPathComponent:[NSString stringWithFormat:@"pcm-import-%@.wav",NSUUID.UUID.UUIDString]];
-  @try{try{pmpcm::toWav(source.fileSystemRepresentation,temporary.fileSystemRepresentation);return audio(temporary,destination,error);}catch(const std::exception&e){if(error)*error=err([NSString stringWithUTF8String:e.what()]);return NO;}}
+  @try{try{pmpcm::toWav(source.fileSystemRepresentation,temporary.fileSystemRepresentation);return decodeAudio(temporary,destination,error);}catch(const std::exception&e){if(error)*error=err([NSString stringWithUTF8String:e.what()]);return NO;}}
   @finally{[NSFileManager.defaultManager removeItemAtPath:temporary error:nil];}
  }
  if(!input&&error)*error=openError;
@@ -110,16 +111,48 @@ BOOL audio(NSString*source,NSString*destination,NSError**error){
   return YES;
  }
  if(![source.pathExtension.lowercaseString isEqualToString:@"ogg"])return NO;if(error)*error=nil;
- int code=0;stb_vorbis*v=stb_vorbis_open_filename(source.fileSystemRepresentation,&code,nullptr);if(!v){if(error)*error=err(@"音乐解码失败（支持 WAV/MP3/M4A/FLAC/Ogg Vorbis）");return NO;}stb_vorbis_info info=stb_vorbis_get_info(v);if(info.channels<1||info.channels>8||info.sample_rate>192000){stb_vorbis_close(v);if(error)*error=err(@"音频声道或采样率不支持");return NO;}
- NSDictionary*settings=compactAudioSettings((double)info.sample_rate,info.channels);
- AVAudioFormat*srcFormat=[[AVAudioFormat alloc]initStandardFormatWithSampleRate:info.sample_rate channels:info.channels];
- AVAudioFile*out=[[AVAudioFile alloc]initForWriting:[NSURL fileURLWithPath:destination] settings:settings commonFormat:AVAudioPCMFormatFloat32 interleaved:NO error:error];
- if(!out){stb_vorbis_close(v);return NO;}
- AVAudioPCMBuffer*b=[[AVAudioPCMBuffer alloc]initWithPCMFormat:srcFormat frameCapacity:65536];
- if(!b){stb_vorbis_close(v);if(error)*error=err(@"音频缓冲区分配失败");return NO;}
- BOOL ok=YES;
- for(;;){float **planes=(float **)(void*)b.floatChannelData;int n=stb_vorbis_get_samples_float(v,info.channels,planes,65536);if(n<=0)break;b.frameLength=n;if(![out writeFromBuffer:b error:error]){ok=NO;break;}}
- stb_vorbis_close(v);return ok;
+ int code=0;stb_vorbis*v=stb_vorbis_open_filename(source.fileSystemRepresentation,&code,nullptr);if(!v){if(error)*error=err(@"音乐解码失败（支持 WAV/MP3/M4A/FLAC/Ogg Vorbis）");return NO;}stb_vorbis_info info=stb_vorbis_get_info(v);if(info.channels<1||info.channels>8||info.sample_rate==0||info.sample_rate>192000){stb_vorbis_close(v);if(error)*error=err(@"音频声道或采样率不支持");return NO;}
+  NSString*pcm=[NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"phimod-vorbis-%@.caf",NSUUID.UUID.UUIDString]];
+  BOOL ok=NO;
+  @try{
+   AVAudioFormat*format=[[AVAudioFormat alloc]initStandardFormatWithSampleRate:info.sample_rate channels:info.channels];
+   AVAudioFile*out=[[AVAudioFile alloc]initForWriting:[NSURL fileURLWithPath:pcm] settings:format.settings commonFormat:AVAudioPCMFormatFloat32 interleaved:NO error:error];
+   if(!out)return NO;
+   AVAudioPCMBuffer*buffer=[[AVAudioPCMBuffer alloc]initWithPCMFormat:format frameCapacity:65536];
+   if(!buffer){if(error)*error=err(@"Audio buffer allocation failed");return NO;}
+   uint64_t frames=0;
+   for(;;){int n=stb_vorbis_get_samples_float(v,info.channels,(float**)(void*)buffer.floatChannelData,65536);
+    if(n<=0)break;buffer.frameLength=n;frames+=n;if(![out writeFromBuffer:buffer error:error])return NO;
+   }
+   int decodeError=stb_vorbis_get_error(v);
+   if(!frames||decodeError){if(error)*error=err([NSString stringWithFormat:@"Vorbis decode failed (code %d, frames %llu)",decodeError,(unsigned long long)frames]);return NO;}
+   out=nil; // Finalize CAF before opening it through the shared AAC/resampler path.
+   ok=decodeAudio(pcm,destination,error);
+  }@finally{stb_vorbis_close(v);[NSFileManager.defaultManager removeItemAtPath:pcm error:nil];}
+  return ok;
+}
+BOOL audio(NSString*source,NSString*destination,NSError**error){
+ // Packs frequently label WAV/MP3 bytes as .ogg. Probe bounded header bytes,
+ // then give Apple's decoder the correct suffix without changing the original.
+ unsigned char header[64]={};size_t count=0;FILE*file=fopen(source.fileSystemRepresentation,"rb");
+ if(file){count=fread(header,1,sizeof(header),file);fclose(file);}
+ NSString*detected=[NSString stringWithUTF8String:phimod::audioFileExtension(header,count)];
+ NSString*temporary=nil,*decodeSource=source;NSError*failure=nil;BOOL ok=NO;
+ @try{
+  if(detected.length&&![detected isEqualToString:source.pathExtension.lowercaseString]){
+   temporary=[NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"phimod-audio-%@.%@",NSUUID.UUID.UUIDString,detected]];
+   if(![NSFileManager.defaultManager copyItemAtPath:source toPath:temporary error:&failure]){if(error)*error=failure;return NO;}
+   decodeSource=temporary;
+   PMDiagnosticsWrite([NSString stringWithFormat:@"Audio format corrected: %@ -> %@",source.lastPathComponent,detected].UTF8String);
+  }
+  ok=decodeAudio(decodeSource,destination,&failure);
+ }@finally{if(temporary)[NSFileManager.defaultManager removeItemAtPath:temporary error:nil];}
+ if(!ok){
+  NSString*message=[NSString stringWithFormat:@"Audio conversion failed: %@ (detected %@): %@",source.lastPathComponent,detected.length?detected:@"unknown",failure.localizedDescription?:@"Decoder returned no audio"];
+  PMDiagnosticsWrite(message.UTF8String);
+  if(error)*error=[NSError errorWithDomain:@"PhiMod.Audio" code:1 userInfo:failure?@{NSLocalizedDescriptionKey:message,NSUnderlyingErrorKey:failure}:@{NSLocalizedDescriptionKey:message}];
+ }else if(error)*error=nil;
+ return ok;
 }
 }
 

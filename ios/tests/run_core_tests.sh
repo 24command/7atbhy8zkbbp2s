@@ -25,3 +25,7 @@ python3 "$ROOT/tests/test_scene_state_lookup.py" --cxx "${CXX:-clang++}"
 
 "${CXX:-clang++}" -std=c++17 -Wall -Wextra -Werror -pedantic "$ROOT/tests/PMUILayoutModalTest.cpp" -o "$OUT/PMUILayoutModalTest"
 "$OUT/PMUILayoutModalTest"
+
+"${CXX:-clang++}" -std=c++17 -Wall -Wextra -Werror -pedantic "$ROOT/tests/PMAudioFileTypeTest.cpp" -o "$OUT/PMAudioFileTypeTest"
+"$OUT/PMAudioFileTypeTest"
+rm -f "$OUT/PMAudioFileTypeTest"

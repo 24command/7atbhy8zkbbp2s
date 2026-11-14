@@ -8,6 +8,10 @@ Start with [HP_PRACTICE_20261018.md](HP_PRACTICE_20261018.md) for this revision,
 build/test checklist, and [GAMEPLAY_UI_PORT.md](GAMEPLAY_UI_PORT.md) for scope
 and safety boundaries. Portable C++ cores were rebuilt and run with local MSVC. Source-contract, metadata, judge-patch, and real-image hook-gate checks have passed on Windows. This revision still needs the macOS Apple SDK build and real-device verification.
 
+## Skin audio import fix (2026-11-14)
+
+Skin archives may contain WAV or MP3 data named `click.ogg`, `drag.ogg` or `flick.ogg`. Audio import now detects container headers and uses a temporary correctly named file for decoding, retaining the original resource. Vorbis PCM also goes through the shared AAC sample-rate converter; temporary files are cleaned up. Errors identify the resource, detected format and decoder cause. Existing skins need no reimport unless their earlier import failed; retry failed packs with the rebuilt framework. No new hooks.
+
 ## MOD full-width page / unlock modal input (2026-11-14)
 
 See [UI_MODAL_LAYOUT_20261114.md](UI_MODAL_LAYOUT_20261114.md): shared native page host, full-width settings rows, larger left-aligned unlock dialog and exclusive selector input until the closing touch is released. Current runtime marker: `settings-layout-v5-20261114`. No new hooks (72) or reimport; device verification remains required.
