@@ -661,6 +661,7 @@ void onMainlineApplyMapCover(P self,P mi){
 }
 
 void onSelector(P self,P mi){
+ bool modal=false;if(!contentBoundary("Selector modal",[&]{modal=pmunlock::selectorModalUpdate(R(),self);})||modal)return;
  bool access=false;if(!contentBoundary("Selector chapter access",[&]{access=pmunlock::selectorAccess(R(),self);})||!access)return;
  contentBoundary("Selector content prepare",[&]{pmcontent::prepareSelectorItems(R(),self);pmcontent::selectorLoadingBegin(R(),self);});
  orig<VoidFn>(h::selector)(self,mi);
@@ -674,6 +675,7 @@ void onSetting(P self,P mi){orig<VoidFn>(h::setting)(self,mi);static std::string
 void onSettingTab(P self,int index,P mi){try{if(pmscene::settingsTabRequest(R(),self,index))return;}catch(const std::exception&e){lastError=e.what();diagf("MOD tab routing failed target=%d: %s",index,e.what());return;}orig<void(*)(P,int,P)>(h::settingTab)(self,index,mi);}
 void onSettingBack(P self,P mi){try{pmscene::settingsLeave(R(),"back-button");}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::settingBack)(self,mi);}
 bool dispatchModButton(P self){
+ try{if(pmunlock::selectorButtonBlocked(R(),self))return true;}catch(const std::exception&e){diagf("Selector modal button: %s",e.what());return true;}
  try{if(pmunlock::beforeResultContinue(R(),self))return true;}catch(const std::exception&e){diagf("Unlock result Continue: %s",e.what());}
  try{if(pmunlock::pressRequirement(R(),self))return true;}catch(const std::exception&e){diagf("Unlock details button: %s",e.what());return true;}
  try{if(pmunlock::blockChallengeButton(R(),self))return true;}catch(const std::exception&e){diagf("Challenge access guard: %s",e.what());return true;}
@@ -684,6 +686,7 @@ bool dispatchModButton(P self){
 }
 void onPress(P self,P mi){if(!dispatchModButton(self))orig<VoidFn>(h::button)(self,mi);}
 void onPointerClick(P self,P event,P mi){
+ try{if(pmunlock::selectorButtonBlocked(R(),self))return;}catch(const std::exception&e){diagf("Selector modal click: %s",e.what());return;}
  if(pmunlock::ownsRequirementButton(self)){try{if(R().enumValue(R().call(event,"get_button"),"UnityEngine.EventSystems.PointerEventData.InputButton")==0)pmunlock::pressRequirement(R(),self);}catch(const std::exception&e){diagf("Unlock details click: %s",e.what());}return;}
  try{if(pmunlock::blockChallengeButton(R(),self))return;}catch(const std::exception&e){diagf("Challenge click guard: %s",e.what());return;}
  if(pmscene::ownsButton(self)){

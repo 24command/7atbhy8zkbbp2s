@@ -3,7 +3,42 @@ uint32_t requirementRoot=0,requirementPopup=0;P requirementButton=nullptr,requir
 bool requirementVisible=false;float requirementCut=0;phimod::UITapGate requirementTap;
 uint32_t requirementTask=0;bool requirementScrollPending=false,requirementSeenShowing=false;double requirementPressedAt=-100,requirementPopupSince=0;NSString*requirementPopupText=nil;
 P requirementTouchItem=nullptr;int requirementTouchSlot=-1;
+uint32_t requirementInputOwner=0,requirementView=0,requirementStockText=0;
+bool requirementPreviousDisabled=false,requirementStockEnabled=true,requirementFallbackPending=false;
+P requirementScroll=nullptr,requirementBody=nullptr;TipSize requirementBoxSize{},requirementBodySize{};
+void resetRequirementGesture(Runtime&r,P owner){
+ // Exact 4.0.3 constructor/no-touch sentinels, not a guessed finger id of -1.
+ r.put(owner,"nowFingerId",-100);r.put(owner,"fingerOnSongList",false);
+ r.put(owner,"startFingerPosition",-1000.f);r.put(owner,"startListPosition",-1000.f);
+ r.put(owner,"listMoveSpeed",0.f);r.put(owner,"moveRecCount",0);r.put(owner,"moveRecCountForSongCoverSelector",0);
+}
+void releaseRequirementInput(Runtime&r){
+ if(!requirementInputOwner)return;P owner=target(r,requirementInputOwner);
+ if(r.alive(owner)){
+  try{resetRequirementGesture(r,owner);}catch(const std::exception&e){logf("Unlock selector gesture reset: %s",e.what());}
+  try{if(!requirementPreviousDisabled)r.put(owner,"disableSongSelector",requirementPreviousDisabled);}catch(const std::exception&e){logf("Unlock selector input restore: %s",e.what());}
+ }
+ r.gchandle_free(requirementInputOwner);requirementInputOwner=0;requirementTap.reset();
+}
+void acquireRequirementInput(Runtime&r,P owner){
+ if(requirementInputOwner)return;
+ P type=r.klass("SongSelector");
+ for(const char*field:{"nowFingerId","moveRecCount","moveRecCountForSongCoverSelector"})r.field(type,field,"System.Int32",false);
+ for(const char*field:{"startFingerPosition","startListPosition","listMoveSpeed"})r.field(type,field,"System.Single",false);
+ for(const char*field:{"disableSongSelector","fingerOnSongList"})r.field(type,field,"System.Boolean",false);
+ requirementPreviousDisabled=r.get<bool>(owner,"disableSongSelector");requirementInputOwner=r.gchandle_new(owner,false);
+ try{if(!requirementPreviousDisabled)r.put(owner,"disableSongSelector",true);resetRequirementGesture(r,owner);}catch(...){releaseRequirementInput(r);throw;}
+ PMDiagnosticsWrite("Unlock details owns selector input; native scrolling suspended");
+}
+void clearRequirementScroll(Runtime&r){
+ P stock=target(r,requirementStockText),view=target(r,requirementView);
+ try{if(r.alive(stock))r.call(stock,"set_enabled",{"System.Boolean"},{&requirementStockEnabled});}catch(const std::exception&e){logf("Unlock stock text restore: %s",e.what());}
+ try{if(r.alive(view)){bool no=false;r.call(view,"SetActive",{"System.Boolean"},{&no});r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{view});}}catch(const std::exception&e){logf("Unlock scroll cleanup: %s",e.what());}
+ for(uint32_t*handle:{&requirementStockText,&requirementView})if(*handle){r.gchandle_free(*handle);*handle=0;}
+ requirementScroll=requirementBody=nullptr;requirementBodySize={};
+}
 void clearRequirementUI(Runtime&r){
+ releaseRequirementInput(r);clearRequirementScroll(r);requirementFallbackPending=false;requirementBoxSize={};
  requirementVisible=false;requirementTap.reset();requirementTouchItem=nullptr;requirementTouchSlot=-1;requirementGraphic=nullptr;requirementScrollPending=false;requirementSeenShowing=false;requirementPopupText=nil;
  if(requirementTask){r.gchandle_free(requirementTask);requirementTask=0;}
  if(requirementPopup){P popup=target(r,requirementPopup);if(r.alive(popup))try{r.call(popup,"Cancel");}catch(...){}r.gchandle_free(requirementPopup);requirementPopup=0;}
@@ -73,52 +108,92 @@ void showRequirementButton(Runtime&r,P tip,bool visible){
 // Keep the stock message box alive even if optional scroll layout fails.
 // Its UniTask remains rooted until the native dialog has closed.
 void releaseRequirementDialog(Runtime&r){
+ clearRequirementScroll(r);
  if(requirementTask){r.gchandle_free(requirementTask);requirementTask=0;}
  if(requirementPopup){r.gchandle_free(requirementPopup);requirementPopup=0;}
- requirementScrollPending=false;requirementSeenShowing=false;requirementPopupText=nil;
+ requirementScrollPending=false;requirementSeenShowing=false;requirementFallbackPending=false;requirementPopupText=nil;requirementBoxSize={};
+ // Input ownership is released by selectorModalUpdate only AFTER all fingers
+ // are up. Scene teardown uses clearRequirementUI and restores immediately.
+}
+void sizeRequirementDialog(Runtime&r,P popup){
+ P source=r.get<P>(popup,"content"),canvas=r.call(source,"get_canvas");if(!r.alive(canvas))return;
+ P root=r.call(canvas,"get_rootCanvas");if(!r.alive(root))root=canvas;
+ struct PopupRect{float x,y,w,h;};auto area=r.unbox<PopupRect>(r.call(r.call(root,"get_transform"),"get_rect"));
+ auto safe=r.unbox<PopupRect>(r.stat(r.type("UnityEngine","Screen"),"get_safeArea"));
+ int pixelsW=r.unbox<int>(r.stat(r.type("UnityEngine","Screen"),"get_width")),pixelsH=r.unbox<int>(r.stat(r.type("UnityEngine","Screen"),"get_height"));
+ float width=area.w,height=area.h;if(pixelsW>0&&pixelsH>0&&safe.w>0&&safe.h>0){width*=std::min(1.f,safe.w/pixelsW);height*=std::min(1.f,safe.h/pixelsH);}
+ auto targetSize=phimod::readablePopupSize(width,height);TipSize size{targetSize.width,targetSize.height};
+ if(std::fabs(size.x-requirementBoxSize.x)<.5f&&std::fabs(size.y-requirementBoxSize.y)<.5f)return;
+ r.call(popup,"set_Size",{"UnityEngine.Vector2"},{&size});requirementBoxSize=size;
+ logf("Unlock details adaptive box: %.1f x %.1f (canvas %.1f x %.1f)",size.x,size.y,width,height);
+}
+void syncRequirementScroll(Runtime&r){
+ P stock=target(r,requirementStockText),viewObject=target(r,requirementView);if(!r.alive(stock)||!r.alive(viewObject)||!r.alive(requirementBody))return;
+ P stockTr=r.call(stock,"get_rectTransform"),view=r.call(viewObject,"get_transform");bool no=false;
+ // The native Text NEVER changes parent. MsgBox.RefreshElements remains free
+ // to lay it out; this sibling viewport follows that rectangle exactly once.
+ for(const char*field:{"anchorMin","anchorMax","pivot","sizeDelta","anchoredPosition"}){
+  std::string get=std::string("get_")+field,set=std::string("set_")+field;auto expected=r.unbox<TipSize>(r.call(stockTr,get.c_str())),actual=r.unbox<TipSize>(r.call(view,get.c_str()));
+  if(expected.x!=actual.x||expected.y!=actual.y)r.call(view,set.c_str(),{"UnityEngine.Vector2"},{&expected});
+ }
+ struct PopupRect{float x,y,w,h;};auto rect=r.unbox<PopupRect>(r.call(view,"get_rect"));
+ if(std::fabs(rect.w-requirementBodySize.x)>.5f||std::fabs(rect.h-requirementBodySize.y)>.5f){
+  float normalized=requirementBodySize.x>0?r.unbox<float>(r.call(requirementScroll,"get_verticalNormalizedPosition")):1.f;
+  P bodyTr=r.call(requirementBody,"get_rectTransform");r.stat(r.type("UnityEngine","Canvas"),"ForceUpdateCanvases");
+  float height=r.unbox<float>(r.call(requirementBody,"get_preferredHeight"));TipSize size{0,std::max(std::max(32.f,rect.h),height+20.f)};
+  r.call(bodyTr,"set_sizeDelta",{"UnityEngine.Vector2"},{&size});if(!std::isfinite(normalized))normalized=1;normalized=std::clamp(normalized,0.f,1.f);r.call(requirementScroll,"set_verticalNormalizedPosition",{"System.Single"},{&normalized});requirementBodySize={rect.w,rect.h};
+ }
+ if(r.unbox<bool>(r.call(stock,"get_enabled")))r.call(stock,"set_enabled",{"System.Boolean"},{&no});
 }
 void prepareRequirementScroll(Runtime&r,P popup){
- bool no=false,yes=true;P content=nullptr,oldTr=nullptr,oldParent=nullptr,viewObject=nullptr;uint32_t viewHandle=0;
+ bool no=false,yes=true;
  try{
-  r.stat(r.type("UnityEngine","Canvas"),"ForceUpdateCanvases");
-  content=r.get<P>(popup,"content");oldTr=r.call(content,"get_rectTransform");oldParent=r.call(oldTr,"get_parent");
-  int font=28,wrap=0,overflow=1,align=0;
-  r.call(content,"set_fontSize",{"System.Int32"},{&font});r.call(content,"set_resizeTextForBestFit",{"System.Boolean"},{&no});r.call(content,"set_supportRichText",{"System.Boolean"},{&no});
-  r.call(content,"set_horizontalOverflow",{"UnityEngine.HorizontalWrapMode"},{&wrap});r.call(content,"set_verticalOverflow",{"UnityEngine.VerticalWrapMode"},{&overflow});r.call(content,"set_alignment",{"UnityEngine.TextAnchor"},{&align});r.call(content,"set_raycastTarget",{"System.Boolean"},{&yes});
-  viewObject=requirementObject(r,"PhiMod Unlock Scroll",oldParent);viewHandle=r.gchandle_new(viewObject,false);P view=r.call(viewObject,"get_transform");
-  for(const char*field:{"anchorMin","anchorMax","pivot","sizeDelta","anchoredPosition"}){std::string get=std::string("get_")+field,set=std::string("set_")+field;TipSize value=r.unbox<TipSize>(r.call(oldTr,get.c_str()));r.call(view,set.c_str(),{"UnityEngine.Vector2"},{&value});}
+  sizeRequirementDialog(r,popup);r.stat(r.type("UnityEngine","Canvas"),"ForceUpdateCanvases");
+  P stock=r.get<P>(popup,"content"),stockTr=r.call(stock,"get_rectTransform"),parent=r.call(stockTr,"get_parent");
+  requirementStockEnabled=r.unbox<bool>(r.call(stock,"get_enabled"));requirementStockText=r.gchandle_new(stock,false);
+  P viewObject=requirementObject(r,"PhiMod Unlock Scroll",parent);requirementView=r.gchandle_new(viewObject,false);P view=r.call(viewObject,"get_transform");
+  P layout=requirementComponent(r,viewObject,"UnityEngine.UI","LayoutElement");r.call(layout,"set_ignoreLayout",{"System.Boolean"},{&yes});
+  int bodyLayer=r.unbox<int>(r.call(stockTr,"GetSiblingIndex"))+1;r.call(view,"SetSiblingIndex",{"System.Int32"},{&bodyLayer});
   requirementComponent(r,viewObject,"UnityEngine.UI","RectMask2D");
-  P image=requirementComponent(r,viewObject,"UnityEngine.UI","Image");TipColor transparent{0,0,0,0};r.call(image,"set_color",{"UnityEngine.Color"},{&transparent});r.call(image,"set_raycastTarget",{"System.Boolean"},{&yes});
-  P scroll=requirementComponent(r,viewObject,"UnityEngine.UI","ScrollRect");
-  r.call(oldTr,"SetParent",{"UnityEngine.Transform","System.Boolean"},{view,&no});
-  TipSize low{0,1},high{1,1},pivot{.5f,1},position{0,0},size{0,32};
-  r.call(oldTr,"set_anchorMin",{"UnityEngine.Vector2"},{&low});r.call(oldTr,"set_anchorMax",{"UnityEngine.Vector2"},{&high});r.call(oldTr,"set_pivot",{"UnityEngine.Vector2"},{&pivot});r.call(oldTr,"set_anchoredPosition",{"UnityEngine.Vector2"},{&position});r.call(oldTr,"set_sizeDelta",{"UnityEngine.Vector2"},{&size});
-  r.stat(r.type("UnityEngine","Canvas"),"ForceUpdateCanvases");
-  float height=r.unbox<float>(r.call(content,"get_preferredHeight"));size.y=std::max(32.f,height+24);r.call(oldTr,"set_sizeDelta",{"UnityEngine.Vector2"},{&size});
-  r.call(scroll,"set_viewport",{"UnityEngine.RectTransform"},{view});r.call(scroll,"set_content",{"UnityEngine.RectTransform"},{oldTr});r.call(scroll,"set_horizontal",{"System.Boolean"},{&no});r.call(scroll,"set_vertical",{"System.Boolean"},{&yes});
-  int clamped=2;r.call(scroll,"set_movementType",{"UnityEngine.UI.ScrollRect.MovementType"},{&clamped});float top=1;r.call(scroll,"set_verticalNormalizedPosition",{"System.Single"},{&top});
-  PMDiagnosticsWrite("Unlock details native scroll ready");
+  P hit=requirementComponent(r,viewObject,"UnityEngine.UI","Image");TipColor transparent{0,0,0,0};r.call(hit,"set_color",{"UnityEngine.Color"},{&transparent});r.call(hit,"set_raycastTarget",{"System.Boolean"},{&yes});
+  requirementScroll=requirementComponent(r,viewObject,"UnityEngine.UI","ScrollRect");
+  P textObject=requirementObject(r,"Unlock Requirements Body",view);requirementBody=requirementComponent(r,textObject,"UnityEngine.UI","Text");P bodyTr=r.call(textObject,"get_transform");
+  int font=std::clamp(r.unbox<int>(r.call(stock,"get_fontSize")),28,36),wrap=0,overflow=1,align=0;
+  r.call(requirementBody,"set_font",{"UnityEngine.Font"},{r.call(stock,"get_font")});r.call(requirementBody,"set_text",{"System.String"},{r.managedString(requirementPopupText?:lockUIDetails?:@"")});
+  auto color=r.unbox<TipColor>(r.call(stock,"get_color"));color.a=1;r.call(requirementBody,"set_color",{"UnityEngine.Color"},{&color});
+  r.call(requirementBody,"set_fontSize",{"System.Int32"},{&font});r.call(requirementBody,"set_resizeTextForBestFit",{"System.Boolean"},{&no});r.call(requirementBody,"set_supportRichText",{"System.Boolean"},{&no});r.call(requirementBody,"set_horizontalOverflow",{"UnityEngine.HorizontalWrapMode"},{&wrap});r.call(requirementBody,"set_verticalOverflow",{"UnityEngine.VerticalWrapMode"},{&overflow});r.call(requirementBody,"set_alignment",{"UnityEngine.TextAnchor"},{&align});r.call(requirementBody,"set_raycastTarget",{"System.Boolean"},{&yes});
+  TipSize low{0,1},high{1,1},pivot{.5f,1},zero{0,0},size{0,32};r.call(bodyTr,"set_anchorMin",{"UnityEngine.Vector2"},{&low});r.call(bodyTr,"set_anchorMax",{"UnityEngine.Vector2"},{&high});r.call(bodyTr,"set_pivot",{"UnityEngine.Vector2"},{&pivot});r.call(bodyTr,"set_anchoredPosition",{"UnityEngine.Vector2"},{&zero});r.call(bodyTr,"set_sizeDelta",{"UnityEngine.Vector2"},{&size});
+  r.call(requirementScroll,"set_viewport",{"UnityEngine.RectTransform"},{view});r.call(requirementScroll,"set_content",{"UnityEngine.RectTransform"},{bodyTr});r.call(requirementScroll,"set_horizontal",{"System.Boolean"},{&no});r.call(requirementScroll,"set_vertical",{"System.Boolean"},{&yes});
+  int clamped=2;r.call(requirementScroll,"set_movementType",{"UnityEngine.UI.ScrollRect.MovementType"},{&clamped});syncRequirementScroll(r);
+  PMDiagnosticsWrite("Unlock details native scroll ready: independent left-aligned body");
  }catch(const std::exception&e){
-  // Restore the stock content BEFORE disposing a partially built viewport.
-  // Never Cancel() a visible native dialog just because scrolling failed.
-  try{if(oldTr&&oldParent){r.call(oldTr,"SetParent",{"UnityEngine.Transform","System.Boolean"},{oldParent,&no});r.call(popup,"RefreshElements");}if(viewObject)r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{viewObject});}catch(...){}
+  // Optional enhancement failure retains the stock native text and dialog.
+  try{clearRequirementScroll(r);}catch(...){}
   logf("Unlock details scroll setup failed; native dialog retained: %s",e.what());
  }
- if(viewHandle)r.gchandle_free(viewHandle);
+}
+void requestRequirementFallback(Runtime&r,NSString*text){
+ requirementPopupText=[text copy];requirementPopupSince=NSDate.timeIntervalSinceReferenceDate;requirementFallbackPending=true;
+ P task=r.stat(r.klass("PhigrosUI"),"ShowOkMessageBox",{"System.String","System.String"},{r.managedString(@"\u89e3\u9501\u6761\u4ef6"),r.managedString(text)});if(task)requirementTask=r.gchandle_new(task,false);
 }
 void pollRequirementDialog(Runtime&r){
+ if(!requirementPopup&&requirementFallbackPending){
+  P dialogs=r.stat(r.type("UnityEngine","Object"),"FindObjectsOfType",{"System.Type"},{r.type_get_object(r.class_get_type(r.type("Phigros.UI","MsgBox")))});
+  for(uintptr_t i=0;dialogs&&i<r.array_length(dialogs);++i){P dialog=r.arrayAt(dialogs,int(i));if(r.alive(dialog)&&r.get<bool>(dialog,"isShowing")&&[r.string(r.call(dialog,"get_Content"))isEqualToString:requirementPopupText]){requirementPopup=r.gchandle_new(dialog,false);requirementSeenShowing=true;requirementFallbackPending=false;break;}}
+  if(!requirementPopup&&NSDate.timeIntervalSinceReferenceDate-requirementPopupSince>2){logf("Unlock details fallback did not appear; restoring selector input");releaseRequirementDialog(r);}return;
+ }
  if(!requirementPopup)return;P popup=target(r,requirementPopup);
  if(!r.alive(popup)){releaseRequirementDialog(r);return;}
  if(!r.get<bool>(popup,"isShowing")){
   if(requirementSeenShowing||!requirementScrollPending){releaseRequirementDialog(r);return;}
   if(NSDate.timeIntervalSinceReferenceDate-requirementPopupSince>2){
    NSString*text=requirementPopupText;try{r.call(popup,"Cancel");}catch(...){}releaseRequirementDialog(r);
-   PMDiagnosticsWrite("Unlock details Show timeout; requesting stock info dialog");
-   r.stat(r.klass("PhigrosUI"),"ShowOkMessageBox",{"System.String","System.String"},{r.managedString(@"\u89e3\u9501\u6761\u4ef6"),r.managedString(text?:@"")});
+   PMDiagnosticsWrite("Unlock details Show timeout; requesting stock info dialog");requestRequirementFallback(r,text?:@"");
   }return;
  }
  requirementSeenShowing=true;
  if(requirementScrollPending){requirementScrollPending=false;prepareRequirementScroll(r,popup);}
+ else if(requirementView)try{sizeRequirementDialog(r,popup);syncRequirementScroll(r);}catch(const std::exception&e){logf("Unlock details layout refresh: %s",e.what());try{clearRequirementScroll(r);}catch(...){}}
 }
 bool anotherRequirementDialog(Runtime&r){
  if(requirementPopup)return true;
@@ -132,7 +207,7 @@ void openRequirementPopup(Runtime&r,NSString*text){
  P popup=r.stat(r.klass("PhigrosUI"),"CreateMessageBox",{"System.String","System.String","System.Boolean"},{r.managedString(@"\u89e3\u9501\u6761\u4ef6"),r.managedString(text),&no});
  if(!r.alive(popup))throw std::runtime_error("Native message box not created");requirementPopup=r.gchandle_new(popup,false);requirementPopupText=[text copy];requirementPopupSince=NSDate.timeIntervalSinceReferenceDate;
  try{
-  TipSize box{1000,660};r.call(popup,"set_Size",{"UnityEngine.Vector2"},{&box});
+  sizeRequirementDialog(r,popup);
   P task=r.call(popup,"Show");if(task)requirementTask=r.gchandle_new(task,false);
   requirementScrollPending=true;requirementSeenShowing=r.get<bool>(popup,"isShowing");
   logf("Unlock details native Show dispatched: showing=%d chars=%lu",r.get<bool>(popup,"isShowing"),(unsigned long)text.length);
@@ -143,9 +218,10 @@ void activateRequirement(Runtime&r,const char*source){
  P owner=target(r,lockUIOwner);if(!r.alive(owner)||r.get<bool>(owner,"exit"))return;
  double now=NSDate.timeIntervalSinceReferenceDate;if(now-requirementPressedAt<.4||anotherRequirementDialog(r))return;
  requirementPressedAt=now;requirementTap.reset();logf("Unlock details activate: source=%s",source);
+ acquireRequirementInput(r,owner);
  try{openRequirementPopup(r,lockUIDetails);}catch(const std::exception&e){
   logf("Unlock details custom popup failed; requesting stock info dialog: %s",e.what());
-  r.stat(r.klass("PhigrosUI"),"ShowOkMessageBox",{"System.String","System.String"},{r.managedString(@"\u89e3\u9501\u6761\u4ef6"),r.managedString(lockUIDetails)});
+  try{requestRequirementFallback(r,lockUIDetails);}catch(...){releaseRequirementDialog(r);releaseRequirementInput(r);throw;}
  }
 }
 // Unity Touch payload from the 4.0.3 metadata. Runtime::unbox additionally

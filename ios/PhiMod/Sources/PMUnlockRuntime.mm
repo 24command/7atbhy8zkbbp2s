@@ -459,6 +459,29 @@ bool blockChallengeButton(Runtime&r,void*raw){
 }
 bool ownsRequirementButton(void*button){return button&&button==requirementButton;}
 bool pressRequirement(Runtime&r,void*button){if(!ownsRequirementButton(button))return false;activateRequirement(r,"native-button");return true;}
+bool selectorModalUpdate(Runtime&r,void*selector){
+ if(!requirementInputOwner||selector!=target(r,requirementInputOwner))return false;
+ try{
+  if(!r.alive(selector)||r.get<bool>(selector,"exit")){clearRequirementUI(r);return true;}
+  pollRequirementDialog(r);
+  bool modal=requirementPopup||requirementFallbackPending;
+  P input=r.type("UnityEngine","Input");int touches=r.unbox<int>(r.stat(input,"get_touchCount")),left=0;
+  bool pointerDown=touches>0||r.unbox<bool>(r.stat(input,"GetMouseButton",{"System.Int32"},{&left}));
+  auto frame=phimod::selectorModalFrame(true,modal,pointerDown);
+  if(frame.release){releaseRequirementInput(r);PMDiagnosticsWrite("Unlock details input restored after finger release");}
+ }catch(const std::exception&e){logf("Unlock modal recovery: %s",e.what());try{clearRequirementUI(r);}catch(...){}releaseRequirementInput(r);}
+ return true; // Also swallow the close/release frame; resume next Update.
+}
+bool selectorButtonBlocked(Runtime&r,void*button){
+ if(!requirementInputOwner)return false;
+ P owner=target(r,requirementInputOwner);if(!r.alive(owner)){releaseRequirementInput(r);return false;}
+ P popup=target(r,requirementPopup);
+ if(r.alive(popup)&&r.alive(button)){
+  P node=r.call(button,"get_transform"),root=r.call(popup,"get_transform");
+  if(node==root||r.unbox<bool>(r.call(node,"IsChildOf",{"UnityEngine.Transform"},{root})))return false;
+ }
+ return true;
+}
 void refreshListLocks(Runtime&r,P selector){
  static P last=nullptr;static int lastSlot=-1,lastCount=-1;static NSUInteger lastRev=NSUIntegerMax;static double lastTime=0;static std::map<P,std::pair<bool,bool>>cache;
  P items=r.call(selector,"get_SongItems");int slot=r.get<int>(selector,"nowLevel");if(slot<0||slot>3)return;

@@ -11,6 +11,8 @@ bool selectorAccess(pmbridge::Runtime&,void*selector);
 bool blockChallengeButton(pmbridge::Runtime&,void*button);
 bool ownsRequirementButton(void*button);
 bool pressRequirement(pmbridge::Runtime&,void*button);
+bool selectorModalUpdate(pmbridge::Runtime&,void*selector);
+bool selectorButtonBlocked(pmbridge::Runtime&,void*button);
 void tick(pmbridge::Runtime&,void* selector);
 void resultStarted(pmbridge::Runtime&,void* owner);
 bool beforeResultContinue(pmbridge::Runtime&,void* button);

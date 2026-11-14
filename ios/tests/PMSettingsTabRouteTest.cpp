@@ -21,5 +21,14 @@ int main(){using namespace phimod;
   default:break;
  }
  assert(arrays==4&&!forward);assert(buildRevision[0]&&settingsRevision[0]);
+ // Separate private hosts for Gameplay/Audio/Misc: MOD belongs to host 1.
+ int parents[10]={0,0,1,1,1,2,3,4,0,0};
+ auto parent=[&](int node){return parents[node];};
+ auto rect=[](int node){return node==1||node==2||node==8;};
+ std::array<int,3>frames{5,6,7};assert(settingsFrameHost(frames,parent,rect)==1);
+ parents[6]=parents[7]=2;assert(settingsFrameHost(frames,parent,rect)==2);
+ parents[5]=3;parents[6]=3;parents[7]=1;frames={5,3,7};assert(settingsFrameHost(frames,parent,rect)==1);
+ parents[1]=8;assert(settingsFrameHost(frames,parent,[](int n){return n==8;})==8);
+ parents[7]=9;assert(settingsFrameHost(frames,parent,rect)==0);
  std::puts("PASS duplicate fourth-tab request, internal/foreign owner isolation and native tab exit");
 }

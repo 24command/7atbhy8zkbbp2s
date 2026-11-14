@@ -54,6 +54,44 @@ void registerNativeTab(Runtime&r,P setting,P frame,P content){
 }
 P nativeTitle(Runtime&r,NSString*text){P title=r.object_new(r.type("Phigros2.Utils.MultiLanguageText","MultiLanguageTextString"));r.call(title,".ctor");r.call(title,"set_NewString",{"System.String"},{r.managedString(text)});return title;}
 P emptyListeners(Runtime&r,P method,int param){P arrayType=r.type_get_object(r.method_get_param(method,param));P element=r.call(arrayType,"GetElementType");int zero=0;return r.stat(r.type("System","Array"),"CreateInstance",{"System.Type","System.Int32"},{element,&zero});}
+void nativeManualLayout(Runtime&r,P tr){
+ P object=go(r,tr),layout=r.component(object,r.type("UnityEngine.UI","LayoutElement"));
+ if(!r.alive(layout))layout=r.call(object,"AddComponent",{"System.Type"},{r.type_get_object(r.class_get_type(r.type("UnityEngine.UI","LayoutElement")))});
+ bool yes=true;r.call(layout,"set_ignoreLayout",{"System.Boolean"},{&yes});
+}
+void nativeRectRegion(Runtime&r,P tr,phimod::UIRegion region){
+ V2 low{region.left,region.bottom},high{region.right,region.top},zero{0,0},center{.5f,.5f};V3 scale{1,1,1};struct Q{float x,y,z,w;};Q rotation{0,0,0,1};
+ r.call(tr,"set_anchorMin",{"UnityEngine.Vector2"},{&low});r.call(tr,"set_anchorMax",{"UnityEngine.Vector2"},{&high});r.call(tr,"set_pivot",{"UnityEngine.Vector2"},{&center});
+ r.call(tr,"set_offsetMin",{"UnityEngine.Vector2"},{&zero});r.call(tr,"set_offsetMax",{"UnityEngine.Vector2"},{&zero});r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});r.call(tr,"set_localRotation",{"UnityEngine.Quaternion"},{&rotation});
+}
+void showNativePath(Runtime&r,P node,P root){
+ for(int depth=0;node&&depth<32;++depth){
+  P object=go(r,node);active(r,object,true);P group=r.component(object,r.type("UnityEngine","CanvasGroup"));
+  if(r.alive(group)){float one=1;bool yes=true;r.call(group,"set_alpha",{"System.Single"},{&one});r.call(group,"set_interactable",{"System.Boolean"},{&yes});r.call(group,"set_blocksRaycasts",{"System.Boolean"},{&yes});}
+  if(node==root)return;node=r.call(node,"get_parent");
+ }throw std::runtime_error("MOD content path escaped its independent frame");
+}
+phimod::UIRegion nativeWideViewport(Runtime&r,P setting,P frames){
+ // Measure another native tab relative to its OWN frame. A hidden frame's
+ // screen position must not be copied into the MOD page.
+ for(int index:{1,2})try{
+  P frame=r.arrayAt(frames,index),frameTr=transform(r,frame),scrolls=r.children(go(r,frame),r.type("UnityEngine.UI","ScrollRect"));
+  if(!scrolls||!r.array_length(scrolls))continue;P expectedContent=r.arrayAt(r.get<P>(setting,"tabScrollContents"),index),scroll=nullptr;
+  for(uintptr_t i=0;i<r.array_length(scrolls);++i){P candidate=r.arrayAt(scrolls,int(i));if(r.call(candidate,"get_content")==expectedContent){scroll=candidate;break;}}
+  if(!scroll)continue;P viewport=r.call(scroll,"get_viewport");if(!r.alive(viewport))viewport=transform(r,scroll);
+  auto b=bounds(r,viewport,frameTr);auto f=r.unbox<sceneimpl::Rect>(r.call(frameTr,"get_rect"));
+  if(!std::isfinite(b.l)||!std::isfinite(b.r)||!std::isfinite(b.b)||!std::isfinite(b.t)||!(f.w>0&&f.h>0))continue;
+  auto region=phimod::settingsViewport({b.l,b.b,b.r,b.t},{f.x,f.y,f.x+f.w,f.y+f.h});
+  if(region.right-region.left>.6f)return region;
+ }catch(const std::exception&){}
+ return {.035f,.075f,.965f,.90f};
+}
+void nativeHorizontalFill(Runtime&r,P tr){
+ V2 low=r.unbox<V2>(r.call(tr,"get_anchorMin")),high=r.unbox<V2>(r.call(tr,"get_anchorMax"));low.x=0;high.x=1;
+ r.call(tr,"set_anchorMin",{"UnityEngine.Vector2"},{&low});r.call(tr,"set_anchorMax",{"UnityEngine.Vector2"},{&high});
+ V2 size=r.unbox<V2>(r.call(tr,"get_sizeDelta")),position=r.unbox<V2>(r.call(tr,"get_anchoredPosition"));size.x=position.x=0;V3 scale{1,1,1};
+ r.call(tr,"set_sizeDelta",{"UnityEngine.Vector2"},{&size});r.call(tr,"set_anchoredPosition",{"UnityEngine.Vector2"},{&position});r.call(tr,"set_localScale",{"UnityEngine.Vector3"},{&scale});
+}
 void makeNativeSettings(Runtime&r,P setting){
  // Preflight the original tab/layout interfaces before touching page state.
  r.resolve(r.klass("Setting"),"ChangeTab",{"System.Int32"});
@@ -67,14 +105,32 @@ void makeNativeSettings(Runtime&r,P setting){
  P frames=r.get<P>(setting,"frameAnimators"),sourceFrame=nullptr;
  for(int i=0;i<(int)r.array_length(frames);++i){P candidate=r.arrayAt(frames,i);std::vector<int>path;if(childPath(r,transform(r,candidate),transform(r,source),path)){sourceFrame=candidate;break;}}
  if(!sourceFrame)throw std::runtime_error("Settings scroll frame not found");
- P sourceTransform=transform(r,sourceFrame),parent=r.call(sourceTransform,"get_parent");
+ P sourceTransform=transform(r,sourceFrame);
+ if(r.array_length(frames)!=3)throw std::runtime_error("Unexpected original settings frame count");
+ std::array<P,3>frameTransforms{transform(r,r.arrayAt(frames,0)),transform(r,r.arrayAt(frames,1)),transform(r,r.arrayAt(frames,2))};
+ P parent=phimod::settingsFrameHost(frameTransforms,[&](P node){return r.call(node,"get_parent");},[&](P node){return r.alive(r.component(go(r,node),r.type("UnityEngine","RectTransform")));});
+ if(!parent)throw std::runtime_error("Shared native settings frame host not found");
+ int fromTab=std::clamp(r.get<int>(setting,"currentTab"),0,2);P visibleFrame=r.arrayAt(frames,fromTab);
+ auto body=bounds(r,visibleFrame,parent);auto parentRect=r.unbox<sceneimpl::Rect>(r.call(parent,"get_rect"));
+ auto bodyRegion=phimod::settingsBody({body.l,body.b,body.r,body.t},{parentRect.x,parentRect.y,parentRect.x+parentRect.w,parentRect.y+parentRect.h});
+ auto wideRegion=nativeWideViewport(r,setting,frames);
+ int frameLayer=r.unbox<int>(r.call(parent,"get_childCount"));
+ for(P frameTr:frameTransforms){std::vector<int>path;if(childPath(r,parent,frameTr,path)&&!path.empty())frameLayer=std::min(frameLayer,path.back());}
  P root=clone(r,go(r,sourceFrame),parent,nativeSettingsRoot);active(r,root,false);
+ r.call(root,"set_name",{"System.String"},{r.string_new("PhiMod Settings Frame")});
+ // Stay in the native body layer, below navigation and popup siblings.
+ r.call(transform(r,root),"SetSiblingIndex",{"System.Int32"},{&frameLayer});
  // Only the page visual/template is cloned. A copied Setting controller must
  // never run native Update or take ownership of the live settings session.
  P controllers=r.children(root,r.klass("Setting"));bool disabled=false;
  for(uintptr_t i=0;controllers&&i<r.array_length(controllers);++i)r.call(r.arrayAt(controllers,int(i)),"set_enabled",{"System.Boolean"},{&disabled});
  try{
   P cloneTransform=transform(r,root);
+  // Freeze only copied template animators BEFORE adding new native controls.
+  // Otherwise a clone made while Gameplay is hidden keeps writing its hidden pose.
+  P copiedAnimators=r.children(root,r.type("UnityEngine","Animator"));bool no=false;
+  for(uintptr_t i=0;copiedAnimators&&i<r.array_length(copiedAnimators);++i)r.call(r.arrayAt(copiedAnimators,int(i)),"set_enabled",{"System.Boolean"},{&no});
+  nativeManualLayout(r,cloneTransform);nativeRectRegion(r,cloneTransform,bodyRegion);
   P scrollTransform=mappedTransform(r,sourceTransform,cloneTransform,transform(r,source));
   P scroll=r.component(go(r,scrollTransform),r.type("UnityEngine.UI","ScrollRect"));
   P content=mappedTransform(r,sourceTransform,cloneTransform,r.get<P>(original,"content"));
@@ -83,6 +139,21 @@ void makeNativeSettings(Runtime&r,P setting){
   if(content==holder||viewport==holder)throw std::runtime_error("Native settings hierarchy must keep content and itemsHolder separate");
   // Hide gameplay-only decorations copied with the frame, not its viewport.
   for(const char*field:{"previewNoteHolder","judgeLine","clickPosition"}){P object=r.get<P>(setting,field);if(!r.alive(object))continue;std::vector<int>path;P node=transform(r,object);if(childPath(r,sourceTransform,node,path)){P mapped=mappedTransform(r,sourceTransform,cloneTransform,node);active(r,go(r,mapped),false);}}
+
+  // Detach the whole scroll subtree from Gameplay's left-column container.
+  // The content/itemsHolder relationship remains the native template's layout.
+  if(scrollTransform!=cloneTransform){r.call(scrollTransform,"SetParent",{"UnityEngine.Transform","System.Boolean"},{cloneTransform,&no});nativeManualLayout(r,scrollTransform);nativeRectRegion(r,scrollTransform,wideRegion);}
+  std::vector<int>viewportPath;
+  if(viewport==cloneTransform){ /* Native self-viewport: keep the body rectangle. */ }
+  else if(scrollTransform==cloneTransform||!childPath(r,scrollTransform,viewport,viewportPath)){
+   r.call(viewport,"SetParent",{"UnityEngine.Transform","System.Boolean"},{cloneTransform,&no});nativeManualLayout(r,viewport);nativeRectRegion(r,viewport,wideRegion);
+  }else{
+   for(P node=viewport;node!=scrollTransform;node=r.call(node,"get_parent"))nativeRectRegion(r,node,{0,0,1,1});
+  }
+  for(P item:{content,holder}){
+   std::vector<int>path;if(!childPath(r,cloneTransform,item,path))throw std::runtime_error("MOD content is outside its cloned frame");
+   for(P node=item;node!=cloneTransform&&node!=viewport&&node!=scrollTransform;node=r.call(node,"get_parent"))nativeHorizontalFill(r,node);
+  }
   for(int i=r.unbox<int>(r.call(holder,"get_childCount"))-1;i>=0;--i){P child=r.call(holder,"GetChild",{"System.Int32"},{&i});bool world=false;active(r,go(r,child),false);r.call(child,"SetParent",{"UnityEngine.Transform","System.Boolean"},{nullptr,&world});r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{go(r,child)});}
   nativeSettingsManager=first(r,root,r.klass("SettingItemsManager"));if(!nativeSettingsManager)nativeSettingsManager=r.call(root,"AddComponent",{"System.Type"},{r.type_get_object(r.class_get_type(r.klass("SettingItemsManager")))});
   r.put(nativeSettingsManager,"viewport",viewport);r.put(nativeSettingsManager,"content",content);r.put(nativeSettingsManager,"itemsHolder",holder);r.put(nativeSettingsManager,"offset",0.f);
@@ -101,7 +172,9 @@ void makeNativeSettings(Runtime&r,P setting){
   }
   P slider=r.resolve(r.klass("SettingItemsManager"),"AddSlider",{"Phigros2.Utils.MultiLanguageText.MultiLanguageTextString","System.Single","System.Single","System.Single","UnityEngine.Events.UnityAction<System.Single>[]"});
   float value=[[[PMSettings shared]value:@"opacity"]floatValue],low=0,high=1;P listeners=emptyListeners(r,slider,4);uint32_t h=r.gchandle_new(listeners,false);P item=nullptr;try{item=r.invokeOn(slider,nativeSettingsManager,{nativeTitle(r,@"\u60ac\u6d6e\u7a97\u900f\u660e\u5ea6"),&value,&low,&high,listeners});}catch(...){r.gchandle_free(h);throw;}r.gchandle_free(h);nativeOptions.push_back({item,@"opacity",value,true});
+  showNativePath(r,scrollTransform,cloneTransform);showNativePath(r,viewport,cloneTransform);showNativePath(r,content,cloneTransform);showNativePath(r,holder,cloneTransform);
   active(r,root,true);r.stat(r.type("UnityEngine","Canvas"),"ForceUpdateCanvases",{},{});
+  P rowItems=r.children(go(r,holder),r.klass("SettingItem"));for(uintptr_t i=0;rowItems&&i<r.array_length(rowItems);++i)nativeHorizontalFill(r,r.get<P>(r.arrayAt(rowItems,int(i)),"rectTransform"));
   r.call(nativeSettingsManager,"RefreshItems");r.call(nativeSettingsManager,"RefreshPosition");
   float top=1;r.call(scroll,"set_verticalNormalizedPosition",{"System.Single"},{&top});
   registerNativeTab(r,setting,r.component(root,r.type("UnityEngine","Animator")),content);
@@ -113,6 +186,7 @@ void makeNativeSettings(Runtime&r,P setting){
   if(r.get<int>(setting,"currentTab")!=nativeTabIndex||!r.unbox<bool>(r.call(root,"get_activeInHierarchy")))throw std::runtime_error("Native MOD tab did not become active");
   PMDiagnosticsWrite((std::string("MOD page active: ")+phimod::settingsRevision+" build="+phimod::buildRevision+" nativeTab=3").c_str());
   PMDiagnosticsWrite("MOD native fourth settings tab created: distinct viewport/content/itemsHolder");
+  char layout[180];snprintf(layout,sizeof(layout),"MOD independent full-width page: fromTab=%d viewport=%.3f,%.3f..%.3f,%.3f",fromTab,wideRegion.left,wideRegion.bottom,wideRegion.right,wideRegion.top);PMDiagnosticsWrite(layout);
  }catch(...){clearNativeSettings(r);throw;}
 }
 void pollNativeSettings(Runtime&r){

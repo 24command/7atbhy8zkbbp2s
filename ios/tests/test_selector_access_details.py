@@ -51,4 +51,29 @@ class SelectorDetails(unittest.TestCase):
   opening=s.split('void openRequirementPopup(',1)[1].split('void activateRequirement(',1)[0]
   self.assertNotIn('prepareRequirementScroll(',opening)
   self.assertNotIn('"RefreshElements"',opening)
+ def test_popup_does_not_reparent_native_text_or_duplicate_offsets(self):
+  s=(ROOT/'PhiMod/Sources/PMUnlockDetails.inc').read_text(encoding='utf8')
+  body=s.split('void prepareRequirementScroll(',1)[1].split('void requestRequirementFallback(',1)[0]
+  self.assertIn('Unlock Requirements Body',body)
+  self.assertIn('"set_ignoreLayout"',body)
+  self.assertNotIn('r.call(stockTr,"SetParent"',s)
+  self.assertNotIn('r.call(oldTr,"SetParent"',s)
+  self.assertIn('readablePopupSize(width,height)',s)
+  self.assertIn('"get_safeArea"',s)
+  self.assertIn('requirementBodySize',s)
+ def test_modal_blocks_raw_selector_and_background_buttons(self):
+  hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf8')
+  selector=hook.split('void onSelector(',1)[1].split('void onSelectorOff(',1)[0]
+  self.assertLess(selector.index('selectorModalUpdate'),selector.index('orig<VoidFn>'))
+  self.assertIn('||modal)return;',selector)
+  self.assertIn('selectorButtonBlocked(R(),self)',hook.split('bool dispatchModButton(',1)[1].split('void onPress(',1)[0])
+  runtime=(ROOT/'PhiMod/Sources/PMUnlockRuntime.mm').read_text(encoding='utf8')
+  self.assertIn('selectorModalFrame(true,modal,pointerDown)',runtime)
+  self.assertIn('"GetMouseButton"',runtime)
+  detail=(ROOT/'PhiMod/Sources/PMUnlockDetails.inc').read_text(encoding='utf8')
+  self.assertIn('"nowFingerId",-100',detail)
+  self.assertIn('"startFingerPosition",-1000.f',detail)
+  self.assertIn('if(!requirementPreviousDisabled)r.put(owner,"disableSongSelector",requirementPreviousDisabled)',detail)
+  clear=detail.split('void clearRequirementUI(',1)[1].split('P requirementObject(',1)[0]
+  self.assertIn('releaseRequirementInput(r)',clear)
 if __name__=='__main__':unittest.main()

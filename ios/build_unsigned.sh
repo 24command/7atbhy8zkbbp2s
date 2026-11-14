@@ -5,7 +5,7 @@ OUT="${1:-$ROOT/build}"
 SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 REVISION="${GITHUB_SHA:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo local)}"
 [[ "$REVISION" =~ ^[a-zA-Z0-9._-]+$ ]] || REVISION=local
-echo "PhiMod source revision: $REVISION (settings-route-v4-20261114)"
+echo "PhiMod source revision: $REVISION"
 mkdir -p "$OUT/PhiMod.framework"
 bash "$ROOT/tools/build_shader_compiler.sh" "$OUT"
 echo "PhiMod build: explicit ImageIO + CoreMedia linkage (2026-10-25)"

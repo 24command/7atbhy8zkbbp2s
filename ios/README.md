@@ -8,6 +8,10 @@ Start with [HP_PRACTICE_20261018.md](HP_PRACTICE_20261018.md) for this revision,
 build/test checklist, and [GAMEPLAY_UI_PORT.md](GAMEPLAY_UI_PORT.md) for scope
 and safety boundaries. Portable C++ cores were rebuilt and run with local MSVC. Source-contract, metadata, judge-patch, and real-image hook-gate checks have passed on Windows. This revision still needs the macOS Apple SDK build and real-device verification.
 
+## MOD full-width page / unlock modal input (2026-11-14)
+
+See [UI_MODAL_LAYOUT_20261114.md](UI_MODAL_LAYOUT_20261114.md): shared native page host, full-width settings rows, larger left-aligned unlock dialog and exclusive selector input until the closing touch is released. Current runtime marker: `settings-layout-v5-20261114`. No new hooks (72) or reimport; device verification remains required.
+
 ## MOD fourth-tab routing / loaded-build diagnosis (2026-11-14)
 
 See [SETTINGS_ROUTE_20261114.md](SETTINGS_ROUTE_20261114.md): owner-aware tab routing, duplicate fourth-tab protection, native tab touch fallback and page-exit tracing. Builds now embed the GitHub SHA; runtime marker `settings-route-v4-20261114` identifies the actually loaded framework. No new hooks or reimport. Device switching still requires verification.
