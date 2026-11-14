@@ -39,3 +39,4 @@ python3 "$ROOT/tests/test_high_refresh_package.py"
 
 clang++ -std=c++17 -fobjc-arc -framework Foundation "$ROOT/tests/PMDifficultyMetadataTest.mm" -o "$OUT/difficulties"
 "$OUT/difficulties"
+python3 "$ROOT/tests/test_extra_difficulty_routing.py"

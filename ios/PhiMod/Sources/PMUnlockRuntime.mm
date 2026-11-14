@@ -386,7 +386,7 @@ void releaseLockedPreview(Runtime&r){
  for(uint32_t*root:{&lockedPreviewRoot,&lockedAudioRoot})if(*root){r.gchandle_free(*root);*root=0;}
 }
 void guardLockedPreview(Runtime&r,P item,bool blocked){
- P preview=blocked&&r.alive(item)?r.get<P>(item,"previewClipPlayer"):nullptr;
+ P preview=blocked&&item?r.get<P>(item,"previewClipPlayer"):nullptr;
  if(target(r,lockedPreviewRoot)!=preview)releaseLockedPreview(r);
  if(!r.alive(preview))return;
  if(!lockedPreviewRoot){lockedPreviewMute=r.get<bool>(preview,"mute");lockedPreviewRoot=r.gchandle_new(preview,false);}

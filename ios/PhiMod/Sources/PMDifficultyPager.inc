@@ -47,13 +47,13 @@ DifficultyCell makeDifficultyCell(Runtime&r,P parent,P font,int entry){
  r.call(c.graphic,"set_raycastTarget",{"System.Boolean"},{&yes});r.call(c.graphic,"set_maskable",{"System.Boolean"},{&no});
  c.button=difficultyComponent(r,go,"UnityEngine.UI","Button");r.call(c.button,"set_targetGraphic",{"UnityEngine.UI.Graphic"},{c.graphic});
  P caption=difficultyObject(r,"Caption",tr);c.label=difficultyComponent(r,caption,"UnityEngine.UI","Text");P labelTr=r.call(caption,"get_transform");V2 zero{0,0},one{1,1},pad{-10,-8};r.call(labelTr,"set_anchorMin",{"UnityEngine.Vector2"},{&zero});r.call(labelTr,"set_anchorMax",{"UnityEngine.Vector2"},{&one});r.call(labelTr,"set_sizeDelta",{"UnityEngine.Vector2"},{&pad});r.call(labelTr,"set_anchoredPosition",{"UnityEngine.Vector2"},{&zero});
- r.call(c.label,"set_font",{"UnityEngine.Font"},{font});int size=24,center=4;r.call(c.label,"set_fontSize",{"System.Int32"},{&size});r.call(c.label,"set_alignment",{"UnityEngine.TextAnchor"},{&center});r.call(c.label,"set_raycastTarget",{"System.Boolean"},{&no});r.call(c.label,"set_maskable",{"System.Boolean"},{&no});
+ r.call(c.label,"set_font",{"UnityEngine.Font"},{font});int size=24,minimum=11,center=4;r.call(c.label,"set_resizeTextForBestFit",{"System.Boolean"},{&yes});r.call(c.label,"set_resizeTextMinSize",{"System.Int32"},{&minimum});r.call(c.label,"set_resizeTextMaxSize",{"System.Int32"},{&size});r.call(c.label,"set_fontSize",{"System.Int32"},{&size});r.call(c.label,"set_alignment",{"UnityEngine.TextAnchor"},{&center});r.call(c.label,"set_raycastTarget",{"System.Boolean"},{&no});r.call(c.label,"set_maskable",{"System.Boolean"},{&no});
  Color white{1,1,1,1};r.call(c.label,"set_color",{"UnityEngine.Color"},{&white});return c;
 }
 void difficultyPager(Runtime&r,P selector){
  if(target(r,difficultyOwner)!=selector||!difficultyGroup.length)return;
  P item=target(r,difficultyItem),bar=r.get<P>(selector,"levelBarController"),infos=r.get<P>(bar,"levelInfos"),slider=r.get<P>(selector,"levelSliderController");
- if(!r.alive(item)||!r.alive(bar))return;
+ if(!item||!r.alive(bar))return;
  if(!difficultyRoot){P parent=r.get<P>(bar,"selectorPanel"),go=difficultyObject(r,"PhiMod Difficulty Pages",parent);difficultyRoot=r.gchandle_new(go,false);P overlayGroup=difficultyComponent(r,go,"UnityEngine","CanvasGroup");bool yes=true;r.call(overlayGroup,"set_ignoreParentGroups",{"System.Boolean"},{&yes});r.call(overlayGroup,"set_interactable",{"System.Boolean"},{&yes});r.call(overlayGroup,"set_blocksRaycasts",{"System.Boolean"},{&yes});P tr=r.call(go,"get_transform"),tip=r.get<P>(r.arrayAt(infos,0),"level"),font=r.call(tip,"get_font");
   V2 center{.5f,.5f},size{520,94},zero{0,0};r.call(tr,"set_anchorMin",{"UnityEngine.Vector2"},{&center});r.call(tr,"set_anchorMax",{"UnityEngine.Vector2"},{&center});r.call(tr,"set_sizeDelta",{"UnityEngine.Vector2"},{&size});r.call(tr,"set_anchoredPosition",{"UnityEngine.Vector2"},{&zero});
   for(int i=0;i<6;++i)difficultyCells.push_back(makeDifficultyCell(r,tr,font,i));difficultyDirty=true;
@@ -77,7 +77,7 @@ void difficultyPager(Runtime&r,P selector){
 bool ownsDifficultyButton(void*button){for(auto&c:difficultyCells)if(c.button==button)return true;return false;}
 bool pressDifficultyButton(Runtime&r,void*button){
  if(!ownsDifficultyButton(button))return false;if(!r.unbox<bool>(r.call(button,"IsActive"))||!r.unbox<bool>(r.call(button,"IsInteractable")))return true;
- P selector=target(r,difficultyOwner),item=target(r,difficultyItem);if(!r.alive(selector)||!r.alive(item))return true;
+ P selector=target(r,difficultyOwner),item=target(r,difficultyItem);if(!r.alive(selector)||!item)return true;
  for(auto&c:difficultyCells)if(c.button==button){if(c.entry==4){if(difficultyPage)--difficultyPage;}else if(c.entry==5){if(phimod::difficultyNext(difficultyEntries.size(),difficultyPage))++difficultyPage;}else{
   freezeChallengeDifficulties(r);size_t index=difficultyPage*4+c.entry;if(index>=difficultyEntries.size())return true;NSDictionary*chart=difficultyEntries[index];if(!chart)return true;int slot=PMStockDifficulty(chart[@"level"]);if(slot<0||slot==3){bindTransport(r,selector,item,difficultyGroup,chart);slot=3;}
   r.put(selector,"nowLevel",slot);r.call(selector,"SetLevel",{"System.Int32"},{&slot});recordSlot=-1;sparseSlot=-1;
