@@ -1,6 +1,7 @@
 #include "../Core/PMSelectorDifficulty.hpp"
 #include "../Core/PMRPEVisibility.hpp"
 #include "../Core/PMFrameCache.hpp"
+#include "../Core/PMCachedRPETrack.hpp"
 #include "../Core/PMCoverGeometry.hpp"
 #include "PMContentRuntime.hpp"
 #include "PMUnlockRuntime.hpp"
@@ -58,7 +59,7 @@ struct FakeVisualCache{P transform=nullptr;P capTransforms[2]{};Bounds bounds{};
 std::map<size_t,FakeVisualCache>fakeVisualCache;
 std::vector<size_t>fakeSchedule;std::set<size_t>activeFakes;size_t fakeCursor=0;bool fakeScheduleReady=false;double fakeLastTime=0;
 struct ControlPoint{double x,value;int easing;};
-struct VisualTrack{std::vector<phimod::rpe::Event> events;};
+using VisualTrack=phimod::CachedRPETrack;
 std::map<std::pair<NSArray*,int>,VisualTrack>visualTracks;
 std::map<NSArray*,std::vector<ControlPoint>>controlCache;
 phimod::FrameCache<int,double>sourceFloorFrame;phimod::FrameCache<NSDictionary*,bool>sourceAlphaFrame;
@@ -726,8 +727,7 @@ bool sourceNotesHidden(NSDictionary*line,double now){
 double trackValue(NSArray*a,double now,double fallback,int channel=-1){
  if(!a.count)return fallback;auto key=std::make_pair(a,channel);auto it=visualTracks.find(key);
  if(it==visualTracks.end()){VisualTrack track;track.events.reserve(a.count);for(NSDictionary*event in a)track.events.push_back(visualEvent(event,channel));it=visualTracks.emplace(key,std::move(track)).first;}
- const auto&events=it->second.events;auto event=std::upper_bound(events.begin(),events.end(),now,[](double time,const auto&e){return time<e.s;});
- return event==events.begin()?fallback:(event-1)->value(now);
+ return it->second.value(now,fallback);
 }
 
 #include "PMRPEHudRuntime.inc"

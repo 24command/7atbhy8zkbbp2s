@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/phimod-content.XXXXXX")"
-trap 'rm -f "$OUT/core" "$OUT/host" "$OUT/unlock" "$OUT/text" "$OUT/cover" "$OUT/pcm" "$OUT/compact" "$OUT/trash" "$OUT/opacity" "$OUT/framecache" "$OUT/visibility" "$OUT/export"; rmdir "$OUT"' EXIT
+trap 'rm -f "$OUT/core" "$OUT/host" "$OUT/unlock" "$OUT/text" "$OUT/cover" "$OUT/pcm" "$OUT/compact" "$OUT/trash" "$OUT/opacity" "$OUT/framecache" "$OUT/visibility" "$OUT/export" "$OUT/cachedtrack"; rmdir "$OUT"' EXIT
 clang++ -std=c++17 -Wall -Wextra -Werror "$ROOT/tests/PMRPECoreTest.cpp" -o "$OUT/core"
 clang++ -std=c++17 -Wall -Wextra -Werror "$ROOT/tests/PMCoverGeometryTest.cpp" -o "$OUT/cover"
 "$OUT/cover"
@@ -32,3 +32,7 @@ clang++ -std=c++17 -Wall -Wextra -Werror "$ROOT/tests/PMRPEVisibilityTest.cpp" -
 
 clang++ -std=c++17 -fobjc-arc -framework Foundation "$ROOT/tests/PMExportArchiveTest.mm" "$ROOT/PhiMod/Sources/PMArchive.mm" "$ROOT/PhiMod/Vendor/PMZipVendor.cpp" -o "$OUT/export"
 "$OUT/export"
+
+clang++ -std=c++17 -Wall -Wextra -Werror "$ROOT/tests/PMCachedRPETrackTest.cpp" -o "$OUT/cachedtrack"
+"$OUT/cachedtrack"
+python3 "$ROOT/tests/test_high_refresh_package.py"

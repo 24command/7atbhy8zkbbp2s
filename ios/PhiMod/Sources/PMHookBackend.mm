@@ -3,6 +3,7 @@
 #import "PMSettings.h"
 #import "PMRuntime.h"
 #import "PMDiagnostics.h"
+#import <UIKit/UIKit.h>
 #include "PMIL2CPP.hpp"
 #include "PMOptions.hpp"
 #include "PMSceneUI.hpp"
@@ -585,10 +586,16 @@ void onNoteManager(P self,P mi){
  if(profile){
   static P owner=nullptr;static unsigned frames=0;static double nativeMs=0,customMs=0,peakMs=0,fxMs=0,modesMs=0,recoveryMs=0,visualsMs=0;
   if(owner!=self){owner=self;frames=0;nativeMs=customMs=peakMs=fxMs=modesMs=recoveryMs=visualsMs=0;}
+  static std::chrono::steady_clock::time_point cadenceStart;
+  if(frames==0)cadenceStart=nativeStart;
   auto done=std::chrono::steady_clock::now();double a=std::chrono::duration<double,std::milli>(nativeEnd-nativeStart).count(),b=std::chrono::duration<double,std::milli>(done-nativeEnd).count();
   nativeMs+=a;customMs+=b;peakMs=std::max(peakMs,a+b);
   auto ms=[](auto start,auto end){return std::chrono::duration<double,std::milli>(end-start).count();};fxMs+=ms(nativeEnd,fxEnd);modesMs+=ms(fxEnd,modesEnd);recoveryMs+=ms(modesEnd,recoveryEnd);visualsMs+=ms(recoveryEnd,done);
-  if(++frames==300){diagf("RPE CPU profile (300 frames): native=%.2fms custom=%.2fms peak=%.2fms; excludes GPU",nativeMs/frames,customMs/frames,peakMs);diagf("RPE CPU split (300 frames): fx=%.2fms modes=%.2fms recovery=%.2fms visuals=%.2fms",fxMs/frames,modesMs/frames,recoveryMs/frames,visualsMs/frames);frames=0;nativeMs=customMs=peakMs=fxMs=modesMs=recoveryMs=visualsMs=0;}
+  if(++frames==300){
+   double elapsed=std::chrono::duration<double>(nativeStart-cadenceStart).count();
+   NSDictionary*info=NSBundle.mainBundle.infoDictionary;
+   diagf("RPE frame cadence: updates=%.1f/s displayMax=%ldHz lowPower=%d thermal=%ld phoneHighRefresh=%d legacyHighRefresh=%d; cadence is CPU updates, not GPU presentation",elapsed>0?299./elapsed:0.,(long)UIScreen.mainScreen.maximumFramesPerSecond,(int)NSProcessInfo.processInfo.lowPowerModeEnabled,(long)NSProcessInfo.processInfo.thermalState,[info[@"CADisableMinimumFrameDurationOnPhone"]boolValue],[info[@"CADisableMinimumFrameDuration"]boolValue]);
+   diagf("RPE CPU profile (300 frames): native=%.2fms custom=%.2fms peak=%.2fms; excludes GPU",nativeMs/frames,customMs/frames,peakMs);diagf("RPE CPU split (300 frames): fx=%.2fms modes=%.2fms recovery=%.2fms visuals=%.2fms",fxMs/frames,modesMs/frames,recoveryMs/frames,visualsMs/frames);frames=0;nativeMs=customMs=peakMs=fxMs=modesMs=recoveryMs=visualsMs=0;}
  }
 }
 P onSkinInstantiate(P original,P mi){P clone=orig<P(*)(P,P)>(h::skinInstantiate)(original,mi);

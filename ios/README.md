@@ -164,3 +164,11 @@ metadata/ABI and source lookup contracts, not in-game execution.
 - 导出不再生成随后会被删除的 chart-native.json；已压缩的音视频和图片使用 ZIP 存储，文本仍快速压缩。
 - 压缩包完成后才发布；失败清理临时压缩文件，保留之前成功导出的包。章节异常转换为错误提示并清理暂存目录。
 - 不新增 hook，不需要重新导入已有谱面。实机仍需验证锁定曲目弹窗开关及大章节导出。
+
+### 2026-11-14：帧率排查与无跳帧渲染缓存
+
+- 原版 4.0.3 `GameInformation.CheckFrameRate` 设置 targetFrameRate=380；MOD 源码没有自制谱固定 60 FPS 的设置。稳定 60 FPS 不能直接判定为音符渲染性能不足。
+- 打包工具在临时 app 副本中开启 `CADisableMinimumFrameDurationOnPhone`，允许支持的 iPhone 请求高刷新率；不强制修改 Unity 帧率、设备刷新率或省电/温控策略。原始 app 不变。已有 IPA 仅替换 framework 不会改变主 app 的 Info.plist，需要使用新版脚本重新打包。
+- RPE 不可变事件轨道在完全相同的播放时间重复查询时复用采样；不做时间量化、跳帧、时间窗裁剪或音符数量限制，不改变透明度、坐标、排序、shader/video 合成和判定逻辑。
+- 新增 `RPE frame cadence` 日志，记录 CPU 更新频率、UIScreen 屏幕最大帧率、省电/热状态和包内高刷新率标记。CPU 更新率不是 GPU 呈现率，不能用它声称实机已达 120 FPS。
+- 优化前运行可见性回归，再以原轨道算法比对所有缓动、Bezier、边界、空隙、反向跳转、240Hz 时间点及换谱结果；实际显示仍需设备验证。无需重新导入谱面，无新增 hook。

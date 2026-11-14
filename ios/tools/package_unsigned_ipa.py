@@ -48,6 +48,16 @@ def zip_tree(root: Path, output: Path) -> None:
                     shutil.copyfileobj(source, target, 1024 * 1024)
 
 
+def enable_high_refresh(app: Path) -> None:
+    """Opt in on supported iPhones; iOS still owns display/power/thermal limits."""
+    path = app / "Info.plist"
+    raw = path.read_bytes()
+    info = plistlib.loads(raw)
+    info["CADisableMinimumFrameDurationOnPhone"] = True
+    fmt = plistlib.FMT_BINARY if raw.startswith(b"bplist") else plistlib.FMT_XML
+    path.write_bytes(plistlib.dumps(info, fmt=fmt, sort_keys=False))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", required=True, type=Path, help="directory containing Payload")
@@ -77,6 +87,7 @@ def main() -> None:
                             "UnityFramework.id2", "UnityFramework.nam", "UnityFramework.til",
                             "UnityFramework.i64", "UnityFramework.idb", "*.before-phimod", "*.before-judge", "*.before-gameplay"))
         app = find_app(stage / "Payload")
+        enable_high_refresh(app)
         info = plistlib.loads((app / "Info.plist").read_bytes())
         if info.get("MinimumOSVersion") and float(info["MinimumOSVersion"].split(".")[0]) < 15:
             print("warning: target app supports older iOS versions; PhiMod currently targets iOS 15+", file=sys.stderr)
