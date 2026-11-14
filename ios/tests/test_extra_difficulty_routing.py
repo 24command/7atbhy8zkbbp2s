@@ -27,4 +27,23 @@ class ExtraDifficultyRouting(unittest.TestCase):
   self.assertIn('"set_text"',label)
   for setter in ('set_localScale','set_position','set_color','set_material'):
    self.assertNotIn(setter,label)
+ def test_selection_and_exit_restore_native_state(self):
+  page=(ROOT/'PhiMod/Sources/PMDifficultyPager.inc').read_text('utf8')
+  transaction=page.split('void selectExistingDifficulty(',1)[1].split('void restoreDifficultyBar(',1)[0]
+  self.assertLess(transaction.index('"levelNum"'),transaction.index('"SetLevel"'))
+  self.assertLess(transaction.index('"fingerOnSongList",false'),transaction.index('"SetLevel"'))
+  self.assertIn('"fingerOnSongList",finger',transaction)
+  self.assertIn('restoreDifficultyBar(r,previousOwner)',page)
+  self.assertIn('r.call(bar,"UpdateInfoImmediately"',page)
+  self.assertIn('r.call(info,"SetActive"',page)
+ def test_touch_is_scoped_and_does_not_drag_song_list(self):
+  page=(ROOT/'PhiMod/Sources/PMDifficultyPager.inc').read_text('utf8')
+  self.assertIn('RectangleContainsScreenPoint',page)
+  self.assertIn('difficultyTap.finish',page)
+  self.assertIn('difficultyTouchEntry=-1',page)
+  self.assertIn('Quad{cut,0,1,1},Quad{0,0,1,0}',page)
+  hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text('utf8')
+  update=hook.split('void onSelector(',1)[1].split('void onSelectorOff(',1)[0]
+  self.assertLess(update.index('difficultyInput'),update.index('orig<VoidFn>'))
+  self.assertIn('if(!difficultyTouch)orig<VoidFn>',update)
 if __name__=='__main__':unittest.main()

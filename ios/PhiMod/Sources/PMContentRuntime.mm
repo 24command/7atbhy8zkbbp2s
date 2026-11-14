@@ -1,5 +1,6 @@
 #import "PMDifficultyMetadata.h"
 #include "../Core/PMDifficultyPages.hpp"
+#include "../Core/PMUIInteraction.hpp"
 #include "../Core/PMSelectorDifficulty.hpp"
 #include "../Core/PMRPEVisibility.hpp"
 #include "../Core/PMFrameCache.hpp"
@@ -32,6 +33,7 @@ using pmbridge::P;using pmbridge::Runtime;
 void clearDifficultyPager(Runtime&r);
 void difficultyPager(Runtime&r,P selector);
 void prepareDifficultyGroup(Runtime&r,P selector);
+void selectExistingDifficulty(Runtime&r,P selector,P item,int requested);
 bool hasDifficultyPager(P selector);
 
 namespace {
@@ -602,7 +604,7 @@ void selectorFrame(Runtime&r,P selector){
    r.put(item,"<SelectorTargetWidth>k__BackingField",infoWidth);
    r.put(selector,"levelNum",displayCount);
    if(lastSelector!=selector||lastItem!=item||lastLevel!=selected||lastMask!=mask||selected!=level||layoutChanged||launch){
-    r.put(selector,"nowLevel",selected);r.call(selector,"SetLevel",{"System.Int32"},{&selected});
+    selectExistingDifficulty(r,selector,item,selected);
     P bar=r.get<P>(selector,"levelBarController");
     if(bar){r.call(bar,"UpdateInfoImmediately",{"SongSelectorItem"},{item});P infos=r.get<P>(bar,"levelInfos");
      for(int i=0;infos&&i<4&&uintptr_t(i)<r.array_length(infos);++i){P info=r.arrayAt(infos,i);if(!info)continue;

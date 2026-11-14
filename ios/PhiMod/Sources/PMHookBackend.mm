@@ -670,9 +670,10 @@ void onMainlineApplyMapCover(P self,P mi){
 
 void onSelector(P self,P mi){
  bool modal=false;if(!contentBoundary("Selector modal",[&]{modal=pmunlock::selectorModalUpdate(R(),self);})||modal)return;
+ bool difficultyTouch=false;contentBoundary("Difficulty touch",[&]{difficultyTouch=pmcontent::difficultyInput(R(),self);});
  bool access=false;if(!contentBoundary("Selector chapter access",[&]{access=pmunlock::selectorAccess(R(),self);})||!access)return;
  contentBoundary("Selector content prepare",[&]{pmcontent::prepareSelectorItems(R(),self);pmcontent::selectorLoadingBegin(R(),self);});
- orig<VoidFn>(h::selector)(self,mi);
+ if(!difficultyTouch)orig<VoidFn>(h::selector)(self,mi);
  contentBoundary("Selector shortcuts",[&]{pmscene::selectorFrame(R(),self);});
  contentBoundary("Selector content",[&]{pmcontent::selectorFrame(R(),self);});
  contentBoundary("Selector unlock",[&]{pmunlock::tick(R(),self);});

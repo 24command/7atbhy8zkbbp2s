@@ -4,9 +4,10 @@ R=Path(__file__).resolve().parents[1]/'PhiMod/Sources'
 class NativeSettingsTab(unittest.TestCase):
  def test_preserves_native_hierarchy(self):
   s=(R/'PMNativeModSettings.inc').read_text(encoding='utf8')
-  self.assertIn('clone(r,go(r,sourceFrame),parent,nativeSettingsRoot)',s)
+  self.assertIn('clone(r,go(r,sourceFrame),transform(r,staging),nativeSettingsRoot)',s)
   for field in ('viewport','content','itemsHolder'):
-   self.assertIn('mappedTransform(r,sourceTransform,cloneTransform,r.get<P>(original,"'+field+'"))',s)
+   self.assertIn('r.get<P>(original,"'+field+'")',s)
+   self.assertIn('followSettingsPath(r,cloneTransform,templatePaths',s)
   self.assertIn('"itemsHolder",holder',s)
   self.assertNotIn('"itemsHolder",content',s)
   self.assertIn('content==holder||viewport==holder',s)
@@ -111,4 +112,11 @@ class NativeSettingsTab(unittest.TestCase):
   scene=(R/'PMSceneUI.mm').read_text(encoding='utf8')
   self.assertIn('extendTabBackdrop(r)',scene)
   self.assertIn('clearTabBackdrop(r);dispose(r,tabRoot,true)',scene)
+ def test_mapping_precedes_clone_and_callback_mutation(self):
+  s=(R/'PMNativeModSettings.inc').read_text(encoding='utf8')
+  self.assertLess(s.index('templatePaths;'),s.index('root=clone(r,go(r,sourceFrame)'))
+  self.assertLess(s.index('active(r,staging,false)'),s.index('root=clone(r,go(r,sourceFrame)'))
+  self.assertIn('index<0||index>=count',s)
+  self.assertIn('std::vector<uint32_t>oldRows',s)
+  self.assertLess(s.index('oldRows.push_back'),s.index('for(uint32_t saved:oldRows)'))
 if __name__=='__main__':unittest.main()

@@ -72,7 +72,9 @@ P enclosingCanvas(Runtime&r,P node){
  return nullptr;
 }
 bool childPath(Runtime&r,P source,P node,std::vector<int>&path){for(int depth=0;node&&!sameNativeTransform(r,node,source)&&depth<64;++depth){path.push_back(r.unbox<int>(r.call(node,"GetSiblingIndex")));node=r.call(node,"get_parent");}return sameNativeTransform(r,node,source);}
-P mappedTransform(Runtime&r,P source,P clone,P node){std::vector<int>path;if(!childPath(r,source,node,path))throw std::runtime_error("Settings template reference lies outside its frame");for(auto i=path.rbegin();i!=path.rend();++i){int index=*i;clone=r.call(clone,"GetChild",{"System.Int32"},{&index});}return clone;}
+P followSettingsPath(Runtime&r,P clone,const std::vector<int>&path,const char*label){
+ for(auto i=path.rbegin();i!=path.rend();++i){int index=*i,count=r.unbox<int>(r.call(clone,"get_childCount"));if(index<0||index>=count)throw std::runtime_error(std::string("Settings clone path mismatch: ")+label+" index="+std::to_string(index)+" children="+std::to_string(count));clone=r.call(clone,"GetChild",{"System.Int32"},{&index});}return clone;
+}
 P appendSettingArray(Runtime&r,P old,P type,P extra){int count=(int)r.array_length(old);P array=r.array_new(type,count+1);uint32_t root=r.gchandle_new(array,false);try{for(int i=0;i<=count;++i){P value=i==count?extra:r.arrayAt(old,i);r.invokeOn(r.resolve(r.type("System","Array"),"SetValue",{"System.Object","System.Int32"}),array,{value,&i});}}catch(...){r.gchandle_free(root);throw;}r.gchandle_free(root);return array;}
 void registerNativeTab(Runtime&r,P setting,P frame,P content){
  P frames=r.get<P>(setting,"frameAnimators"),tabs=r.get<P>(setting,"tabAnimators"),contents=r.get<P>(setting,"tabScrollContents");
@@ -159,7 +161,16 @@ void makeNativeSettings(Runtime&r,P setting){
  phimod::UIRegion wideRegion{0,0,1,1};
  int frameLayer=parent?r.unbox<int>(r.call(parent,"get_childCount")):0;
  for(P frameTr:frameTransforms){std::vector<int>path;if(childPath(r,parent,frameTr,path)&&!path.empty())frameLayer=std::min(frameLayer,path.back());}
- P root=clone(r,go(r,sourceFrame),parent,nativeSettingsRoot);active(r,root,false);
+ // Capture all source references before Instantiate/SetSiblingIndex can change sibling indices.
+ std::array<std::vector<int>,4>templatePaths;std::array<P,4>templateNodes{transform(r,source),r.get<P>(original,"content"),r.get<P>(original,"viewport"),r.get<P>(original,"itemsHolder")};
+ for(size_t i=0;i<templateNodes.size();++i)if(!childPath(r,sourceTransform,templateNodes[i],templatePaths[i]))throw std::runtime_error("Settings reference outside source frame");
+ std::vector<std::vector<int>>decorationPaths;for(const char*field:{"previewNoteHolder","judgeLine","clickPosition"}){P object=r.get<P>(setting,field);if(!r.alive(object))continue;std::vector<int>path;if(childPath(r,sourceTransform,transform(r,object),path))decorationPaths.push_back(path);}
+ // Instantiate under an inactive staging parent: copied Awake/OnEnable code
+ // must not delete/reorder template children before references are resolved.
+ P staging=r.object_new(r.type("UnityEngine","GameObject"));uint32_t stagingRoot=r.gchandle_new(staging,false);P root=nullptr;
+ try{r.call(staging,".ctor",{"System.String"},{r.string_new("PhiMod Settings Staging")});active(r,staging,false);root=clone(r,go(r,sourceFrame),transform(r,staging),nativeSettingsRoot);active(r,root,false);bool no=false;r.call(transform(r,root),"SetParent",{"UnityEngine.Transform","System.Boolean"},{parent,&no});}
+ catch(...){r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{staging});r.gchandle_free(stagingRoot);throw;}
+ r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{staging});r.gchandle_free(stagingRoot);
  r.call(root,"set_name",{"System.String"},{r.string_new("PhiMod Settings Frame")});
  // Stay in the native body layer, below navigation and popup siblings.
  r.call(transform(r,root),"SetSiblingIndex",{"System.Int32"},{&frameLayer});
@@ -176,14 +187,14 @@ void makeNativeSettings(Runtime&r,P setting){
   P scalers=r.children(root,r.type("UnityEngine.UI","CanvasScaler"));for(uintptr_t i=0;scalers&&i<r.array_length(scalers);++i)r.call(r.arrayAt(scalers,int(i)),"set_enabled",{"System.Boolean"},{&no});
   P canvases=r.children(root,r.type("UnityEngine","Canvas"));for(uintptr_t i=0;canvases&&i<r.array_length(canvases);++i)r.call(r.arrayAt(canvases,int(i)),"set_overrideSorting",{"System.Boolean"},{&no});
   nativeManualLayout(r,cloneTransform);nativeRectRegion(r,cloneTransform,bodyRegion);
-  P scrollTransform=mappedTransform(r,sourceTransform,cloneTransform,transform(r,source));
+  P scrollTransform=followSettingsPath(r,cloneTransform,templatePaths[0],"scroll");
   P scroll=r.component(go(r,scrollTransform),r.type("UnityEngine.UI","ScrollRect"));
-  P content=mappedTransform(r,sourceTransform,cloneTransform,r.get<P>(original,"content"));
-  P viewport=mappedTransform(r,sourceTransform,cloneTransform,r.get<P>(original,"viewport"));
-  P holder=mappedTransform(r,sourceTransform,cloneTransform,r.get<P>(original,"itemsHolder"));
+  P content=followSettingsPath(r,cloneTransform,templatePaths[1],"content");
+  P viewport=followSettingsPath(r,cloneTransform,templatePaths[2],"viewport");
+  P holder=followSettingsPath(r,cloneTransform,templatePaths[3],"itemsHolder");
   if(content==holder||viewport==holder)throw std::runtime_error("Native settings hierarchy must keep content and itemsHolder separate");
   // Hide gameplay-only decorations copied with the frame, not its viewport.
-  for(const char*field:{"previewNoteHolder","judgeLine","clickPosition"}){P object=r.get<P>(setting,field);if(!r.alive(object))continue;std::vector<int>path;P node=transform(r,object);if(childPath(r,sourceTransform,node,path)){P mapped=mappedTransform(r,sourceTransform,cloneTransform,node);active(r,go(r,mapped),false);}}
+  for(const auto&path:decorationPaths){P mapped=followSettingsPath(r,cloneTransform,path,"decoration");active(r,go(r,mapped),false);}
 
   // Detach the whole scroll subtree from Gameplay's left-column container.
   // The content/itemsHolder relationship remains the native template's layout.
@@ -198,7 +209,10 @@ void makeNativeSettings(Runtime&r,P setting){
    // Native manager positions rows from the top-left. Keep prefab sizes and
    // hierarchy; stretching individual buttons changes their slanted shape.
    for(P item:{content,holder}){V2 topLeft{0,1},zero{0,0};V3 one{1,1,1};r.call(item,"set_anchorMin",{"UnityEngine.Vector2"},{&topLeft});r.call(item,"set_anchorMax",{"UnityEngine.Vector2"},{&topLeft});r.call(item,"set_pivot",{"UnityEngine.Vector2"},{&topLeft});r.call(item,"set_anchoredPosition",{"UnityEngine.Vector2"},{&zero});r.call(item,"set_localScale",{"UnityEngine.Vector3"},{&one});}
-  for(int i=r.unbox<int>(r.call(holder,"get_childCount"))-1;i>=0;--i){P child=r.call(holder,"GetChild",{"System.Int32"},{&i});bool world=false;active(r,go(r,child),false);r.call(child,"SetParent",{"UnityEngine.Transform","System.Boolean"},{nullptr,&world});r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{go(r,child)});}
+  std::vector<uint32_t>oldRows;int rowCount=r.unbox<int>(r.call(holder,"get_childCount"));
+  for(int i=0;i<rowCount;++i){P row=r.call(holder,"GetChild",{"System.Int32"},{&i});oldRows.push_back(r.gchandle_new(row,false));}
+  try{for(uint32_t saved:oldRows){P row=target(r,saved);if(!r.alive(row))continue;P object=go(r,row);bool world=false;active(r,object,false);r.call(row,"SetParent",{"UnityEngine.Transform","System.Boolean"},{nullptr,&world});r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{object});}}
+  catch(...){for(uint32_t saved:oldRows)r.gchandle_free(saved);throw;}for(uint32_t saved:oldRows)r.gchandle_free(saved);
   nativeSettingsManager=first(r,root,r.klass("SettingItemsManager"));if(!nativeSettingsManager)nativeSettingsManager=r.call(root,"AddComponent",{"System.Type"},{r.type_get_object(r.class_get_type(r.klass("SettingItemsManager")))});
   r.put(nativeSettingsManager,"viewport",viewport);r.put(nativeSettingsManager,"content",content);r.put(nativeSettingsManager,"itemsHolder",holder);r.put(nativeSettingsManager,"offset",0.f);
   for(const char*field:{"buttonPrefab","sliderPrefab","togglePrefab"})r.put(nativeSettingsManager,field,r.get<P>(original,field));
