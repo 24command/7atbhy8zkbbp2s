@@ -72,7 +72,7 @@ void showRequirementButton(Runtime&r,P tip,bool visible){
    requirementButton=requirementComponent(r,object,"UnityEngine.UI","Button");
    r.call(requirementButton,"set_targetGraphic",{"UnityEngine.UI.Graphic"},{image});r.call(requirementButton,"set_interactable",{"System.Boolean"},{&yes});
    P caption=requirementObject(r,"Caption",rect),label=requirementComponent(r,caption,"UnityEngine.UI","Text"),labelRect=r.call(caption,"get_transform");
-   TipSize low{0,0},high{1,1},padding{-32,-8},zero{0,0};
+   TipSize low{0,0},high{1,1},padding{-20,-8},zero{0,0};
    r.call(labelRect,"set_anchorMin",{"UnityEngine.Vector2"},{&low});r.call(labelRect,"set_anchorMax",{"UnityEngine.Vector2"},{&high});r.call(labelRect,"set_sizeDelta",{"UnityEngine.Vector2"},{&padding});r.call(labelRect,"set_anchoredPosition",{"UnityEngine.Vector2"},{&zero});
    r.call(label,"set_font",{"UnityEngine.Font"},{r.call(tip,"get_font")});r.call(label,"set_text",{"System.String"},{r.managedString(@"\u67e5\u770b\u89e3\u9501\u6761\u4ef6")});
    int font=28,center=4,overflow=1;r.call(label,"set_fontSize",{"System.Int32"},{&font});r.call(label,"set_alignment",{"UnityEngine.TextAnchor"},{&center});r.call(label,"set_horizontalOverflow",{"UnityEngine.HorizontalWrapMode"},{&overflow});
@@ -85,9 +85,9 @@ void showRequirementButton(Runtime&r,P tip,bool visible){
  if(visible){P tipRect=r.call(tip,"get_transform"),rect=r.call(object,"get_transform");
   // Use the tip's actual rectangle, not its stretch-anchor sizeDelta (often 0).
   struct Rect{float x,y,w,h;};Rect bounds=r.unbox<Rect>(r.call(tipRect,"get_rect"));
-  struct V3{float x,y,z;};V3 center{bounds.x+bounds.w*.5f,bounds.y+bounds.h*.5f,0};
+  struct V3{float x,y,z;};V3 center{bounds.x+bounds.w*.5f+48.f,bounds.y+bounds.h*.5f,0};
   V3 world=r.unbox<V3>(r.call(tipRect,"TransformPoint",{"UnityEngine.Vector3"},{&center})),one{1,1,1};
-  TipSize anchor{.5f,.5f},size{std::clamp(bounds.w,240.f,420.f),64.f};
+  TipSize anchor{.5f,.5f},size{std::clamp(bounds.w,210.f,250.f),56.f};
   r.call(rect,"set_anchorMin",{"UnityEngine.Vector2"},{&anchor});r.call(rect,"set_anchorMax",{"UnityEngine.Vector2"},{&anchor});r.call(rect,"set_pivot",{"UnityEngine.Vector2"},{&anchor});
   // Rebuild only when its native geometry changes. Negative thickness fills
   // the polygon (zero would draw no body in this game's LeanPolygon).

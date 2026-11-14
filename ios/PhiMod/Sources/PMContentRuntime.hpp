@@ -14,6 +14,7 @@ void selectorLoadingFrame(pmbridge::Runtime&,void*selector);
 void selectorLoadingEnd(pmbridge::Runtime&,bool finishSelected);
 void prepareSelectorItems(pmbridge::Runtime&,void*selector);
 void selectorFrame(pmbridge::Runtime&,void*selector);
+void selectorDifficultyUI(pmbridge::Runtime&,void*selector);
 NSDictionary*officialSnapshot();NSDictionary*cachedOfficialSnapshot();NSDictionary*command(NSString*action,NSString*identifier,int slot);
 void beforeInformation(pmbridge::Runtime&,void*level);
 void beforeChart(pmbridge::Runtime&,void*level);void afterChart(pmbridge::Runtime&,void*level);

@@ -382,6 +382,7 @@ void songLockUI(Runtime&r,P selector,double now){
  P items=r.call(selector,"get_SongItems");int index=r.get<int>(selector,"nowSong"),slot=r.get<int>(selector,"nowLevel");
  if(index<0||index>=r.count(items)||slot<0||slot>3)return;
  P item=r.at(items,index);NSUInteger revision=PMContentStore.shared.revision;
+ bool previousBlocked=lockUIBlocked;
  bool changed=target(r,lockUIOwner)!=selector||lockUIItem!=item||lockUISlot!=slot||lockUIRevision!=revision;
  if(changed||now-lockUIEvaluate>=1){
   P song=r.get<P>(item,"songInfo");NSString*group=r.string(r.get<P>(song,"songsId"));NSDictionary*subject=songEntity(group,slot);
@@ -405,6 +406,12 @@ void songLockUI(Runtime&r,P selector,double now){
  }
  if(!lockUIManaged){showRequirementButton(r,nullptr,false);return;}
  bool blocked=lockUIBlocked,playable=!blocked;
+ // Refresh only AFTER refreshListLocks publishes the current slot's lock state.
+ if(changed||previousBlocked!=blocked){
+  r.put(item,"unlockType",blocked?0:-1);r.call(selector,"SetText");
+  P slider=r.get<P>(selector,"levelSliderController");if(r.alive(slider))r.call(slider,blocked?"Hide":"Show");
+ }
+
  P mask=r.get<P>(item,"lockMask");
  if(!r.alive(mask)&&blocked){P prefab=r.get<P>(selector,"lockMaskPrefab"),parent=r.get<P>(item,"coverRect");if(r.alive(prefab)&&r.alive(parent)){bool world=false;mask=r.stat(r.type("UnityEngine","Object"),"Instantiate",{"UnityEngine.Object","UnityEngine.Transform","System.Boolean"},{prefab,parent,&world});r.put(item,"lockMask",mask);}}
  lockActive(r,mask,blocked);lockActive(r,r.get<P>(selector,"locked"),blocked);

@@ -76,4 +76,27 @@ class SelectorDetails(unittest.TestCase):
   self.assertIn('if(!requirementPreviousDisabled)r.put(owner,"disableSongSelector",requirementPreviousDisabled)',detail)
   clear=detail.split('void clearRequirementUI(',1)[1].split('P requirementObject(',1)[0]
   self.assertIn('releaseRequirementInput(r)',clear)
+class SparseDifficultyTests(unittest.TestCase):
+ def test_repair_after_lock_update_and_restore_buttons(self):
+  c=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text(encoding='utf8')
+  h=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf8')
+  f=h.split('void onSelector(',1)[1].split('void onSelectorOff(',1)[0]
+  self.assertLess(f.index('pmunlock::tick'),f.index('selectorDifficultyUI'))
+  self.assertIn('availableDifficulty(mask,level)',c)
+  self.assertIn('bool enabled=available&&i!=slot',c)
+  self.assertIn('sparseButtons.push_back({r.gchandle_new(button,false),previous})',c)
+  self.assertIn('clearSparseButtons(r);',c.split('void selectorLoadingEnd(',1)[1])
+  sparse=c.split('void selectorDifficultyUI(',1)[1].split('// Native difficulty bars assume',1)[0]
+  self.assertIn('if(!present)',sparse)
+  self.assertIn('"HideInfo"',sparse)
+  self.assertIn('sparseRevision==revision)return;',sparse)
+ def test_unlock_slot_refreshes_text_and_selection(self):
+  s=(ROOT/'PhiMod/Sources/PMUnlockRuntime.mm').read_text(encoding='utf8')
+  block=s.split('bool blocked=lockUIBlocked,playable=!blocked;',1)[1].split('P mask=',1)[0]
+  self.assertLess(block.index('"unlockType"'),block.index('"SetText"'))
+  self.assertIn('blocked?"Hide":"Show"',block)
+ def test_compact_details_button(self):
+  s=(ROOT/'PhiMod/Sources/PMUnlockDetails.inc').read_text(encoding='utf8')
+  self.assertIn('std::clamp(bounds.w,210.f,250.f)',s)
+  self.assertIn('bounds.w*.5f+48.f',s)
 if __name__=='__main__':unittest.main()

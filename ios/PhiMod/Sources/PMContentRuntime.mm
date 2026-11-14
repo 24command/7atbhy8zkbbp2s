@@ -1,3 +1,4 @@
+#include "../Core/PMSelectorDifficulty.hpp"
 #include "../Core/PMRPEVisibility.hpp"
 #include "../Core/PMFrameCache.hpp"
 #include "../Core/PMCoverGeometry.hpp"
@@ -449,7 +450,14 @@ void selectorLoadingFrame(Runtime&r,P selector){
   P asset=entry.first;completeSelectorAsset(r,asset);return;
  }
 }
+P sparseSelector=nullptr,sparseItem=nullptr;int sparseSlot=-1,sparseCount=-1;NSUInteger sparseRevision=NSUIntegerMax;
+std::vector<std::pair<uint32_t,bool>>sparseButtons;
+void clearSparseButtons(Runtime&r){
+ for(auto entry:sparseButtons){P button=target(r,entry.first);if(r.alive(button)){bool enabled=entry.second;r.call(button,"set_interactable",{"System.Boolean"},{&enabled});}r.gchandle_free(entry.first);}
+ sparseButtons.clear();sparseSelector=sparseItem=nullptr;sparseSlot=sparseCount=-1;sparseRevision=NSUIntegerMax;
+}
 void selectorLoadingEnd(Runtime&r,bool finishSelected){
+ clearSparseButtons(r);
  initializedSelector=nullptr;initializedCount=initializedSlot=-1;initializedRevision=NSUIntegerMax;
  recordSelector=recordItem=nullptr;recordSlot=-1;recordRevision=NSUIntegerMax;
  if(finishSelected&&r.alive(target(r,loadingSelector)))observeSelector(r,target(r,loadingSelector));
@@ -502,6 +510,31 @@ void prepareSelectorItems(Runtime&r,P selector){
  if(changed){r.put(selector,"levelNum",std::max(r.get<int>(selector,"levelNum"),maxLevel));bool instantiate=false;r.call(selector,"SortSong",{"System.Boolean"},{&instantiate});}
  initializedSelector=selector;initializedCount=count;initializedSlot=slot;initializedRevision=revision;
 }
+// Reassert sparse-slot presentation after native text and unlock updates.
+void selectorDifficultyUI(Runtime&r,P selector){
+ if(r.get<bool>(selector,"exit"))return;
+ P items=r.call(selector,"get_SongItems");int count=r.count(items),index=r.get<int>(selector,"nowSong"),slot=r.get<int>(selector,"nowLevel");
+ if(slot<0||slot>3||index<0||index>=count)return;
+ P selectedItem=r.at(items,index);NSUInteger revision=PMContentStore.shared.revision;
+ if(sparseSelector==selector&&sparseItem==selectedItem&&sparseSlot==slot&&sparseCount==count&&sparseRevision==revision)return;
+ clearSparseButtons(r);
+ for(int j=0;j<count;++j){P item=r.at(items,j),song=r.get<P>(item,"songInfo");NSString*id=r.string(r.get<P>(song,"songsId"));auto group=variants.find(id.UTF8String?:"");
+  if(group==variants.end()||![id hasPrefix:@"pm_"])continue;
+  bool present=group->second.count(slot)!=0;
+  if(!present)for(const char*field:{"selectorItemUpside","selectorItemDownside"}){
+   P row=r.get<P>(item,field);if(!r.alive(row))continue;P label=r.get<P>(row,"difficulty");if(r.alive(label)){P object=r.call(label,"get_gameObject");bool no=false;if(r.unbox<bool>(r.call(object,"get_activeSelf")))r.call(object,"SetActive",{"System.Boolean"},{&no});}
+  }
+  if(j!=index)continue;
+  P bar=r.get<P>(selector,"levelBarController"),infos=bar?r.get<P>(bar,"levelInfos"):nullptr;
+  for(int i=0;infos&&i<4&&uintptr_t(i)<r.array_length(infos);++i){P info=r.arrayAt(infos,i);if(!info)continue;bool available=group->second.count(i)!=0;
+   if(!available){P text=r.get<P>(info,"difficulty");NSString*value=r.string(r.call(text,"get_text"));if(![value isEqualToString:@"?"]){NSString*name=@[@"EZ",@"HD",@"IN",@"AT"][i];r.call(info,"HideInfo",{"System.String"},{r.managedString(name)});}}
+   P rect=r.get<P>(info,"mainObject"),object=r.call(rect,"get_gameObject"),buttons=r.children(object,r.type("UnityEngine.UI","Button"));
+   bool enabled=available&&i!=slot; // Missing and already-selected slots cannot be clicked.
+   for(uintptr_t k=0;buttons&&k<r.array_length(buttons);++k){P button=r.arrayAt(buttons,int(k));bool previous=r.unbox<bool>(r.call(button,"get_interactable"));sparseButtons.push_back({r.gchandle_new(button,false),previous});if(previous!=enabled)r.call(button,"set_interactable",{"System.Boolean"},{&enabled});}
+  }
+ }
+ sparseSelector=selector;sparseItem=selectedItem;sparseSlot=slot;sparseCount=count;sparseRevision=revision;
+}
 // Native difficulty bars assume a continuous EZ..AT prefix. Custom groups may be sparse.
 void selectorFrame(Runtime&r,P selector){
  static P lastSelector=nullptr,lastItem=nullptr;static int lastLevel=-1,lastMask=0;
@@ -522,7 +555,7 @@ void selectorFrame(Runtime&r,P selector){
   int mask=0,extent=0;for(auto&entry:group->second)if(entry.first>=0&&entry.first<4){mask|=1<<entry.first;extent=std::max(extent,entry.first+1);}
   if(mask){
    int level=r.get<int>(selector,"nowLevel"),selected=level;
-   if(level<0||level>=4||!(mask&(1<<level))){selected=-1;for(int i=std::min(level,3);i>=0;--i)if(mask&(1<<i)){selected=i;break;}if(selected<0)for(int i=0;i<4;++i)if(mask&(1<<i)){selected=i;break;}}
+   selected=phimod::availableDifficulty(mask,level);
    // Preserve original slot indices: AT must remain slot 3 for assets, records and rules.
    // Match Android songItemCtor: lower placeholders occupy three slots,
    // and AT uses the normal four-slot width, not the old two-slot width.

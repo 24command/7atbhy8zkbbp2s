@@ -8,6 +8,10 @@ Start with [HP_PRACTICE_20261018.md](HP_PRACTICE_20261018.md) for this revision,
 build/test checklist, and [GAMEPLAY_UI_PORT.md](GAMEPLAY_UI_PORT.md) for scope
 and safety boundaries. Portable C++ cores were rebuilt and run with local MSVC. Source-contract, metadata, judge-patch, and real-image hook-gate checks have passed on Windows. This revision still needs the macOS Apple SDK build and real-device verification.
 
+## Sparse/locked difficulty selection (2026-11-14)
+
+Merged-chart unlock state is now published before refreshing native score text and the selected-difficulty slider. Missing slots are disabled rather than playable zero-level entries; repeated selection of the current slot is disabled. Custom groups retain real EZ/HD/IN/AT indices and fall back to an existing difficulty on selection. Missing-difficulty list rows hide the grade. Button overrides are restored on song/difficulty/scene changes, and sparse UI work is cached by selection/library revision rather than scanning every frame. The unlock-details button is narrower and offset right to leave more room for AT. No new hooks or chart reimport. Device checks: locked AT -> unlocked IN score/highlight, repeated IN taps, missing HD/AT, then return to official songs.
+
 ## Custom hit-effect sizing (2026-11-14)
 
 Custom hit frames now account for the original effect sprite's world-unit width and child transform, in addition to the native effect transform that already includes note-size settings. Atlas calibration is uniform to preserve the pack frame aspect ratio; `hitFxScale` still applies once. Effects without a valid sprite reference retain the previous native-transform fallback. Placement remains deferred until native positioning finishes. No new hooks or skin reimport; compare small/default/large note sizes on device.

@@ -668,6 +668,7 @@ void onSelector(P self,P mi){
  contentBoundary("Selector shortcuts",[&]{pmscene::selectorFrame(R(),self);});
  contentBoundary("Selector content",[&]{pmcontent::selectorFrame(R(),self);});
  contentBoundary("Selector unlock",[&]{pmunlock::tick(R(),self);});
+  contentBoundary("Selector difficulty UI",[&]{pmcontent::selectorDifficultyUI(R(),self);});
  contentBoundary("Selector loading",[&]{pmcontent::selectorLoadingFrame(R(),self);});
 }
 void onSelectorOff(P self,P mi){try{pmcontent::selectorLoadingEnd(R(),false);pmscene::selectorOff(R());pmunlock::clear(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::selectorOff)(self,mi);}
