@@ -18,6 +18,8 @@ class ExtraDifficultyRouting(unittest.TestCase):
   page=(ROOT/'PhiMod/Sources/PMDifficultyPager.inc').read_text('utf8')
   self.assertIn('if(slot<0||slot==3)',page)
   self.assertIn('difficultyEntries.size(),difficultyPage',page)
+  self.assertIn('if(members.count(slot))difficultyEntries.push_back(members[slot])',page)
+  self.assertNotIn('members.count(slot)?members[slot]:nil',page)
   label=page.split('void difficultyGameplayLabel(',1)[1]
   self.assertIn('"set_text"',label)
   for setter in ('set_localScale','set_position','set_color','set_material'):

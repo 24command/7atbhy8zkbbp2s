@@ -21,7 +21,7 @@ void bindTransport(Runtime&r,P selector,P item,NSString*group,NSDictionary*chart
 }
 void rebuildDifficultyEntries(NSString*group){
  difficultyEntries.clear();auto&members=variants[group.UTF8String];
- for(int slot=0;slot<3;++slot)difficultyEntries.push_back(members.count(slot)?members[slot]:nil);
+ for(int slot=0;slot<3;++slot)if(members.count(slot))difficultyEntries.push_back(members[slot]);
  auto at=stockAT.find(group.UTF8String);if(at!=stockAT.end())difficultyEntries.push_back(at->second);
  for(NSDictionary*chart:extraDifficulties[group.UTF8String])difficultyEntries.push_back(chart);
 }
