@@ -31,10 +31,10 @@
 #include <chrono>
 namespace pmcontent {
 using pmbridge::P;using pmbridge::Runtime;
-void clearDifficultyPager(Runtime&r);
+void clearDifficultyPager(Runtime&r,bool restoreBar=true);
 void difficultyPager(Runtime&r,P selector);
 void prepareDifficultyGroup(Runtime&r,P selector);
-void selectExistingDifficulty(Runtime&r,P selector,P item,int requested);
+void selectExistingDifficulty(Runtime&r,P selector,P item,int requested,bool userInitiated=false);
 void reconcileDifficultyButtons(Runtime&r,P selector);
 bool hasDifficultyPager(P selector);
 
@@ -444,6 +444,28 @@ void observeSelector(Runtime&r,P selector){
  // Preview bookkeeping must not abort completion of an already-selected cover.
  try{P preview=r.get<P>(item,"previewClipPlayer");if(r.alive(preview)){NSString*kind=nil,*id=keyID(r.string(r.get<P>(preview,"clipCode")),&kind);if(id.length)selectedAssetIDs.insert(id.UTF8String);}}catch(const std::exception&e){static bool reported=false;if(!reported){reported=true;log([NSString stringWithFormat:@"Selector preview key lookup failed (cover continues): %s",e.what()]);}}
 }
+struct VariantCoverState{uint32_t itemRoot;NSString*originalKey;NSString*appliedKey;};
+std::vector<VariantCoverState>variantCoverStates;
+void clearVariantCovers(Runtime&r){for(auto&state:variantCoverStates){P item=target(r,state.itemRoot);if(item)r.put(item,"coverAssetCode",r.managedString(state.originalKey));r.gchandle_free(state.itemRoot);}variantCoverStates.clear();}
+void updateVariantCover(Runtime&r,P selector){
+ P items=r.call(selector,"get_SongItems");int index=r.get<int>(selector,"nowSong"),slot=r.get<int>(selector,"nowLevel");if(index<0||index>=r.count(items))return;
+ P item=r.at(items,index),song=r.get<P>(item,"songInfo");NSString*group=r.string(r.get<P>(song,"songsId"));auto members=variants.find(group.UTF8String?:"");if(members==variants.end())return;
+ auto selected=members->second.find(slot);NSDictionary*chart=selected==members->second.end()?nil:selected->second;
+ VariantCoverState*state=nullptr;for(auto&v:variantCoverStates)if(target(r,v.itemRoot)==item){state=&v;break;}
+ bool custom=chart&&![chart[@"pmOfficial"]boolValue];if(!state&&!custom)return;
+ if(!state){variantCoverStates.push_back({r.gchandle_new(item,false),r.string(r.get<P>(item,"coverAssetCode")),nil});state=&variantCoverStates.back();}
+ NSString*key=custom?[NSString stringWithFormat:@"PM/%@/image@%lu",chart[@"id"],(unsigned long)PMContentStore.shared.revision]:state->originalKey;
+ P cover=r.get<P>(item,"cover");if(!r.alive(cover))return;
+ // Scene replacement loads the group's default key again; compare the loader
+ // as well as our record. Never restart the transition on each update.
+ NSString*actual=r.string(r.call(cover,"get_Code"));if([state->appliedKey isEqualToString:key]&&[r.string(r.get<P>(item,"coverAssetCode"))isEqualToString:key]&&([actual isEqualToString:key]||[r.string(r.get<P>(cover,"newCode"))isEqualToString:key]))return;
+ r.call(cover,"CheckInitialized");r.put(item,"coverAssetCode",r.managedString(key));
+ if(![actual isEqualToString:key]){float duration=.15f;r.call(cover,"SetImageWithTransition",{"System.String","System.Single"},{r.managedString(key),&duration});}
+ state->appliedKey=key;
+ if(custom)selectedAssetIDs.insert([chart[@"id"]UTF8String]);
+ // coverBlurAssetCode/backgroundImage remain native: do not rebuild the
+ // full-screen blurred background while browsing difficulties.
+}
 void completeSelectorAsset(Runtime&r,P asset){
  auto found=selectorAssets.find(asset);if(found==selectorAssets.end())return;
  uint32_t root=found->second.root;bool music=found->second.music;double began=selectorNow();selectorAssets.erase(found);
@@ -465,6 +487,7 @@ void selectorLoadingFrame(Runtime&r,P selector){
  if(target(r,loadingSelector)!=selector||r.get<bool>(selector,"exit"))return;
  observeSelector(r,selector);
  if(selectorDragging||selectorNow()-selectionChangedAt<.30)return;
+ updateVariantCover(r,selector);
  // At most one expensive upload/decode per frame; cover before preview audio.
  for(bool music:{false,true})for(auto&entry:selectorAssets)if(entry.second.music==music&&selectedAssetIDs.count(entry.second.identifier)){
   P asset=entry.first;completeSelectorAsset(r,asset);return;
@@ -486,6 +509,7 @@ void clearSparseButtons(Runtime&r){
  sparseButtons.clear();sparseSelector=sparseItem=nullptr;sparseSlot=sparseCount=-1;sparseRevision=NSUIntegerMax;
 }
 void selectorLoadingEnd(Runtime&r,bool finishSelected){
+ clearVariantCovers(r);
  clearSparseButtons(r);
  initializedSelector=nullptr;initializedCount=initializedSlot=-1;initializedRevision=NSUIntegerMax;
  recordSelector=recordItem=nullptr;recordSlot=-1;recordRevision=NSUIntegerMax;

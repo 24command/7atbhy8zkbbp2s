@@ -134,7 +134,10 @@ void makeNativeSettings(Runtime&r,P setting){
   // independent page, not a fourth index in the three-element animator arrays.
   changeNativeTab(r,setting,0);
   for(const char*field:{"previewNoteHolder","judgeLine","clickPosition"}){P object=r.get<P>(setting,field);if(!r.alive(object))continue;P gameObject=field==std::string("previewNoteHolder")?go(r,object):object;stash(r,nativePreviewObjects,gameObject,"get_activeSelf","SetActive",false);}
-  for(const char*field:{"audioSource1","audioSource2"}){P source=r.get<P>(setting,field);if(!r.alive(source))continue;P audio=r.get<P>(source,"audioSource");if(r.alive(audio))stash(r,nativePreviewMute,audio,"get_mute","set_mute",true);r.call(source,"Pause");}
+  for(const char*field:{"audioSource1","audioSource2"}){try{P source=r.get<P>(setting,field);if(!r.alive(source))continue;P audio=r.get<P>(source,"audioSource");if(r.alive(audio))stash(r,nativePreviewMute,audio,"get_mute","set_mute",true);}catch(const std::exception&e){PMDiagnosticsWrite((std::string("MOD optional preview mute: ")+e.what()).c_str());}}
+  // Setting.Update is already suspended while MOD is open. Do not call the
+  // addressable wrapper's Pause: re-entry may have disposed its asset/audio state.
+
 
   for(int i=0;i<3;++i)stash(r,nativeHeaderAnimations,r.arrayAt(tabs,i),"get_enabled","set_enabled",false);
   P ownAnimator=r.component(target(r,tabRoot),r.type("UnityEngine","Animator"));if(r.alive(ownAnimator))stash(r,nativeHeaderAnimations,ownAnimator,"get_enabled","set_enabled",false);

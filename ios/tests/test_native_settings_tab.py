@@ -89,4 +89,10 @@ class NativeSettingsTab(unittest.TestCase):
  def test_original_tab_backdrop_still_extends(self):
   for marker in ('r.get<P>(layout,"background")','tabBackdropPosition.x+=extra*pivot.x','tab.r+std::fabs(area.h)*.27f+12.f'):self.assertIn(marker,self.native)
   self.assertIn('extendTabBackdrop(r)',self.scene)
+ def test_preview_reentry_never_pauses_disposed_addressable_wrapper(self):
+  self.assertNotIn('r.call(source,"Pause")',self.native)
+  self.assertIn('if(r.alive(audio))stash(r,nativePreviewMute',self.native)
+  self.assertIn('MOD optional preview mute:',self.native)
+  self.assertIn('restore(r,nativePreviewMute,"set_mute")',self.native)
+  self.assertIn('settingsPreviewSuspended',self.scene)
 if __name__=='__main__':unittest.main()

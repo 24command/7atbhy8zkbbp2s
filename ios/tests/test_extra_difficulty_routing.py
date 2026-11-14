@@ -65,4 +65,24 @@ class ExtraDifficultyRouting(unittest.TestCase):
   reconcile=page.split('void reconcileDifficultyButtons(',1)[1].split('void selectExistingDifficulty(',1)[0]
   self.assertIn('nativeDifficultyMask(r,r.at(items,index))',reconcile)
   self.assertIn('i!=slot',reconcile)
+ def test_automatic_selection_is_silent_and_does_not_sort(self):
+  page=(ROOT/'PhiMod/Sources/PMDifficultyPager.inc').read_text('utf8')
+  selection=page.split('void selectExistingDifficulty(',1)[1].split('void restoreDifficultyBar(',1)[0]
+  self.assertIn('bool userInitiated',selection)
+  self.assertEqual(selection.count('"SetLevel"'),1)
+  self.assertIn('if(userInitiated){r.put(selector,"fingerOnSongList",false);try{r.call(selector,"SetLevel"',selection)
+  self.assertNotIn('"SortSong"',selection)
+  self.assertIn('selectExistingDifficulty(r,selector,item,slot,true)',page)
+  self.assertIn('clearDifficultyPager(r,false);clearSparseButtons(r)',page)
+ def test_variant_cover_uses_native_transition_only_after_settling(self):
+  source=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text('utf8')
+  frame=source.split('void selectorLoadingFrame(',1)[1].split('P sparseSelector=',1)[0]
+  self.assertLess(frame.index('selectionChangedAt<.30'),frame.index('updateVariantCover'))
+  cover=source.split('void updateVariantCover(',1)[1].split('void completeSelectorAsset(',1)[0]
+  self.assertIn('"SetImageWithTransition"',cover)
+  self.assertIn('chart[@"id"]',cover)
+  self.assertIn('state->appliedKey',cover)
+  self.assertIn('r.get<P>(cover,"newCode")',cover)
+  self.assertNotIn('r.put(item,"coverBlurAssetCode"',cover)
+  self.assertIn('clearVariantCovers(r)',source.split('void selectorLoadingEnd(',1)[1])
 if __name__=='__main__':unittest.main()

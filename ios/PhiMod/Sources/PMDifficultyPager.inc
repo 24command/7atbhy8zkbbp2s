@@ -12,7 +12,7 @@ P difficultyComponent(Runtime&r,P go,const char*ns,const char*name){return r.cal
 P difficultyObject(Runtime&r,const char*name,P parent){P go=r.object_new(r.type("UnityEngine","GameObject"));uint32_t root=r.gchandle_new(go,false);try{r.call(go,".ctor",{"System.String"},{r.string_new(name)});P tr=difficultyComponent(r,go,"UnityEngine","RectTransform");bool no=false;r.call(tr,"SetParent",{"UnityEngine.Transform","System.Boolean"},{parent,&no});int layer=r.unbox<int>(r.call(r.call(parent,"get_gameObject"),"get_layer"));r.call(go,"set_layer",{"System.Int32"},{&layer});}catch(...){r.gchandle_free(root);throw;}r.gchandle_free(root);return go;}
 bool hasDifficultyPager(P selector){return runtime&&target(*runtime,difficultyOwner)==selector&&difficultyGroup.length;}
 void restoreDifficultyBar(Runtime&r,P selector);
-void clearDifficultyPager(Runtime&r){difficultyTap.reset();difficultyTouchEntry=-1;P previousOwner=target(r,difficultyOwner);for(auto&cell:difficultyCells)if(!cell.root&&r.alive(cell.button))r.call(cell.button,"set_interactable",{"System.Boolean"},{&cell.originalInteractable});P root=target(r,difficultyRoot);if(r.alive(root))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{root});for(auto&cell:difficultyCells){if(cell.root)r.gchandle_free(cell.root);if(cell.buttonRoot)r.gchandle_free(cell.buttonRoot);}difficultyCells.clear();for(uint32_t*handle:{&difficultyOwner,&difficultyItem,&difficultyRoot})if(*handle){r.gchandle_free(*handle);*handle=0;}difficultyEntries.clear();difficultyGroup=nil;difficultyPage=0;difficultyDirty=true;if(r.alive(previousOwner)&&!r.get<bool>(previousOwner,"exit"))restoreDifficultyBar(r,previousOwner);}
+void clearDifficultyPager(Runtime&r,bool restoreBar){difficultyTap.reset();difficultyTouchEntry=-1;P previousOwner=target(r,difficultyOwner);for(auto&cell:difficultyCells)if(!cell.root&&r.alive(cell.button))r.call(cell.button,"set_interactable",{"System.Boolean"},{&cell.originalInteractable});P root=target(r,difficultyRoot);if(r.alive(root))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{root});for(auto&cell:difficultyCells){if(cell.root)r.gchandle_free(cell.root);if(cell.buttonRoot)r.gchandle_free(cell.buttonRoot);}difficultyCells.clear();for(uint32_t*handle:{&difficultyOwner,&difficultyItem,&difficultyRoot})if(*handle){r.gchandle_free(*handle);*handle=0;}difficultyEntries.clear();difficultyGroup=nil;difficultyPage=0;difficultyDirty=true;if(restoreBar&&r.alive(previousOwner)&&!r.get<bool>(previousOwner,"exit"))restoreDifficultyBar(r,previousOwner);}
 NSDictionary*selectedDifficulty(NSString*group,int slot){return songFor(group,slot);}
 NSDictionary*difficultyForSong(Runtime&r,void*song,int slot){return frozenDifficulty(r,song)?:songFor(r.string(r.get<P>(song,"songsId")),slot);}
 void bindTransport(Runtime&r,P selector,P item,NSString*group,NSDictionary*chart){
@@ -40,14 +40,16 @@ void reconcileDifficultyButtons(Runtime&r,P selector){
   for(uintptr_t j=0;buttons&&j<r.array_length(buttons);++j){P button=r.arrayAt(buttons,int(j));if(r.unbox<bool>(r.call(button,"get_interactable"))!=enabled)r.call(button,"set_interactable",{"System.Boolean"},{&enabled});}
  }
 }
-void selectExistingDifficulty(Runtime&r,P selector,P item,int requested){
+void selectExistingDifficulty(Runtime&r,P selector,P item,int requested,bool userInitiated){
  unsigned mask=nativeDifficultyMask(r,item);int selected=phimod::availableDifficulty(mask,requested);if(selected<0)return;
  int extent=0;for(int i=0;i<4;++i)if(mask&(1u<<i))extent=i+1;
- // Native SetLevel returns during list touches and clamps to levelNum-1.
- // Complete an explicit/fallback selection as a transaction, then restore touch state.
- bool finger=r.get<bool>(selector,"fingerOnSongList");r.put(selector,"levelNum",std::max(3,extent));r.put(selector,"fingerOnSongList",false);
- try{r.call(selector,"SetLevel",{"System.Int32"},{&selected});r.put(selector,"nowLevel",selected);r.put(selector,"lastLevel",selected);r.call(selector,"SetText");}
- catch(...){r.put(selector,"fingerOnSongList",finger);throw;}r.put(selector,"fingerOnSongList",finger);
+ // SetLevel plays selection audio and can re-sort the list. Automatic
+ // reconciliation must neither emit audio nor move the list under a finger.
+ bool finger=r.get<bool>(selector,"fingerOnSongList");r.put(selector,"levelNum",std::max(3,extent));
+ if(userInitiated){r.put(selector,"fingerOnSongList",false);try{r.call(selector,"SetLevel",{"System.Int32"},{&selected});}catch(...){r.put(selector,"fingerOnSongList",finger);throw;}r.put(selector,"fingerOnSongList",finger);}
+ r.put(selector,"nowLevel",selected);r.put(selector,"lastLevel",selected);r.call(selector,"SetText");
+ if(!userInitiated)r.call(selector,"ReplaceCover",{"System.Int32"},{&selected});
+
  recordSlot=-1;sparseSlot=-1;initializedSlot=-1;
 }
 void restoreDifficultyBar(Runtime&r,P selector){
@@ -77,7 +79,7 @@ void prepareDifficultyGroup(Runtime&r,P selector){
   int slot=r.get<int>(selector,"nowLevel"),chosen=phimod::availableDifficulty(nativeDifficultyMask(r,item),slot);if(chosen>=0&&chosen!=slot){selectExistingDifficulty(r,selector,item,chosen);difficultyDirty=true;}
   return;
  }
- clearDifficultyPager(r);clearSparseButtons(r);difficultyOwner=r.gchandle_new(selector,false);difficultyItem=r.gchandle_new(item,false);difficultyGroup=group;
+ clearDifficultyPager(r,false);clearSparseButtons(r);difficultyOwner=r.gchandle_new(selector,false);difficultyItem=r.gchandle_new(item,false);difficultyGroup=group;
  rebuildDifficultyEntries(group);NSDictionary*first=pendingSong.length?variants[group.UTF8String][3]:extras->second.front();bindTransport(r,selector,item,group,first);
  size_t firstIndex=3;for(size_t i=0;i<difficultyEntries.size();++i)if(difficultyEntries[i]&&difficultyEntries[i]==first){firstIndex=i;break;}difficultyPage=phimod::difficultyPageFor(firstIndex);
  selectExistingDifficulty(r,selector,item,3);difficultyDirty=true;
@@ -143,7 +145,7 @@ bool pressDifficultyButton(Runtime&r,void*button){
  double pressed=NSDate.timeIntervalSinceReferenceDate;if(pressed-difficultyPressedAt<.15)return true;difficultyPressedAt=pressed;
  for(auto&c:difficultyCells)if(c.button==button){if(c.entry==4){if(difficultyPage)--difficultyPage;}else if(c.entry==5){if(phimod::difficultyNext(difficultyEntries.size(),difficultyPage))++difficultyPage;}else{
   freezeChallengeDifficulties(r);size_t index=difficultyPage*4+c.entry;if(index>=difficultyEntries.size())return true;NSDictionary*chart=difficultyEntries[index];if(!chart)return true;int slot=PMStockDifficulty(chart[@"level"]);if(slot<0||slot==3){bindTransport(r,selector,item,difficultyGroup,chart);slot=3;}
-  selectExistingDifficulty(r,selector,item,slot);recordSlot=-1;sparseSlot=-1;
+  selectExistingDifficulty(r,selector,item,slot,true);recordSlot=-1;sparseSlot=-1;
  }difficultyDirty=true;break;}return true;
 }
 // Native difficulty controls are not always UIButton children, and a parent
