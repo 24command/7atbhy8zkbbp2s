@@ -11,3 +11,13 @@ ios/build/
 *.ipa
 ios/a.out
 ios/t
+
+# Documentation and investigation records are local-only.
+**/*.md
+**/README*
+**/readme*
+# glslang parses this file during configure; it is build input, not project notes.
+!ios/PhiMod/Vendor/glslang-src/CHANGES.md
+**/audit/
+**/*.log
+**/logs/
