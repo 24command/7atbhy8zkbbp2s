@@ -520,7 +520,7 @@ void refreshVariantRecords(Runtime&r,P selector,P item,NSString*group){
  r.call(item,"SetText",{"System.Int32"},{&selected});
 }
 void prepareSelectorItems(Runtime&r,P selector){
- freezeChallengeDifficulties(r);prepareDifficultyGroup(r,selector);
+ freezeChallengeDifficulties(r,selector);prepareDifficultyGroup(r,selector);
  if(r.get<bool>(selector,"exit"))return;P items=r.call(selector,"get_SongItems");int count=r.count(items),slot=r.get<int>(selector,"nowLevel");NSUInteger revision=PMContentStore.shared.revision;
  if(initializedSelector==selector&&initializedCount==count&&initializedSlot==slot&&initializedRevision==revision)return;
  bool changed=false;int maxLevel=0;
@@ -544,6 +544,13 @@ void selectorDifficultyUI(Runtime&r,P selector){
  P items=r.call(selector,"get_SongItems");int count=r.count(items),index=r.get<int>(selector,"nowSong"),slot=r.get<int>(selector,"nowLevel");
  if(slot<0||slot>3||index<0||index>=count)return;
  P selectedItem=r.at(items,index);NSUInteger revision=PMContentStore.shared.revision;
+ // Text grades are presentation-only, including stock EZ/HD/IN/AT charts.
+ P selectedSong=r.get<P>(selectedItem,"songInfo");NSString*selectedID=r.string(r.get<P>(selectedSong,"songsId"));NSDictionary*displayChart=songFor(selectedID,slot);
+ if(displayChart){NSString*text=PMDifficultyText(displayChart);P slider=r.get<P>(selector,"levelSliderController"),bar=r.get<P>(selector,"levelBarController"),infos=r.alive(bar)?r.get<P>(bar,"levelInfos"):nullptr;
+  for(P label:{r.get<P>(selector,"difficulty"),r.alive(slider)?r.get<P>(slider,"difficultyText"):nullptr})if(r.alive(label)&&![r.string(r.call(label,"get_text"))isEqualToString:text])r.call(label,"set_text",{"System.String"},{r.managedString(text)});
+  auto members=variants.find(selectedID.UTF8String?:"");if(infos&&members!=variants.end())for(int i=0;i<4&&uintptr_t(i)<r.array_length(infos);++i){auto member=members->second.find(i);if(member==members->second.end())continue;P label=r.get<P>(r.arrayAt(infos,i),"difficulty");NSString*value=PMDifficultyText(member->second);if(r.alive(label)&&![r.string(r.call(label,"get_text"))isEqualToString:value])r.call(label,"set_text",{"System.String"},{r.managedString(value)});}
+ }
+
  if(sparseSelector==selector&&sparseItem==selectedItem&&sparseSlot==slot&&sparseCount==count&&sparseRevision==revision){maintainSparseSlots(r);return;}
  clearSparseButtons(r);
  for(int j=0;j<count;++j){P item=r.at(items,j),song=r.get<P>(item,"songInfo");NSString*id=r.string(r.get<P>(song,"songsId"));auto group=variants.find(id.UTF8String?:"");

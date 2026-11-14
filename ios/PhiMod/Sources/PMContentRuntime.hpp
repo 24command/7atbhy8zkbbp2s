@@ -18,7 +18,7 @@ NSDictionary*selectedDifficulty(NSString*group,int slot);
 NSDictionary*difficultyForSong(pmbridge::Runtime&,void*song,int slot);
 bool ownsDifficultyButton(void*button);
 bool pressDifficultyButton(pmbridge::Runtime&,void*button);
-void freezeChallengeDifficulties(pmbridge::Runtime&);
+void freezeChallengeDifficulties(pmbridge::Runtime&,void*selector=nullptr);
 void difficultySelectorOff(pmbridge::Runtime&);
 void difficultyGameplayLabel(pmbridge::Runtime&,void*progress);
 void selectorDifficultyUI(pmbridge::Runtime&,void*selector);

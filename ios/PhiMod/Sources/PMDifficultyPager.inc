@@ -87,8 +87,8 @@ void difficultySelectorOff(Runtime&r){
  if(difficultyOwner){P owner=target(r,difficultyOwner);if(r.alive(owner)){int in=2;r.put(owner,"nowLevel",in);}}
  clearDifficultyPager(r);
 }
-void freezeChallengeDifficulties(Runtime&r){
- P owner=target(r,difficultyOwner);if(!r.alive(owner))return;P controller=r.get<P>(owner,"challengeSongSelectorControl");if(!r.alive(controller))return;P queue=r.get<P>(controller,"challengeSongItems");
+void freezeChallengeDifficulties(Runtime&r,void*selector){
+ P owner=selector?selector:target(r,difficultyOwner);if(!r.alive(owner))return;P controller=r.get<P>(owner,"challengeSongSelectorControl");if(!r.alive(controller))return;P queue=r.get<P>(controller,"challengeSongItems");
  std::set<P>queuedSongs;for(int i=0,n=r.count(queue);i<n;++i){P item=r.get<P>(r.at(queue,i),"songInfo");queuedSongs.insert(r.get<P>(item,"songInfo"));}
  for(auto it=frozenDifficulties.begin();it!=frozenDifficulties.end();){if(!queuedSongs.count(target(r,it->root))){r.gchandle_free(it->root);it=frozenDifficulties.erase(it);}else ++it;}
  for(int i=0,n=r.count(queue);i<n;++i){P entry=r.at(queue,i),item=r.get<P>(entry,"songInfo"),song=r.get<P>(item,"songInfo");int slot=r.get<int>(entry,"levelIndex");NSString*group=r.string(r.get<P>(song,"songsId"));if(r.get<int>(item,"sortIndex")==-2147483000)continue;NSDictionary*chart=songFor(group,slot);if(!chart||[chart[@"pmOfficial"]boolValue])continue;
