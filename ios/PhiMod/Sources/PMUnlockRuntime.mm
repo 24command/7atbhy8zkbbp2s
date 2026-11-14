@@ -1,3 +1,4 @@
+#import "PMDifficultyMetadata.h"
 #include "PMUnlockRuntime.hpp"
 #include "../Core/PMUIInteraction.hpp"
 #import "PMContentStore.h"
@@ -39,9 +40,9 @@ NSString*slotName(int slot){return @[@"EZ",@"HD",@"IN",@"AT"][std::clamp(slot,0,
 // queries until an import/edit commits a new revision.
 NSDictionary*unlockLibrary(){static NSDictionary*db=nil;static NSUInteger revision=NSUIntegerMax;NSUInteger current=PMContentStore.shared.revision;if(!db||revision!=current){db=[PMContentStore.shared snapshot];revision=current;}return db;}
 NSDictionary*entity(NSString*id){NSDictionary*db=unlockLibrary();for(NSDictionary*s in db[@"songs"])if([s[@"id"] isEqualToString:id])return s;for(NSDictionary*c in db[@"chapters"])if([c[@"id"] isEqualToString:id])return c;return nil;}
-NSDictionary*songEntity(NSString*id,int slot){NSDictionary*db=unlockLibrary();NSString*selected=db[@"chartSelections"][[NSString stringWithFormat:@"%@@%d",id,slot]];NSDictionary*fallback=nil;for(NSDictionary*s in db[@"songs"]){if(![s[@"id"] isEqualToString:id]&&![s[@"groupId"] isEqualToString:id])continue;if(![[s[@"level"] uppercaseString] isEqualToString:slotName(slot)])continue;if([s[@"id"] isEqualToString:selected])return s;if(!fallback)fallback=s;}return fallback;}
+NSDictionary*songEntity(NSString*id,int slot){NSDictionary*chosen=pmcontent::selectedDifficulty(id,slot);if(chosen)return chosen;NSDictionary*db=unlockLibrary();NSString*selected=db[@"chartSelections"][[NSString stringWithFormat:@"%@@%d",id,slot]];NSDictionary*fallback=nil;for(NSDictionary*s in db[@"songs"]){if(![s[@"id"] isEqualToString:id]&&![s[@"groupId"] isEqualToString:id])continue;if(![[s[@"level"] uppercaseString] isEqualToString:slotName(slot)])continue;if([s[@"id"] isEqualToString:selected])return s;if(!fallback)fallback=s;}return fallback;}
 NSDictionary*ruleFor(NSString*id){return PMNormalizeUnlockRule(entity(id)[@"unlock"]);}
-P record(Runtime&r,NSString*id,int slot){try{return r.call(r.mainGame(),"GetSongRecord",{"System.String","System.String"},{r.managedString(id),r.managedString(slotName(slot))});}catch(...){return nullptr;}}
+P record(Runtime&r,NSString*id,int slot){try{return r.call(r.mainGame(),"GetSongRecord",{"System.String","System.String"},{r.managedString(id),r.managedString(entity(id)?PMDifficultyRecordLevel(entity(id)):slotName(slot))});}catch(...){return nullptr;}}
 double rksValue(Runtime&r){try{P gi=r.mainGame();P boxed=r.call(gi,"get_RankingScore");return r.unbox<float>(boxed);}catch(...){return -1;}}
 bool recordPass(Runtime&r,NSDictionary*c){
  NSString*type=c[@"type"],*ref=c[@"ref"];
@@ -60,7 +61,7 @@ bool recordPass(Runtime&r,NSDictionary*c){
  if(!candidates.count)[candidates addObject:@{@"id":ref}];
  double threshold=[c[@"value"] doubleValue];
  for(NSDictionary*song in candidates)for(int s=slot<0?0:slot;s<=(slot<0?3:slot);++s){
-  if([song[@"level"] isKindOfClass:NSString.class]&&![[song[@"level"] uppercaseString] isEqualToString:slotName(s)])continue;
+  if([song[@"level"]isKindOfClass:NSString.class]){int stock=PMStockDifficulty(song[@"level"]);if(stock>=0&&stock!=s)continue;if(stock<0&&((slot<0&&s!=3)||(slot>=0&&s!=3)))continue;}
   P rec=record(r,song[@"id"],s);if(!rec)continue;
   int score=r.get<int>(rec,"s");if(score<=0)continue;
   if([type isEqualToString:@"score"]&&score>=threshold)return true;
@@ -453,6 +454,7 @@ void songLockUI(Runtime&r,P selector,double now){
  for(const char*field:{"selectorItemUpside","selectorItemDownside"}){P row=r.get<P>(item,field);if(r.alive(row)){lockActive(r,r.get<P>(row,"locked"),blocked);lockComponent(r,r.get<P>(row,"difficulty"),!blocked);}}
 }
 }
+void difficultyChanged(Runtime&r){resetLockUI(r);}
 bool selectorAccess(Runtime&r,void*raw){
  P selector=raw;if(!selector||r.get<bool>(selector,"exit"))return true;
  restoreChallengeButtons(r);

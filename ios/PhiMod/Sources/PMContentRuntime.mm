@@ -1,3 +1,5 @@
+#import "PMDifficultyMetadata.h"
+#include "../Core/PMDifficultyPages.hpp"
 #include "../Core/PMSelectorDifficulty.hpp"
 #include "../Core/PMRPEVisibility.hpp"
 #include "../Core/PMFrameCache.hpp"
@@ -27,6 +29,11 @@
 #include <chrono>
 namespace pmcontent {
 using pmbridge::P;using pmbridge::Runtime;
+void clearDifficultyPager(Runtime&r);
+void difficultyPager(Runtime&r,P selector);
+void prepareDifficultyGroup(Runtime&r,P selector);
+bool hasDifficultyPager(P selector);
+
 namespace {
 struct V2{float x,y;};struct V3{float x,y,z;};struct Rect{float x,y,w,h;};struct Color{float r,g,b,a;};struct Bounds{V3 center,extents;};
 Runtime*runtime=nullptr;bool playing=false,lastCustom=false,appliedMainline=false;NSUInteger applied=0;NSString*levelID=nil,*pendingSong=nil;int pendingSlot=0;
@@ -90,13 +97,19 @@ P target(Runtime&r,uint32_t h){return h?r.gchandle_get_target(h):nullptr;}
 P keep(Runtime&r,P p){if(p)visualRoots.push_back(r.gchandle_new(p,false));return p;}
 P decode(Runtime&r,id value,const char*name){NSData*d=[NSJSONSerialization dataWithJSONObject:value options:0 error:nil];NSString*s=[[NSString alloc]initWithData:d encoding:NSUTF8StringEncoding];if(!s)throw std::runtime_error("Invalid content JSON");return r.stat(r.type("UnityEngine","JsonUtility"),"FromJson",{"System.String","System.Type"},{r.managedString(s),r.type_get_object(r.class_get_type(r.klass(name)))});}
 id encode(Runtime&r,P p){P text=r.stat(r.type("UnityEngine","JsonUtility"),"ToJson",{"System.Object"},{p});NSData*d=[r.string(text)dataUsingEncoding:NSUTF8StringEncoding];return d?[NSJSONSerialization JSONObjectWithData:d options:NSJSONReadingMutableContainers error:nil]:nil;}
-int slotIndex(NSString*s){NSInteger i=[@[@"EZ",@"HD",@"IN",@"AT"]indexOfObject:s ?: @"IN"];return i==NSNotFound?2:(int)i;}
-NSDictionary*songFor(NSString*identifier,int slot){auto it=variants.find(identifier.UTF8String);if(it!=variants.end()){auto found=it->second.find(slot);if(found!=it->second.end())return found->second;}for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"] isEqualToString:identifier])return s;return nil;}
+std::map<std::string,std::vector<NSDictionary*>>extraDifficulties;
+std::map<std::string,NSDictionary*>stockAT;
+std::map<std::string,NSDictionary*>extraByID;
+int slotIndex(NSString*s){NSInteger i=[@[@"EZ",@"HD",@"IN",@"AT"]indexOfObject:s ?: @"IN"];return i==NSNotFound?3:(int)i;}
+NSDictionary*songFor(NSString*identifier,int slot){auto direct=extraByID.find(identifier.UTF8String?:"");if(direct!=extraByID.end())return direct->second;auto it=variants.find(identifier.UTF8String);if(it!=variants.end()){auto found=it->second.find(slot);if(found!=it->second.end())return found->second;}for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"] isEqualToString:identifier])return s;return nil;}
 NSString*groupFor(NSString*identifier){for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"] isEqualToString:identifier])return [s[@"groupId"] length]?s[@"groupId"]:identifier;return identifier;}
 void capture(Runtime&r){if(baseline)return;P gi=r.mainGame();P song=r.get<P>(gi,"song"),chapters=r.get<P>(gi,"chapters");if(!song||!chapters)return;NSDictionary*capturedBase=encode(r,song);if(![capturedBase isKindOfClass:NSDictionary.class])return;NSMutableArray*a=[NSMutableArray new];for(uintptr_t i=0,n=r.array_length(chapters);i<n;++i){id c=encode(r,r.arrayAt(chapters,(int)i));if(![c isKindOfClass:NSDictionary.class])return;[a addObject:c];}if(!a.count)return;baseline=capturedBase;originalChapters=a;@synchronized(PMContentStore.shared){officialCache=@{@"songBase":baseline,@"chapters":originalChapters};}}
 NSDictionary*nativeSong(NSString*group,NSDictionary*s,std::map<int,NSDictionary*>&members){NSMutableArray*difficulty=[NSMutableArray new],*charters=[NSMutableArray new],*mods=[NSMutableArray new],*images=[NSMutableArray new],*unlocks=[NSMutableArray new];for(int i=0;i<4;++i){NSDictionary*v=members.count(i)?members[i]:nil;[difficulty addObject:v?@(MAX(.1,[v[@"difficulty"] doubleValue])):@0];[charters addObject:v[@"charter"] ?: @""];[mods addObject:@{@"levelMods":@[]}];[images addObject:@[]];[unlocks addObject:@{@"unlockType":@(-1),@"unlockInfo":@[]}];}return @{@"songsId":group,@"songsKey":group,@"songsName":s[@"title"] ?: group,@"songsTitle":s[@"title"] ?: group,@"composer":s[@"composer"] ?: @"",@"illustrator":s[@"illustrator"] ?: @"",@"difficulty":difficulty,@"charter":charters,@"levels":@[@"EZ",@"HD",@"IN",@"AT"],@"previewTime":s[@"preview"] ?: @0,@"previewEndTime":s[@"previewEnd"] ?: @15,@"unlockInfo":unlocks,@"judgeLineImages":images,@"levelMods":mods};}
 void applyImpl(Runtime&r){capture(r);if(!baseline||playing)return;NSDictionary*db=[PMContentStore.shared snapshot];decltype(variants)nextVariants;NSDictionary*selections=db[@"chartSelections"];
- for(NSDictionary*s in db[@"songs"]){NSString*g=[s[@"groupId"] length]?s[@"groupId"]:s[@"id"];int slot=slotIndex(s[@"level"]);auto&group=nextVariants[g.UTF8String];NSString*selected=selections[[NSString stringWithFormat:@"%@@%d",g,slot]];if(!group.count(slot)||[selected isEqualToString:s[@"id"]])group[slot]=s;}
+ extraDifficulties.clear();stockAT.clear();extraByID.clear();
+ for(NSDictionary*s in db[@"songs"]){NSString*g=[s[@"groupId"]length]?s[@"groupId"]:s[@"id"];int slot=PMStockDifficulty(s[@"level"]);if(slot<0){extraDifficulties[g.UTF8String].push_back(s);extraByID[[s[@"id"]UTF8String]]=s;continue;}auto&group=nextVariants[g.UTF8String];NSString*selected=selections[[NSString stringWithFormat:@"%@@%d",g,slot]];if(!group.count(slot)||[selected isEqualToString:s[@"id"]])group[slot]=s;}
+ for(auto&entry:extraDifficulties){std::stable_sort(entry.second.begin(),entry.second.end(),[](NSDictionary*a,NSDictionary*b){return [a[@"difficultyOrder"]integerValue]<[b[@"difficultyOrder"]integerValue];});auto&group=nextVariants[entry.first];if(group.count(3))stockAT[entry.first]=group[3];group[3]=entry.second.front();}
+
  NSMutableDictionary*songBase=[NSJSONSerialization JSONObjectWithData:[NSJSONSerialization dataWithJSONObject:baseline options:0 error:nil] options:NSJSONReadingMutableContainers error:nil];NSMutableDictionary*official=[NSMutableDictionary new];for(NSString*k in @[@"mainSongs",@"extraSongs",@"sideStorySongs",@"otherSongs"])for(NSMutableDictionary*s in songBase[k])official[s[@"songsId"]]=s;
  for(auto&g:nextVariants){NSString*id=[[NSString alloc]initWithUTF8String:g.first.c_str()];NSDictionary*s=g.second.begin()->second;NSDictionary*local=nativeSong(id,s,g.second);NSMutableDictionary*existing=official[id];if(existing){NSMutableArray*d=[existing[@"difficulty"] mutableCopy],*c=[existing[@"charter"] mutableCopy];for(auto&v:g.second)if(v.first<(int)d.count){d[v.first]=local[@"difficulty"][v.first];if(v.first<(int)c.count)c[v.first]=local[@"charter"][v.first];}existing[@"difficulty"]=d;existing[@"charter"]=c;}else[songBase[@"mainSongs"] addObject:PMMutableContentTree(local)];}
  for(NSString*id in db[@"overrides"]){NSMutableDictionary*s=official[id];if(s){NSDictionary*patch=db[@"overrides"][id];for(NSString*k in @[@"songsName",@"songsTitle",@"composer",@"illustrator",@"difficulty",@"charter"])if(patch[k])s[k]=patch[k];}}
@@ -383,7 +396,7 @@ NSDictionary*command(NSString*action,NSString*identifier,int slot){
    if([action isEqualToString:@"play"]){
     NSDictionary*chosen=nil;for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"]isEqualToString:identifier]){chosen=s;break;}
     if(!chosen)throw std::runtime_error("Custom chart no longer exists");
-    chapterID=chosen[@"targetChapter"] ?: @"pm_local";pendingSong=groupFor(identifier);pendingSlot=std::clamp(slot,0,3);
+    chapterID=chosen[@"targetChapter"] ?: @"pm_local";pendingSong=groupFor(identifier);pendingSlot=PMStockDifficulty(chosen[@"level"]);if(pendingSlot<0){pendingSlot=3;variants[pendingSong.UTF8String][3]=chosen;}
    }
    P chapter=r.call(r.mainGame(),"GetChapterWithCode",{"System.String"},{r.managedString(chapterID)});
    if(!chapter)throw std::runtime_error("Requested chapter does not exist");
@@ -505,6 +518,7 @@ void refreshVariantRecords(Runtime&r,P selector,P item,NSString*group){
  r.call(item,"SetText",{"System.Int32"},{&selected});
 }
 void prepareSelectorItems(Runtime&r,P selector){
+ freezeChallengeDifficulties(r);prepareDifficultyGroup(r,selector);
  if(r.get<bool>(selector,"exit"))return;P items=r.call(selector,"get_SongItems");int count=r.count(items),slot=r.get<int>(selector,"nowLevel");NSUInteger revision=PMContentStore.shared.revision;
  if(initializedSelector==selector&&initializedCount==count&&initializedSlot==slot&&initializedRevision==revision)return;
  bool changed=false;int maxLevel=0;
@@ -522,7 +536,9 @@ void prepareSelectorItems(Runtime&r,P selector){
 }
 // Reassert sparse-slot presentation after native text and unlock updates.
 void selectorDifficultyUI(Runtime&r,P selector){
+
  if(r.get<bool>(selector,"exit"))return;
+ if(hasDifficultyPager(selector)){difficultyPager(r,selector);return;}
  P items=r.call(selector,"get_SongItems");int count=r.count(items),index=r.get<int>(selector,"nowSong"),slot=r.get<int>(selector,"nowLevel");
  if(slot<0||slot>3||index<0||index>=count)return;
  P selectedItem=r.at(items,index);NSUInteger revision=PMContentStore.shared.revision;
@@ -592,8 +608,10 @@ void selectorFrame(Runtime&r,P selector){
  if(launch){pendingSong=nil;r.call(selector,"NormalStart");}
 }
 
-void levelBegin(Runtime&r){selectorLoadingEnd(r,true);playing=true;if(chapterSelectorRoot){r.gchandle_free(chapterSelectorRoot);chapterSelectorRoot=0;}P info=r.get<P>(r.mainGame(),"levelStartInfo");NSString*id=info?r.string(r.get<P>(info,"songsId")):@"";levelID=[PMContentStore.shared asset:id]?id:nil;lastCustom=levelID.length>0;}
-void levelEnd(Runtime&r){playing=false;levelID=nil;lastCustom=false;pendingSong=nil;if(chapterSelectorRoot){r.gchandle_free(chapterSelectorRoot);chapterSelectorRoot=0;}clearVisuals(r);}
+#include "PMDifficultyPager.inc"
+
+void levelBegin(Runtime&r){difficultyLabeledID=nil;selectorLoadingEnd(r,true);playing=true;if(chapterSelectorRoot){r.gchandle_free(chapterSelectorRoot);chapterSelectorRoot=0;}P info=r.get<P>(r.mainGame(),"levelStartInfo");NSString*id=info?r.string(r.get<P>(info,"songsId")):@"";levelID=[PMContentStore.shared asset:id]?id:nil;lastCustom=levelID.length>0;}
+void levelEnd(Runtime&r){clearDifficultyPager(r);playing=false;levelID=nil;lastCustom=false;pendingSong=nil;if(chapterSelectorRoot){r.gchandle_free(chapterSelectorRoot);chapterSelectorRoot=0;}clearVisuals(r);}
 bool assetConstructor(Runtime&r,P self,P key){NSString*kind=nil,*identifier=keyID(r.string(key),&kind);if(!identifier)return false;r.put(self,"key",key);r.put(self,"refCount",1);
  if(loadingSelector&&!completingSelectorAsset&&!playing&&selectorSongIDs.count(identifier.UTF8String)&&([kind isEqualToString:@"image"]||[kind isEqualToString:@"music"])){
   auto cached=assets.find(r.string(key).UTF8String);
@@ -621,7 +639,7 @@ bool assetRelease(Runtime&r,P self,bool force){
  if(contents&&r.unbox<bool>(r.call(contents,"ContainsKey",{"System.String"},{key}))&&r.call(contents,"get_Item",{"System.String"},{key})==self)r.call(contents,"Remove",{"System.String"},{key});
  log([NSString stringWithFormat:@"Content custom release (%@): %@",force?@"ReleaseResource":@"Release",r.string(key)]);return true;
 }
-void levelInfo(Runtime&r,P song,int slot,P info){NSString*id=r.string(r.get<P>(song,"songsId"));NSDictionary*custom=songFor(id,slot);if(!info)return;if(!custom){NSString*cover=[[PMContentStore.shared coverFolder:id]stringByAppendingPathComponent:@"image.png"];if(cover&&[NSFileManager.defaultManager fileExistsAtPath:cover]){NSString*key=[NSString stringWithFormat:@"PM/%@/image@%lu",id,(unsigned long)PMContentStore.shared.revision];r.put(info,"illustrationKey",r.managedString(key));}return;}NSString*identifier=custom[@"id"];for(const auto&entry:std::vector<std::pair<const char*,NSString*>>{{"songsId",identifier},{"songsName",custom[@"title"] ?: @""},{"composer",custom[@"composer"] ?: @""},{"charter",custom[@"charter"] ?: @""},{"illustrator",custom[@"illustrator"] ?: @""},{"songsDifficulty",[custom[@"difficulty"] description]}})r.put(info,entry.first,r.managedString(entry.second));for(auto pair:std::vector<std::pair<const char*,const char*>>{{"musicAddressableKey","music"},{"chartAddressableKey","chart"},{"illustrationKey","image"}}){NSString*k=[NSString stringWithFormat:@"PM/%@/%s@%lu",identifier,pair.second,(unsigned long)PMContentStore.shared.revision];r.put(info,pair.first,r.managedString(k));}}
+void levelInfo(Runtime&r,P song,int slot,P info){NSString*id=r.string(r.get<P>(song,"songsId"));NSDictionary*custom=songFor(id,slot);if(!info)return;if(!custom){NSString*cover=[[PMContentStore.shared coverFolder:id]stringByAppendingPathComponent:@"image.png"];if(cover&&[NSFileManager.defaultManager fileExistsAtPath:cover]){NSString*key=[NSString stringWithFormat:@"PM/%@/image@%lu",id,(unsigned long)PMContentStore.shared.revision];r.put(info,"illustrationKey",r.managedString(key));}return;}NSString*identifier=custom[@"id"];for(const auto&entry:std::vector<std::pair<const char*,NSString*>>{{"songsId",identifier},{"songsName",custom[@"title"] ?: @""},{"composer",custom[@"composer"] ?: @""},{"charter",custom[@"charter"] ?: @""},{"illustrator",custom[@"illustrator"] ?: @""},{"songsDifficulty",[@(PMDifficultyNumber(custom[@"difficulty"])) description]}})r.put(info,entry.first,r.managedString(entry.second));for(auto pair:std::vector<std::pair<const char*,const char*>>{{"musicAddressableKey","music"},{"chartAddressableKey","chart"},{"illustrationKey","image"}}){NSString*k=[NSString stringWithFormat:@"PM/%@/%s@%lu",identifier,pair.second,(unsigned long)PMContentStore.shared.revision];r.put(info,pair.first,r.managedString(k));}}
 void beforeChart(Runtime&r,P level){if(!levelID.length)return;NSString*path=[[PMContentStore.shared asset:levelID]stringByAppendingPathComponent:@"chart.json"];NSData*d=[NSData dataWithContentsOfFile:path];currentChart=d?[NSJSONSerialization JSONObjectWithData:d options:0 error:nil]:nil;if(!currentChart)throw std::runtime_error("Custom visual chart missing");resourceSubdir=@"";for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"]isEqualToString:levelID])resourceSubdir=s[@"resourceRoot"] ?: @"";beforeInformation(r,level);}
 void afterChart(Runtime&r,P level){clearHud(r);if(!currentChart)return;hudLevel=r.gchandle_new(level,false);
  // Match Android's zOrder/index ranking instead of treating zOrder as a
@@ -978,6 +996,7 @@ void recoverSourceNotes(Runtime&r,P manager){
 }
 
 void visuals(Runtime&r,P progress){
+ difficultyGameplayLabel(r,progress);
  storyFrameCamera=nullptr;storyFrameWidth=0;
  if(!currentChart)return;
  static double skewCleanupAt=0;double skewNow=NSDate.timeIntervalSinceReferenceDate;

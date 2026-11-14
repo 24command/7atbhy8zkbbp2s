@@ -1,6 +1,7 @@
 #pragma once
 #include "PMIL2CPP.hpp"
 namespace pmunlock {
+void difficultyChanged(pmbridge::Runtime&);
 void attach(pmbridge::Runtime&);void validate(pmbridge::Runtime&);void mainlinePhase1Start(pmbridge::Runtime&,void*);bool mainlinePhase1ToPhase2(pmbridge::Runtime&,void*);bool mainlineApplyMapCover(pmbridge::Runtime&,void*);
 NSString* coverPath(pmbridge::Runtime&,NSString* identifier);
 bool beforeStart(pmbridge::Runtime&,void* selector,void (^resume)(void));

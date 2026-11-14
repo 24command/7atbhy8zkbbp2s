@@ -192,7 +192,7 @@ void onProgressStart(P self,P mi){
  try{pmpractice::begin(R(),self);diagf("Practice clock/pitch armed before ProgressControl.Start");}catch(const std::exception&e){diagf("Practice pre-start setup failed; original audio path retained: %s",e.what());try{pmpractice::clear(R());}catch(...){}}
  orig<VoidFn>(h::progressStart)(self,mi);
  diagf("ProgressControl.Start original returned");
- try{begin(self);}catch(const std::exception&e){fault(e);}
+ try{begin(self);pmcontent::difficultyGameplayLabel(R(),self);}catch(const std::exception&e){fault(e);}
 }
  void ensureFloorArray(Runtime&r,P info){
  if(!info)return;
@@ -678,12 +678,13 @@ void onSelector(P self,P mi){
   contentBoundary("Selector difficulty UI",[&]{pmcontent::selectorDifficultyUI(R(),self);});
  contentBoundary("Selector loading",[&]{pmcontent::selectorLoadingFrame(R(),self);});
 }
-void onSelectorOff(P self,P mi){try{pmcontent::selectorLoadingEnd(R(),false);pmscene::selectorOff(R());pmunlock::clear(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::selectorOff)(self,mi);}
+void onSelectorOff(P self,P mi){try{pmcontent::difficultySelectorOff(R());pmcontent::selectorLoadingEnd(R(),false);pmscene::selectorOff(R());pmunlock::clear(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::selectorOff)(self,mi);}
 void onSetting(P self,P mi){orig<VoidFn>(h::setting)(self,mi);static std::string previous;try{pmunlock::clear(R());pmscene::settingsFrame(R(),self);previous.clear();}catch(const std::exception&e){lastError=e.what();if(previous!=lastError){previous=lastError;diagf("MOD settings update failed: %s",e.what());}}}
 void onSettingTab(P self,int index,P mi){try{if(pmscene::settingsTabRequest(R(),self,index))return;}catch(const std::exception&e){lastError=e.what();diagf("MOD tab routing failed target=%d: %s",index,e.what());return;}orig<void(*)(P,int,P)>(h::settingTab)(self,index,mi);}
 void onSettingBack(P self,P mi){try{pmscene::settingsLeave(R(),"back-button");}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::settingBack)(self,mi);}
 bool dispatchModButton(P self){
  try{if(pmunlock::selectorButtonBlocked(R(),self))return true;}catch(const std::exception&e){diagf("Selector modal button: %s",e.what());return true;}
+ try{if(pmcontent::pressDifficultyButton(R(),self))return true;}catch(const std::exception&e){diagf("Difficulty page: %s",e.what());return true;}
  try{if(pmunlock::beforeResultContinue(R(),self))return true;}catch(const std::exception&e){diagf("Unlock result Continue: %s",e.what());}
  try{if(pmunlock::pressRequirement(R(),self))return true;}catch(const std::exception&e){diagf("Unlock details button: %s",e.what());return true;}
  try{if(pmunlock::blockChallengeButton(R(),self))return true;}catch(const std::exception&e){diagf("Challenge access guard: %s",e.what());return true;}
@@ -695,6 +696,7 @@ bool dispatchModButton(P self){
 void onPress(P self,P mi){if(!dispatchModButton(self))orig<VoidFn>(h::button)(self,mi);}
 void onPointerClick(P self,P event,P mi){
  try{if(pmunlock::selectorButtonBlocked(R(),self))return;}catch(const std::exception&e){diagf("Selector modal click: %s",e.what());return;}
+ if(pmcontent::ownsDifficultyButton(self)){try{if(R().enumValue(R().call(event,"get_button"),"UnityEngine.EventSystems.PointerEventData.InputButton")==0)pmcontent::pressDifficultyButton(R(),self);}catch(const std::exception&e){diagf("Difficulty page click: %s",e.what());}return;}
  if(pmunlock::ownsRequirementButton(self)){try{if(R().enumValue(R().call(event,"get_button"),"UnityEngine.EventSystems.PointerEventData.InputButton")==0)pmunlock::pressRequirement(R(),self);}catch(const std::exception&e){diagf("Unlock details click: %s",e.what());}return;}
  try{if(pmunlock::blockChallengeButton(R(),self))return;}catch(const std::exception&e){diagf("Challenge click guard: %s",e.what());return;}
  if(pmscene::ownsButton(self)){
