@@ -83,7 +83,7 @@
 - (void)updateToolbar {
     if (!self.bulkSelection) {
         self.toolbarItems = @[
-            [[UIBarButtonItem alloc] initWithTitle:@"Import ZIP / PEZ" style:UIBarButtonItemStylePlain target:self action:@selector(importFiles)],
+            [[UIBarButtonItem alloc] initWithTitle:@"导入 ZIP / PEZ" style:UIBarButtonItemStylePlain target:self action:@selector(importFiles)],
             [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil],
             [[UIBarButtonItem alloc] initWithTitle:@"\u5e94\u7528\u5230\u6e38\u620f" style:UIBarButtonItemStylePlain target:self action:@selector(apply)]
         ];
