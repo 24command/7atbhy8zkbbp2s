@@ -18,7 +18,7 @@ void PMChooseChapter(UIViewController*presenter,void(^chosen)(NSString*)){
  UIAlertController*a=[UIAlertController alertControllerWithTitle:@"\u9009\u62e9\u76ee\u6807\u7ae0\u8282" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
  NSDictionary*db=[PMContentStore.shared snapshot];NSMutableArray*chapters=[db[@"chapters"]mutableCopy];[chapters addObjectsFromArray:pmcontent::cachedOfficialSnapshot()[@"chapters"]?:@[]];
  for(NSDictionary*c in chapters){NSString*id=c[@"id"]?:c[@"chapterCode"],*name=c[@"name"]?:c[@"songInfo"][@"title"]?:id;[a addAction:[UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault handler:^(UIAlertAction*x){chosen(id);}]];}
- [a addAction:[UIAlertAction actionWithTitle:@"\u53d6\u6d88" style:UIAlertActionStyleCancel handler:nil]];a.popoverPresentationController.sourceView=presenter.view;a.popoverPresentationController.sourceRect=CGRectMake(presenter.view.bounds.size.width/2,80,1,1);[presenter presentViewController:a animated:YES completion:nil];
+ [a addAction:[UIAlertAction actionWithTitle:@"\u53d6\u6d88" style:UIAlertActionStyleCancel handler:nil]];UIView*anchor=presenter.navigationController.view?:presenter.view;CGRect visible=UIEdgeInsetsInsetRect(anchor.bounds,anchor.safeAreaInsets);a.popoverPresentationController.sourceView=anchor;a.popoverPresentationController.sourceRect=CGRectMake(CGRectGetMidX(visible),CGRectGetMidY(visible),1,1);a.popoverPresentationController.permittedArrowDirections=0;[presenter presentViewController:a animated:YES completion:nil];
 }
 @implementation PMChapterSongList
 - (void)viewDidLoad{
