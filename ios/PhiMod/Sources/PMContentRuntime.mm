@@ -3,6 +3,7 @@
 #include "../Core/PMDifficultyArrowGeometry.hpp"
 #include "../Core/PMUIInteraction.hpp"
 #include "../Core/PMSelectorDifficulty.hpp"
+#include "../Core/PMSelectorRowRefresh.hpp"
 #include "../Core/PMRPEVisibility.hpp"
 #include "../Core/PMIntervalIndex.hpp"
 #include "../Core/PMFrameCache.hpp"
@@ -50,7 +51,7 @@ struct DeferredSelectorAsset {uint32_t root;std::string identifier;bool music;};
 std::map<P,DeferredSelectorAsset>selectorAssets;
 uint32_t loadingSelector=0;bool completingSelectorAsset=false;
 std::set<std::string>selectorSongIDs,selectedAssetIDs;
-P initializedSelector=nullptr;int initializedCount=-1,initializedSlot=-1;NSUInteger initializedRevision=NSUIntegerMax;
+P initializedSelector=nullptr,initializedItems=nullptr;int initializedCount=-1,initializedSlot=-1,initializedVersion=-1;NSUInteger initializedRevision=NSUIntegerMax;
 P recordSelector=nullptr,recordItem=nullptr;int recordSlot=-1;NSUInteger recordRevision=NSUIntegerMax;
 NSUInteger selectorLibraryRevision=0;int loadingSong=-1,loadingSlot=-1;
 float loadingPosition=0;double selectionChangedAt=0;bool selectorDragging=true;
@@ -517,7 +518,7 @@ void selectorLoadingEnd(Runtime&r,bool finishSelected){
  clearSelectorRowPresentation(r);
  clearVariantCovers(r);
  clearSparseButtons(r);
- initializedSelector=nullptr;initializedCount=initializedSlot=-1;initializedRevision=NSUIntegerMax;
+ initializedSelector=initializedItems=nullptr;initializedCount=initializedSlot=initializedVersion=-1;initializedRevision=NSUIntegerMax;
  recordSelector=recordItem=nullptr;recordSlot=-1;recordRevision=NSUIntegerMax;
  if(finishSelected&&r.alive(target(r,loadingSelector)))observeSelector(r,target(r,loadingSelector));
  if(loadingSelector)r.gchandle_free(loadingSelector);loadingSelector=0;
@@ -556,7 +557,8 @@ void refreshVariantRecords(Runtime&r,P selector,P item,NSString*group){
 void prepareSelectorItems(Runtime&r,P selector){
  freezeChallengeDifficulties(r,selector);prepareDifficultyGroup(r,selector);
  if(r.get<bool>(selector,"exit"))return;P items=r.call(selector,"get_SongItems");int count=r.count(items),slot=r.get<int>(selector,"nowLevel");NSUInteger revision=PMContentStore.shared.revision;
- if(initializedSelector==selector&&initializedCount==count&&initializedSlot==slot&&initializedRevision==revision)return;
+ int version=r.get<int>(items,"_version");
+ if(initializedSelector==selector&&initializedItems==items&&initializedVersion==version&&initializedCount==count&&initializedRevision==revision)return;
  bool changed=false;int maxLevel=0;
  for(int i=0;i<count;++i){P item=r.at(items,i),song=r.get<P>(item,"songInfo");NSString*id=r.string(r.get<P>(song,"songsId"));auto group=variants.find(id.UTF8String?:"");
   if(![id hasPrefix:@"pm_"]){NSString*cover=[[PMContentStore.shared coverFolder:id]stringByAppendingPathComponent:@"image.png"];if(cover&&[NSFileManager.defaultManager fileExistsAtPath:cover]){NSString*key=[NSString stringWithFormat:@"PM/%@/image@%lu",id,(unsigned long)revision],*blur=[NSString stringWithFormat:@"PM/%@/blur@%lu",id,(unsigned long)revision];r.put(item,"coverAssetCode",r.managedString(key));r.put(item,"coverBlurAssetCode",r.managedString(blur));}}
@@ -568,7 +570,7 @@ void prepareSelectorItems(Runtime&r,P selector){
   maxLevel=std::max(maxLevel,levels);
  }
  if(changed){r.put(selector,"levelNum",std::max(r.get<int>(selector,"levelNum"),maxLevel));bool instantiate=false;r.call(selector,"SortSong",{"System.Boolean"},{&instantiate});}
- initializedSelector=selector;initializedCount=count;initializedSlot=slot;initializedRevision=revision;
+ initializedSelector=selector;initializedItems=items;initializedVersion=r.get<int>(items,"_version");initializedCount=count;initializedSlot=slot;initializedRevision=revision;
 }
 // Reassert sparse-slot presentation after native text and unlock updates.
 void selectorDifficultyUI(Runtime&r,P selector){
@@ -588,9 +590,8 @@ void selectorDifficultyUI(Runtime&r,P selector){
 
  if(sparseSelector==selector&&sparseItem==selectedItem&&sparseSlot==slot&&sparseCount==count&&sparseRevision==revision){maintainSparseSlots(r);reconcileDifficultyButtons(r,selector);return;}
  clearSparseButtons(r);
- for(int j=0;j<count;++j){P item=r.at(items,j),song=r.get<P>(item,"songInfo");NSString*id=r.string(r.get<P>(song,"songsId"));auto group=variants.find(id.UTF8String?:"");
-  if(group==variants.end()||![id hasPrefix:@"pm_"])continue;
-  if(j!=index)continue;
+ {auto group=variants.find(selectedID.UTF8String?:"");
+   if(group!=variants.end()&&[selectedID hasPrefix:@"pm_"]){
   P bar=r.get<P>(selector,"levelBarController"),infos=bar?r.get<P>(bar,"levelInfos"):nullptr;
   for(int i=0;infos&&i<4&&uintptr_t(i)<r.array_length(infos);++i){P info=r.arrayAt(infos,i);if(!info)continue;bool available=group->second.count(i)!=0;
    if(!available){sparsePlaceholders.push_back({r.gchandle_new(info,false),i});P text=r.get<P>(info,"difficulty");NSString*value=r.string(r.call(text,"get_text"));if(![value isEqualToString:@"?"]){NSString*name=@[@"EZ",@"HD",@"IN",@"AT"][i];r.call(info,"HideInfo",{"System.String"},{r.managedString(name)});}}
@@ -598,7 +599,7 @@ void selectorDifficultyUI(Runtime&r,P selector){
    bool enabled=available&&i!=slot; // Missing and already-selected slots cannot be clicked.
    for(uintptr_t k=0;buttons&&k<r.array_length(buttons);++k){P button=r.arrayAt(buttons,int(k));bool previous=r.unbox<bool>(r.call(button,"get_interactable"));sparseButtons.push_back({r.gchandle_new(button,false),previous,enabled});if(previous!=enabled)r.call(button,"set_interactable",{"System.Boolean"},{&enabled});}
   }
- }
+ }}
  reconcileDifficultyButtons(r,selector);
  sparseSelector=selector;sparseItem=selectedItem;sparseSlot=slot;sparseCount=count;sparseRevision=revision;
 }

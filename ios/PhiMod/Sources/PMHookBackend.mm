@@ -671,7 +671,7 @@ void onMainlineApplyMapCover(P self,P mi){
 
 void onSelector(P self,P mi){
  bool modal=false;if(!contentBoundary("Selector modal",[&]{modal=pmunlock::selectorModalUpdate(R(),self);})||modal)return;
- contentBoundary("Selector row restore",[&]{pmcontent::restoreSelectorRowVisibility(R());});
+ contentBoundary("Selector row restore",[&]{pmcontent::restoreSelectorRowVisibility(R(),self);});
  bool difficultyTouch=false;contentBoundary("Difficulty touch",[&]{difficultyTouch=pmcontent::difficultyInput(R(),self);});
  bool access=false;if(!contentBoundary("Selector chapter access",[&]{access=pmunlock::selectorAccess(R(),self);})||!access)return;
  contentBoundary("Selector content prepare",[&]{pmcontent::prepareSelectorItems(R(),self);pmcontent::selectorLoadingBegin(R(),self);});

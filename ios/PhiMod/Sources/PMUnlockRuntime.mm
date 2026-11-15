@@ -38,9 +38,19 @@ P target(Runtime&r,uint32_t h){return h?r.gchandle_get_target(h):nullptr;}
 NSString*slotName(int slot){return @[@"EZ",@"HD",@"IN",@"AT"][std::clamp(slot,0,3)];}
 // snapshot() serializes the entire library. Reuse it for read-only unlock
 // queries until an import/edit commits a new revision.
-NSDictionary*unlockLibrary(){static NSDictionary*db=nil;static NSUInteger revision=NSUIntegerMax;NSUInteger current=PMContentStore.shared.revision;if(!db||revision!=current){db=[PMContentStore.shared snapshot];revision=current;}return db;}
-NSDictionary*entity(NSString*id){NSDictionary*db=unlockLibrary();for(NSDictionary*s in db[@"songs"])if([s[@"id"] isEqualToString:id])return s;for(NSDictionary*c in db[@"chapters"])if([c[@"id"] isEqualToString:id])return c;return nil;}
-NSDictionary*songEntity(NSString*id,int slot){NSDictionary*chosen=pmcontent::selectedDifficulty(id,slot);if(chosen)return chosen;NSDictionary*db=unlockLibrary();NSString*selected=db[@"chartSelections"][[NSString stringWithFormat:@"%@@%d",id,slot]];NSDictionary*fallback=nil;for(NSDictionary*s in db[@"songs"]){if(![s[@"id"] isEqualToString:id]&&![s[@"groupId"] isEqualToString:id])continue;if(![[s[@"level"] uppercaseString] isEqualToString:slotName(slot)])continue;if([s[@"id"] isEqualToString:selected])return s;if(!fallback)fallback=s;}return fallback;}
+NSDictionary*unlockEntities=nil,*unlockSongGroups=nil,*unlockChaptersBySong=nil;
+NSDictionary*unlockLibrary(){static NSDictionary*db=nil;static NSUInteger revision=NSUIntegerMax;NSUInteger current=PMContentStore.shared.revision;if(!db||revision!=current){
+ db=[PMContentStore.shared snapshot];revision=current;NSMutableDictionary*entities=[NSMutableDictionary new],*groups=[NSMutableDictionary new],*chapterGroups=[NSMutableDictionary new];
+ for(NSDictionary*song in db[@"songs"]){NSString*identifier=song[@"id"],*group=song[@"groupId"];if(!identifier.length)continue;if(!entities[identifier])entities[identifier]=song;
+  for(NSString*key in (group.length&&![group isEqualToString:identifier]?@[identifier,group]:@[identifier])){if(!groups[key])groups[key]=[NSMutableArray new];[groups[key]addObject:song];}
+ }
+ for(NSDictionary*chapter in db[@"chapters"]){NSString*identifier=chapter[@"id"];if(identifier.length&&!entities[identifier])entities[identifier]=chapter;
+  if([chapter[@"unlock"][@"enabled"]boolValue])for(NSString*song in chapter[@"songs"]){if(!chapterGroups[song])chapterGroups[song]=[NSMutableArray new];[chapterGroups[song]addObject:chapter];}
+ }
+ unlockEntities=entities;unlockSongGroups=groups;unlockChaptersBySong=chapterGroups;
+ }return db;}
+NSDictionary*entity(NSString*id){unlockLibrary();return id?unlockEntities[id]:nil;}
+NSDictionary*songEntity(NSString*id,int slot){NSDictionary*chosen=pmcontent::selectedDifficulty(id,slot);if(chosen)return chosen;NSDictionary*db=unlockLibrary();NSArray*members=id?unlockSongGroups[id]:nil;if(!members.count)return nil;NSString*selected=db[@"chartSelections"][[NSString stringWithFormat:@"%@@%d",id,slot]];NSDictionary*fallback=nil;for(NSDictionary*s in members){if(![[s[@"level"] uppercaseString] isEqualToString:slotName(slot)])continue;if([s[@"id"] isEqualToString:selected])return s;if(!fallback)fallback=s;}return fallback;}
 NSDictionary*ruleFor(NSString*id){return PMNormalizeUnlockRule(entity(id)[@"unlock"]);}
 P record(Runtime&r,NSString*id,int slot){try{return r.call(r.mainGame(),"GetSongRecord",{"System.String","System.String"},{r.managedString(id),r.managedString(entity(id)?PMDifficultyRecordLevel(entity(id)):slotName(slot))});}catch(...){return nullptr;}}
 double rksValue(Runtime&r){try{P gi=r.mainGame();P boxed=r.call(gi,"get_RankingScore");return r.unbox<float>(boxed);}catch(...){return -1;}}
@@ -91,10 +101,9 @@ bool opened(Runtime&r,NSString*id){
 bool chapterBlocked(Runtime&r,NSString*group,NSDictionary*subject){
  NSString*chapter=subject[@"targetChapter"];
  if(chapter.length&&entity(chapter)&&!opened(r,chapter))return true;
- for(NSDictionary*c in unlockLibrary()[@"chapters"]){
-  if(![c[@"unlock"][@"enabled"]boolValue])continue;
-  NSArray*members=c[@"songs"];if([members containsObject:group]||(subject&&[members containsObject:subject[@"id"]]))if(!opened(r,c[@"id"]))return true;
- }
+ unlockLibrary();NSString*identifier=subject[@"id"];
+ for(NSDictionary*c in (group?unlockChaptersBySong[group]:nil))if(!opened(r,c[@"id"]))return true;
+ if(identifier.length&&![identifier isEqualToString:group])for(NSDictionary*c in unlockChaptersBySong[identifier])if(!opened(r,c[@"id"]))return true;
  return false;
 }
 bool chartBlocked(Runtime&r,P item,int slot){
@@ -454,7 +463,8 @@ void songLockUI(Runtime&r,P selector,double now){
  for(const char*field:{"selectorItemUpside","selectorItemDownside"}){P row=r.get<P>(item,field);if(r.alive(row)){lockActive(r,r.get<P>(row,"locked"),blocked);lockComponent(r,r.get<P>(row,"difficulty"),!blocked);}}
 }
 }
-void difficultyChanged(Runtime&r){resetLockUI(r);}
+uint64_t listLockEpoch=0,listLockSceneEpoch=0;
+void difficultyChanged(Runtime&r){++listLockEpoch;resetLockUI(r);}
 bool selectorAccess(Runtime&r,void*raw){
  P selector=raw;if(!selector||r.get<bool>(selector,"exit"))return true;
  restoreChallengeButtons(r);
@@ -516,19 +526,31 @@ bool selectorButtonBlocked(Runtime&r,void*button){
  }
  return true;
 }
+struct ListLockState{std::string group;bool blocked=false,secret=false,ready=false;};
 void refreshListLocks(Runtime&r,P selector){
- static P last=nullptr;static int lastSlot=-1,lastCount=-1;static NSUInteger lastRev=NSUIntegerMax;static double lastTime=0;static std::map<P,std::pair<bool,bool>>cache;
+ static P last=nullptr,lastItems=nullptr;static int lastSlot=-1,lastCount=-1,lastVersion=-1;static NSUInteger lastRev=NSUIntegerMax;static uint64_t lastEpoch=0,lastSceneEpoch=0;static double lastTime=0;static std::map<P,ListLockState>cache;
  P items=r.call(selector,"get_SongItems");int slot=r.get<int>(selector,"nowLevel");if(slot<0||slot>3)return;
- int count=r.count(items);double time=NSDate.timeIntervalSinceReferenceDate;NSUInteger rev=PMContentStore.shared.revision;
- if(last!=selector||lastSlot!=slot||lastCount!=count||lastRev!=rev||time-lastTime>=1){cache.clear();last=selector;lastSlot=slot;lastCount=count;lastRev=rev;lastTime=time;
-  for(int i=0;i<count;++i){P item=r.at(items,i),song=r.get<P>(item,"songInfo");NSString*group=r.string(r.get<P>(song,"songsId"));NSDictionary*subject=songEntity(group,slot);if(subject)cache[item]={chartBlocked(r,item,slot),[subject[@"secret"]boolValue]};}
- }
- for(int i=0;i<count;++i){P item=r.at(items,i);auto entry=cache.find(item);if(entry==cache.end())continue;
-  bool blocked=entry->second.first;r.put(item,"<Unlocked>k__BackingField",true);
-  r.put(item,"unlockType",blocked?0:-1);r.put(item,"<InfoHidden>k__BackingField",blocked&&entry->second.second);
+ int count=r.count(items),version=r.get<int>(items,"_version"),selected=r.get<int>(selector,"nowSong");P selectedItem=selected>=0&&selected<count?r.at(items,selected):nullptr;
+ double time=NSDate.timeIntervalSinceReferenceDate;NSUInteger rev=PMContentStore.shared.revision;
+ bool rebuild=last!=selector||lastItems!=items||lastCount!=count||lastVersion!=version||lastRev!=rev||lastSceneEpoch!=listLockSceneEpoch;
+ bool evaluate=rebuild||lastSlot!=slot||lastEpoch!=listLockEpoch||time-lastTime>=1;
+ if(rebuild){cache.clear();unlockLibrary();for(int i=0;i<count;++i){P item=r.at(items,i),song=r.get<P>(item,"songInfo");NSString*group=r.string(r.get<P>(song,"songsId"));if(group.length&&[unlockSongGroups[group]count])cache[item].group=group.UTF8String;}}
+ auto paint=[&](P item,ListLockState&entry){
+  bool blocked=entry.blocked;r.put(item,"<Unlocked>k__BackingField",true);
+  r.put(item,"unlockType",blocked?0:-1);r.put(item,"<InfoHidden>k__BackingField",blocked&&entry.secret);
   P mask=r.get<P>(item,"lockMask");if(r.alive(mask))lockActive(r,mask,blocked);
   for(const char*field:{"selectorItemUpside","selectorItemDownside"}){P row=r.get<P>(item,field);if(r.alive(row)){lockActive(r,r.get<P>(row,"locked"),blocked);lockComponent(r,r.get<P>(row,"difficulty"),!blocked);}}
+  pmcontent::invalidateSelectorRow(item);
+ };
+ if(evaluate){for(auto&pair:cache){P item=pair.first;auto&entry=pair.second;NSDictionary*subject=songEntity([NSString stringWithUTF8String:entry.group.c_str()],slot);
+   bool blocked=subject&&chartBlocked(r,item,slot),secret=[subject[@"secret"]boolValue];
+   bool changed=!entry.ready||entry.blocked!=blocked||entry.secret!=secret||lastSlot!=slot||lastEpoch!=listLockEpoch;
+   entry.blocked=blocked;entry.secret=secret;entry.ready=true;if(changed)paint(item,entry);
+  }lastTime=time;
  }
+ // Original selection/SetText may update this row even with unchanged rules.
+ auto current=cache.find(selectedItem);if(current!=cache.end())paint(current->first,current->second);
+ last=selector;lastItems=items;lastCount=count;lastVersion=version;lastSlot=slot;lastRev=rev;lastEpoch=listLockEpoch;lastSceneEpoch=listLockSceneEpoch;
 }
 void tick(Runtime&r,void*selector){
  if(!selector||r.get<bool>((P)selector,"exit")){requirementTap.reset();requirementVisible=false;menuActive=false;return;}
@@ -541,5 +563,5 @@ void tick(Runtime&r,void*selector){
  if(now-lastScan<1)return;lastScan=now;enqueueReveals(r);
 }
 
-void clear(Runtime&r){if(resultResume){void(^done)(BOOL)=resultResume;resultResume=nil;done(NO);}if(resultOwner){r.gchandle_free(resultOwner);resultOwner=0;}clearAggregate(r);resetLockUI(r);menuActive=false;[menuTimer invalidate];menuTimer=nil;PMCancelUnlockMedia();restoreMediaAudio();menuActive=false;[pending removeAllObjects];lastScan=0;(void)r;}
+void clear(Runtime&r){++listLockEpoch;++listLockSceneEpoch;if(resultResume){void(^done)(BOOL)=resultResume;resultResume=nil;done(NO);}if(resultOwner){r.gchandle_free(resultOwner);resultOwner=0;}clearAggregate(r);resetLockUI(r);menuActive=false;[menuTimer invalidate];menuTimer=nil;PMCancelUnlockMedia();restoreMediaAudio();menuActive=false;[pending removeAllObjects];lastScan=0;(void)r;}
 }
