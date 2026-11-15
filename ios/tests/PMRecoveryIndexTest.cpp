@@ -24,7 +24,20 @@ void check(const std::vector<Note>&notes,const std::vector<double>&times,double 
   retrieved+=found.size();
  }
 }
-int main(int argc,char**argv){size_t scanned=0,retrieved=0;
+void transformedIndexTest(){
+ using namespace phimod;std::mt19937 rng(71);size_t reference=0,retrieved=0;
+ for(double angle:{0.,.3,1.5707963267948966,2.5,3.141592653589793})for(double speed:{-999.,-1.,1.,1.2,999.})for(double world:{-10.,.1,10.}){
+  RpePlanePose pose{30,-60,std::cos(angle),std::sin(angle),-std::sin(angle),std::cos(angle)};double current=1300,lo,hi;
+  assert(recoveryTransformedFloorWindow(current,pose.x,pose.y,pose.xx,pose.xy,pose.yx,pose.yy,10,std::abs(speed),world,lo,hi));
+  std::vector<IntervalIndex::Entry>intervals;std::vector<Note>notes;std::vector<float>xs;
+  for(int i=0;i<2000;++i){double f=current+(int(rng()%200000)-100000)/100.,tail=f+(i%4==0?(int(rng()%100000)-50000)/100.:0);notes.push_back({100,120,f,tail,i%4==0});xs.push_back(float(int(rng()%2001)-1000)/100);intervals.push_back({std::min(f,tail),std::max(f,tail),size_t(i)});}
+  IntervalIndex index;index.reset(intervals);std::set<size_t>hits;index.query(lo,hi,[&](size_t i){hits.insert(i);});reference+=notes.size();retrieved+=hits.size();
+  for(size_t i=0;i<notes.size();++i){auto&n=notes[i];auto g=rpeGeometry(float(n.floor-current),float(n.tail-current),0,float(speed),0,1,float(world),false);for(float sign:{-1.f,1.f})if(rpeVisualNear(pose,xs[i],sign*g.head,sign*(n.hold?g.tail:g.head),1))assert(hits.count(i));}
+ }
+ double low,high;assert(!recoveryTransformedFloorWindow(0,0,0,1,0,0,0,10,1,10,low,high));assert(!recoveryTransformedFloorWindow(0,0,0,1,0,0,1,10,0,10,low,high));
+ printf("ROTATED/REVERSE reference=%zu retrieved=%zu; no visible cap/hold interval omitted\n",reference,retrieved);
+}
+int main(int argc,char**argv){transformedIndexTest();size_t scanned=0,retrieved=0;
  std::vector<Note>synthetic;std::mt19937 rng(42);for(int i=0;i<12000;++i){double start=i*.07,end=start+(i%4==0?30:0),floor=double(int(rng()%20000)-10000)/10,tail=floor+(i%4==0?40:0);synthetic.push_back({start,end,floor,tail,i%4==0});}
  std::vector<double>times{-3,0,1,20,100,500,800,400,20,0};for(double origin:{0.,-60.,60.})for(double axis:{1.,-1.,.001})for(double speed:{1.,10.,-10.})check(synthetic,times,origin,axis,speed,scanned,retrieved);
  double lo,hi;assert(!phimod::recoveryFloorWindow(0,0,.01,1,10,lo,hi));assert(!phimod::recoveryFloorWindow(0,0,0,1,0,lo,hi));

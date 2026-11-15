@@ -58,7 +58,7 @@ std::set<P>recoveredSourceNotes;
 using SourceVisual=phimod::RpeVisualValues;
 struct SourceCandidate{P note;NSDictionary*source;SourceVisual visual;int line,index,type;bool above;double start,end;float x;};
 std::vector<SourceCandidate>sourceCandidates;bool sourceCandidatesReady=false;
-struct SourceRecoveryIndex{std::vector<size_t>all;phimod::IntervalIndex floors,due;bool simple=true;};
+struct SourceRecoveryIndex{std::vector<size_t>all;phimod::IntervalIndex floors,due;bool simple=true;double maxAbsX=0,minAbsRaw=std::numeric_limits<double>::infinity();};
 std::map<int,SourceRecoveryIndex>sourceRecoveryIndexes;std::vector<size_t>sourceRecoveryWork;
 
 
@@ -1013,7 +1013,7 @@ void recoverSourceNotes(Runtime&r,P manager){
    sourceCandidates.push_back({note,n,sourceVisual(n),line/2,r.get<int>(note,"noteIndex"),type,line%2==0,start,start+(type==3?r.get<float>(note,"holdTime"):0),r.get<float>(note,"positionX")});
   }
   std::stable_sort(sourceCandidates.begin(),sourceCandidates.end(),[](const auto&a,const auto&b){return a.end<b.end;});
-  for(size_t i=0;i<sourceCandidates.size();++i){const auto&c=sourceCandidates[i];auto&index=sourceRecoveryIndexes[c.line];index.all.push_back(i);const auto&v=c.visual;index.simple=index.simple&&v.raw==1&&v.yOffset==0&&v.size==1&&std::isfinite(v.floor)&&std::isfinite(v.endFloor)&&std::isfinite(c.start)&&std::isfinite(c.end);}
+  for(size_t i=0;i<sourceCandidates.size();++i){const auto&c=sourceCandidates[i];auto&index=sourceRecoveryIndexes[c.line];index.all.push_back(i);const auto&v=c.visual;index.maxAbsX=std::max(index.maxAbsX,std::fabs(double(c.x)));index.minAbsRaw=std::min(index.minAbsRaw,std::fabs(v.raw));index.simple=index.simple&&std::isfinite(c.x)&&std::isfinite(v.raw)&&std::fabs(v.raw)>=1&&v.yOffset==0&&v.size==1&&std::isfinite(v.floor)&&std::isfinite(v.endFloor)&&std::isfinite(c.start)&&std::isfinite(c.end);}
   for(auto&entry:sourceRecoveryIndexes){auto&index=entry.second;if(!index.simple)continue;std::vector<phimod::IntervalIndex::Entry>floors,due;floors.reserve(index.all.size());due.reserve(index.all.size());for(size_t i:index.all){const auto&c=sourceCandidates[i];double tail=c.type==3?c.visual.endFloor:c.visual.floor;floors.push_back({std::min(c.visual.floor,tail),std::max(c.visual.floor,tail),i});due.push_back({c.start-2,c.end+.25,i});}index.floors.reset(std::move(floors));index.due.reset(std::move(due));}
   sourceRecoveryWork.reserve(sourceCandidates.size());
   size_t eligible=0;for(const auto&entry:sourceRecoveryIndexes)if(entry.second.simple)eligible+=entry.second.all.size();log([NSString stringWithFormat:@"Recovery spatial index: %lu notes, %lu simple candidates; precise visibility retained",(unsigned long)sourceCandidates.size(),(unsigned long)eligible]);
@@ -1026,7 +1026,7 @@ void recoverSourceNotes(Runtime&r,P manager){
  auto emit=[&](size_t i){if(i>=firstIndex)sourceRecoveryWork.push_back(i);};
  for(auto&entry:sourceRecoveryIndexes){int lineIndex=entry.first;auto&index=entry.second;if(index.all.empty()||index.all.back()<firstIndex)continue;if(lineIndex<0||lineIndex>=count||lineIndex>=(int)sourceLines.count)continue;
   auto pose=poses.emplace(lineIndex,sourceFrameLine(r,r.at(lines,lineIndex),sourceLines[lineIndex],lineIndex,info,now)).first;const auto&line=pose->second;double low=0,high=0;
-  bool indexed=index.simple&&line.incline==0&&recoveryUnitControl(line.yControl)&&recoveryUnitControl(line.posControl)&&recoveryUnitControl(line.sizeControl)&&phimod::recoveryFloorWindow(line.floor,line.pose.y,line.pose.xy,line.pose.yy,world,low,high);
+  bool indexed=index.simple&&line.incline==0&&recoveryUnitControl(line.yControl)&&recoveryUnitControl(line.posControl)&&recoveryUnitControl(line.sizeControl)&&phimod::recoveryTransformedFloorWindow(line.floor,line.pose.x,line.pose.y,line.pose.xx,line.pose.xy,line.pose.yx,line.pose.yy,index.maxAbsX,index.minAbsRaw,world,low,high);
   if(indexed){index.floors.query(low,high,emit);index.due.query(now,now,emit);}else for(size_t i:index.all)emit(i);
  }
  std::sort(sourceRecoveryWork.begin(),sourceRecoveryWork.end());sourceRecoveryWork.erase(std::unique(sourceRecoveryWork.begin(),sourceRecoveryWork.end()),sourceRecoveryWork.end());

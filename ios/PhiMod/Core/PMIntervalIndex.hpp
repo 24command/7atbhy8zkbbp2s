@@ -27,4 +27,18 @@ inline bool recoveryFloorWindow(double floor,double originY,double axisXY,double
  radius+=std::max(.001,std::abs(floor)*.00001);
  low=floor-radius;high=floor+radius;return std::isfinite(low)&&std::isfinite(high);
 }
+// Broad phase for a rotated line: project onto the stronger world axis.
+// Include the entire authored horizontal range and viewport margin. Either
+// projection alone is a superset; exact sourceVisualNear still decides visibility.
+inline bool recoveryTransformedFloorWindow(double floor,double x,double y,double xx,double xy,double yx,double yy,double maxAbsX,double minAbsRaw,double world,double&low,double&high){
+ for(double v:{floor,x,y,xx,xy,yx,yy,maxAbsX,minAbsRaw,world})if(!std::isfinite(v))return false;
+ if(minAbsRaw<1||maxAbsX<0)return false;
+ bool horizontal=std::abs(yx)>std::abs(yy);
+ double vertical=horizontal?yx:yy,along=horizontal?xx:xy,origin=horizontal?x:y;
+ double divisor=std::abs(vertical*world)*minAbsRaw;if(divisor<1e-9)return false;
+ double radius=((horizontal?15.:11.)+std::abs(origin)+maxAbsX*std::abs(along))/divisor;
+ radius+=std::max(.001,std::abs(floor)*.00001);
+ low=floor-radius;high=floor+radius;return std::isfinite(low)&&std::isfinite(high);
+}
+
 }
