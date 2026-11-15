@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/phimod-content.XXXXXX")"
-trap 'rm -f "$OUT/core" "$OUT/host" "$OUT/unlock" "$OUT/text" "$OUT/cover" "$OUT/pcm" "$OUT/compact" "$OUT/trash" "$OUT/opacity" "$OUT/framecache" "$OUT/visibility" "$OUT/export" "$OUT/cachedtrack" "$OUT/difficulties" "$OUT/selection" "$OUT/arrows" "$OUT/modlayout" "$OUT/recoveryindex"; rmdir "$OUT"' EXIT
+trap 'rm -f "$OUT/core" "$OUT/host" "$OUT/unlock" "$OUT/text" "$OUT/cover" "$OUT/pcm" "$OUT/compact" "$OUT/trash" "$OUT/opacity" "$OUT/framecache" "$OUT/visibility" "$OUT/export" "$OUT/cachedtrack" "$OUT/difficulties" "$OUT/selection" "$OUT/arrows" "$OUT/modlayout" "$OUT/recoveryindex" "$OUT/contentio"; rmdir "$OUT"' EXIT
 clang++ -std=c++17 -Wall -Wextra -Werror "$ROOT/tests/PMRPECoreTest.cpp" -o "$OUT/core"
 clang++ -std=c++17 -Wall -Wextra -Werror "$ROOT/tests/PMCoverGeometryTest.cpp" -o "$OUT/cover"
 "$OUT/cover"
@@ -52,3 +52,7 @@ clang++ -std=c++17 -Wall -Wextra -Werror "$ROOT/tests/PMModSettingsLayoutTest.cp
 
 clang++ -std=c++17 -O2 -Wall -Wextra -Werror "$ROOT/tests/PMRecoveryIndexTest.cpp" -o "$OUT/recoveryindex"
 "$OUT/recoveryindex"
+
+clang++ -std=c++17 -fobjc-arc -framework Foundation "$ROOT/tests/PMContentIOTest.mm" -o "$OUT/contentio"
+"$OUT/contentio"
+python3 "$ROOT/tests/test_content_memory_contracts.py"

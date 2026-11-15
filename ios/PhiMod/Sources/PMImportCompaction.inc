@@ -1,3 +1,4 @@
+#import "PMContentIO.h"
 // Compact only the new import's owned folder. Keep one source chart for future
 // conversion, plus runtime charts. Never sweep arbitrary JSON/media resources.
 NSDictionary*compactImportedSong(NSString*folder,NSString*chartSource,NSString*musicSource,NSDictionary*chart,NSDictionary*entityInfo,NSError**error){
@@ -13,8 +14,7 @@ NSDictionary*compactImportedSong(NSString*folder,NSString*chartSource,NSString*m
  }
  NSString*sourceCandidate=contained(chartSource)?chartSource:[base stringByAppendingPathComponent:chartSource.lastPathComponent];
  if(contained(sourceCandidate)&&![sourceCandidate.lastPathComponent isEqualToString:canonicalChart]&&![sourceCandidate.lastPathComponent isEqualToString:@"chart.json"]&&![sourceCandidate.lastPathComponent isEqualToString:@"chart-native.json"]&&[f fileExistsAtPath:sourceCandidate]){
-  NSData*a=[NSData dataWithContentsOfFile:sourceCandidate options:NSDataReadingMappedIfSafe error:nil],*b=[NSData dataWithContentsOfFile:keptChart options:NSDataReadingMappedIfSafe error:nil];
-  BOOL same=[a isEqualToData:b];if(!same&&[sourceCandidate.pathExtension.lowercaseString isEqualToString:@"json"]){id x=a?[NSJSONSerialization JSONObjectWithData:a options:0 error:nil]:nil,y=b?[NSJSONSerialization JSONObjectWithData:b options:0 error:nil]:nil;same=x&&y&&[x isEqual:y];}
+  BOOL same=PMFilesEqual(sourceCandidate,keptChart);if(!same&&[sourceCandidate.pathExtension.lowercaseString isEqualToString:@"json"]){@autoreleasepool{id x=PMReadJSONFile(sourceCandidate,0,nil),y=PMReadJSONFile(keptChart,0,nil);same=x&&y&&[x isEqual:y];}}
   if(same)[candidates addObject:sourceCandidate];
  }
  NSString*audioMetaPath=[base stringByAppendingPathComponent:@"source-audio.json"];NSData*audioData=[NSData dataWithContentsOfFile:audioMetaPath];id meta=audioData?[NSJSONSerialization JSONObjectWithData:audioData options:0 error:nil]:nil;
@@ -30,7 +30,7 @@ NSDictionary*compactImportedSong(NSString*folder,NSString*chartSource,NSString*m
  }
  if(!canonicalMusic)canonicalMusic=@"music.m4a";
  if(!pcm&&![musicCandidate.lastPathComponent isEqualToString:canonicalMusic]&&![musicCandidate.lastPathComponent isEqualToString:@"music.m4a"]&&contained(musicCandidate)&&[f fileExistsAtPath:musicCandidate]){
-  NSData*a=[NSData dataWithContentsOfFile:musicCandidate options:NSDataReadingMappedIfSafe error:nil],*b=[NSData dataWithContentsOfFile:[base stringByAppendingPathComponent:canonicalMusic] options:NSDataReadingMappedIfSafe error:nil];if(a&&[a isEqualToData:b])[candidates addObject:musicCandidate];
+  if(PMFilesEqual(musicCandidate,[base stringByAppendingPathComponent:canonicalMusic]))[candidates addObject:musicCandidate];
  }
  // References from chart data, unlock metadata or extension text make a file
  // ineligible for deletion even when it is also a redundant import source.
