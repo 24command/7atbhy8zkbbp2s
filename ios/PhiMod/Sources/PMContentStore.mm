@@ -212,8 +212,8 @@ BOOL copyExtensionResource(NSString *sourceRoot,NSString *extensions,NSString *r
   if([digest(source) isEqualToString:digest(destination)])return YES;
   if(error)*error=err([NSString stringWithFormat:@"Conflicting RPE extension resource: %@",relative]);return NO;
  }
- NSData *data=[NSData dataWithContentsOfURL:sourceURL options:NSDataReadingMappedIfSafe error:error];
- return data&&[data writeToFile:destination options:NSDataWritingAtomic error:error];
+ // Copy large videos/shaders without materializing the whole resource in NSData.
+ return PMCopySourceFile(sourceURL.path,destination,error);
 }
 BOOL preserveExtraResources(NSString *folder,NSError **error){
  NSFileManager *manager=NSFileManager.defaultManager;
@@ -274,7 +274,9 @@ BOOL preserveExtraResources(NSString *folder,NSError **error){
 }
 
 BOOL prepareAndroidSongFolder(NSString*folder,NSDictionary*chart,NSString*source,NSError**e,bool exporting=false){
- if(!writeJSONCompact(chart,[folder stringByAppendingPathComponent:@"chart.json"],e))return NO;
+ // Export callers just loaded this exact chart from their staging copy.
+ // Rewriting it cannot change the data and is costly for long, dense charts.
+ if(!exporting&&!writeJSONCompact(chart,[folder stringByAppendingPathComponent:@"chart.json"],e))return NO;
  if(!exporting){NSError*failure=nil;BOOL written=NO;@autoreleasepool{written=writeJSONCompact(PMNativeChart(chart),[folder stringByAppendingPathComponent:@"chart-native.json"],&failure);}if(!written){if(e)*e=failure;return NO;}}
  if(!writeConversionMetadata(chart,folder,e)||!writeExtras(chart,folder,e)||!writeText(androidFormat(chart),[folder stringByAppendingPathComponent:@"format.txt"],e)||!writeSourceAudio(source,folder,e))return NO;
  if(!preserveExtraResources(folder,e))return NO;
@@ -413,7 +415,7 @@ NSArray*remapSongOrder(NSArray*source,NSDictionary*songMap,NSSet*official,NSErro
 - (BOOL)replaceImageData:(NSData*)data identifier:(NSString*)identifier error:(NSError**)error{NSString*folder=[self coverFolder:identifier];if(!folder){if(error)*error=err(@"Invalid asset ID");return NO;}UIImage*image=[UIImage imageWithData:data];if(!image||!image.CGImage){if(error)*error=err(@"Unable to read image");return NO;}CGFloat sourceW=image.size.width*image.scale,sourceH=image.size.height*image.scale;if(sourceW<=0||sourceH<=0){if(error)*error=err(@"Unable to read image");return NO;}CGFloat factor=MIN(1.0,2048.0/MAX(sourceW,sourceH));CGSize size=CGSizeMake(MAX(1,round(sourceW*factor)),MAX(1,round(sourceH*factor)));UIGraphicsImageRendererFormat*format=[UIGraphicsImageRendererFormat defaultFormat];format.scale=1;UIGraphicsImageRenderer*r=[[UIGraphicsImageRenderer alloc]initWithSize:size format:format];NSData*png=UIImagePNGRepresentation([r imageWithActions:^(UIGraphicsImageRendererContext*c){[image drawInRect:CGRectMake(0,0,size.width,size.height)];}]);if(!png){if(error)*error=err(@"Unable to read image");return NO;}[NSFileManager.defaultManager createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:error];BOOL ok=[png writeToFile:[folder stringByAppendingPathComponent:@"image.png"] options:NSDataWritingAtomic error:error];if(ok)@synchronized(self){self.revision++;}return ok;}
 - (BOOL)importURL:(NSURL*)url chapter:(NSString*)chapter error:(NSError**)error{
  NSFileManager*f=NSFileManager.defaultManager;NSString*stage=[[self.root stringByAppendingPathComponent:@"imports"]stringByAppendingPathComponent:NSUUID.UUID.UUIDString];if(![f createDirectoryAtPath:stage withIntermediateDirectories:YES attributes:nil error:error])return NO;BOOL access=[url startAccessingSecurityScopedResource];BOOL ok=NO;NSString*journalPath=nil;NSMutableArray*moved=[NSMutableArray new];
- @try{NSFileCoordinator*coordinator=[[NSFileCoordinator alloc]initWithFilePresenter:nil];__block NSArray*files=nil;__block NSError*readError=nil;[coordinator coordinateReadingItemAtURL:url options:0 error:&readError byAccessor:^(NSURL*readURL){files=PMExtractArchive(readURL.path,stage,&readError);}];if(!files){if(error)*error=readError;return NO;}
+ @try{NSArray*files=PMExtractArchiveURL(url,stage,error);if(!files)return NO;
  NSString*manifestPath=nil;for(NSString*p in files)if([p.lastPathComponent.lowercaseString isEqualToString:@"chapter.json"]){manifestPath=p;break;}
  if(manifestPath){
   NSDictionary*manifest=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:manifestPath] options:NSJSONReadingMutableContainers error:error];

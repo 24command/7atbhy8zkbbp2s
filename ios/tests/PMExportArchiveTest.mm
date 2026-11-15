@@ -22,6 +22,11 @@ int main(){@autoreleasepool{
  assert(mz_zip_reader_file_stat(&z,0,&st));assert(strcmp(st.m_filename,"chapter.json")==0);
  int n=mz_zip_reader_locate_file(&z,"music.ogg",nullptr,0);assert(n>=0);assert(mz_zip_reader_file_stat(&z,n,&st));assert(st.m_method==0);assert(st.m_uncomp_size==32ull*1024*1024);mz_zip_reader_end(&z);
  NSString*target=[root stringByAppendingPathComponent:@"roundtrip"];assert(PMExtractArchive(out,target,&error).count==2);assert([PMFileSHA256([target stringByAppendingPathComponent:@"music.ogg"])isEqualToString:hash]);
+ // A bad member must not hide its error or poison the next member of a batch.
+ NSString*bad=[root stringByAppendingPathComponent:@"broken.zip"];assert([@"not a zip" writeToFile:bad atomically:YES encoding:NSUTF8StringEncoding error:&error]);
+ NSUInteger success=0,failure=0;NSArray*batch=@[out,bad,out];
+ for(NSUInteger i=0;i<batch.count;++i){@autoreleasepool{NSError*itemError=nil;NSString*dest=[root stringByAppendingPathComponent:[NSString stringWithFormat:@"batch-%lu",(unsigned long)i]];NSArray*files=PMExtractArchiveURL([NSURL fileURLWithPath:batch[i]],dest,&itemError);if(files){++success;assert(files.count==2&&itemError==nil);assert([PMFileSHA256([dest stringByAppendingPathComponent:@"music.ogg"])isEqualToString:hash]);}else{++failure;assert(itemError&&[itemError.domain isEqualToString:@"PhiMod.Archive"]);assert(![f fileExistsAtPath:dest]);}}}
+ assert(success==2&&failure==1);
  // Re-export replaces the finalized output, but a failure preserves that last good file.
  assert(PMCreateArchive(source,out,&error));NSString*before=PMFileSHA256(out);
  assert([f createSymbolicLinkAtPath:[source stringByAppendingPathComponent:@"bad-link"] withDestinationPath:media error:&error]);error=nil;

@@ -10,7 +10,7 @@ clang++ -std=c++17 -Wall -Wextra -Werror "$ROOT/tests/PMRPETextTest.cpp" -o "$OU
 "$OUT/text"
 clang++ -std=c++17 "$ROOT/tests/PMPCMImportTest.cpp" "$ROOT/PhiMod/Vendor/PMZipVendor.cpp" -o "$OUT/pcm"
 "$OUT/pcm" "$OUT"
-clang++ -std=c++17 -fobjc-arc -framework Foundation -framework AVFoundation "$ROOT/tests/PMImportCompactionTest.mm" -o "$OUT/compact"
+clang++ -std=c++17 -fobjc-arc -framework Foundation -framework AVFoundation "$ROOT/tests/PMImportCompactionTest.mm" "$ROOT/PhiMod/Sources/PMContentIO.mm" -o "$OUT/compact"
 "$OUT/compact"
 "$OUT/core"
 clang++ -std=c++17 -fobjc-arc -framework Foundation "$ROOT/tests/PMContentHostTest.mm" "$ROOT/PhiMod/Sources/PMChartConvert.mm" "$ROOT/PhiMod/Sources/PMArchive.mm" "$ROOT/PhiMod/Vendor/PMZipVendor.cpp" -o "$OUT/host"
@@ -53,7 +53,7 @@ clang++ -std=c++17 -Wall -Wextra -Werror "$ROOT/tests/PMModSettingsLayoutTest.cp
 clang++ -std=c++17 -O2 -Wall -Wextra -Werror "$ROOT/tests/PMRecoveryIndexTest.cpp" -o "$OUT/recoveryindex"
 "$OUT/recoveryindex"
 
-clang++ -std=c++17 -fobjc-arc -framework Foundation "$ROOT/tests/PMContentIOTest.mm" -o "$OUT/contentio"
+clang++ -std=c++17 -fobjc-arc -framework Foundation "$ROOT/tests/PMContentIOTest.mm" "$ROOT/PhiMod/Sources/PMContentIO.mm" -o "$OUT/contentio"
 "$OUT/contentio"
 python3 "$ROOT/tests/test_content_memory_contracts.py"
 

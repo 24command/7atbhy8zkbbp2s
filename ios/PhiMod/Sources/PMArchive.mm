@@ -7,7 +7,7 @@ static NSError*PMArchiveError(NSString*text){return [NSError errorWithDomain:@"P
 static NSArray<NSString*>*PMExtractArchiveImpl(NSString*archive,NSString*destination,NSUInteger maxEntries,unsigned long long maxUncompressed,unsigned long long maxFile,NSError**error){
  mz_zip_archive zip{};if(!mz_zip_reader_init_file(&zip,archive.fileSystemRepresentation,0)){if(error)*error=PMArchiveError(@"Unable to open ZIP / PEZ archive.");return nil;}
  NSError*failure=nil;
- NSMutableArray*files=[NSMutableArray new];NSFileManager*fm=NSFileManager.defaultManager;NSString*base=destination.stringByStandardizingPath;if(![fm createDirectoryAtPath:base withIntermediateDirectories:YES attributes:nil error:error]){mz_zip_reader_end(&zip);return nil;}std::set<std::string>seen;BOOL ok=YES;unsigned long long total=0;NSUInteger count=mz_zip_reader_get_num_files(&zip);if(count>maxEntries){if(error)*error=PMArchiveError(@"Archive entry count or expanded size exceeds safety limits.");ok=NO;}
+ NSMutableArray*files=[NSMutableArray new];NSFileManager*fm=NSFileManager.defaultManager;NSString*base=destination.stringByStandardizingPath;if(![fm createDirectoryAtPath:base withIntermediateDirectories:YES attributes:nil error:error]){mz_zip_reader_end(&zip);return nil;}std::set<std::string>seen;BOOL ok=YES;unsigned long long total=0,spaceBudget=0,bytesSinceSpaceCheck=0;NSUInteger filesSinceSpaceCheck=256;NSUInteger count=mz_zip_reader_get_num_files(&zip);if(count>maxEntries){if(error)*error=PMArchiveError(@"Archive entry count or expanded size exceeds safety limits.");ok=NO;}
  for(mz_uint i=0,n=(mz_uint)std::min<NSUInteger>(count,maxEntries);i<n&&ok;++i){@autoreleasepool{mz_zip_archive_file_stat st{};if(!mz_zip_reader_file_stat(&zip,i,&st)){ok=NO;break;}
   NSString*name=[[NSString alloc]initWithUTF8String:st.m_filename];name=[name stringByReplacingOccurrencesOfString:@"\\" withString:@"/"];
   if(!name.length||[name hasPrefix:@"/"]||[name containsString:@":"]){ok=NO;break;}
@@ -17,11 +17,23 @@ static NSArray<NSString*>*PMExtractArchiveImpl(NSString*archive,NSString*destina
   if(mz_zip_reader_is_file_a_directory(&zip,i)){ok=[fm createDirectoryAtPath:path withIntermediateDirectories:YES attributes:nil error:&failure];continue;}
   if(mz_zip_reader_is_file_encrypted(&zip,i)||!mz_zip_reader_is_file_supported(&zip,i)){ok=NO;break;}
   if(st.m_uncomp_size>maxFile||st.m_uncomp_size>maxUncompressed-total){failure=PMArchiveError(@"Archive entry exceeds the configured extraction limit.");ok=NO;break;}total+=st.m_uncomp_size;
-  NSDictionary*space=[fm attributesOfFileSystemForPath:base error:nil];unsigned long long free=[space[NSFileSystemFreeSize] unsignedLongLongValue];if(st.m_uncomp_size>free-MIN(64ull*1024*1024,free)){failure=PMArchiveError(@"Insufficient free storage to extract archive.");ok=NO;break;}
+  if(filesSinceSpaceCheck>=256||bytesSinceSpaceCheck>=64ull*1024*1024||st.m_uncomp_size>spaceBudget){
+   NSDictionary*space=[fm attributesOfFileSystemForPath:base error:&failure];if(!space){ok=NO;break;}
+   unsigned long long free=[space[NSFileSystemFreeSize] unsignedLongLongValue];spaceBudget=free-MIN(64ull*1024*1024,free);filesSinceSpaceCheck=0;bytesSinceSpaceCheck=0;
+  }
+  if(st.m_uncomp_size>spaceBudget){failure=PMArchiveError(@"Insufficient free storage to extract archive.");ok=NO;break;}
+  spaceBudget-=st.m_uncomp_size;bytesSinceSpaceCheck+=st.m_uncomp_size;++filesSinceSpaceCheck;
   ok=[fm createDirectoryAtPath:path.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:&failure]&&mz_zip_reader_extract_to_file(&zip,i,path.fileSystemRepresentation,0);if(ok)[files addObject:path];
  }}
  if(!ok&&error&&failure)*error=failure;
  if(!ok&&error&&!*error)*error=PMArchiveError(@"Archive extraction failed: corrupt file, invalid path, or unsupported format.");mz_zip_reader_end(&zip);if(!ok)[fm removeItemAtPath:base error:nil];return ok?files:nil;
+}
+NSArray<NSString*>*PMExtractArchiveURL(NSURL*url,NSString*destination,NSError**error){
+ NSFileCoordinator*coordinator=[[NSFileCoordinator alloc]initWithFilePresenter:nil];
+ __block NSArray<NSString*>*files=nil;__block NSError*readError=nil;NSError*coordinationError=nil;
+ [coordinator coordinateReadingItemAtURL:url options:0 error:&coordinationError byAccessor:^(NSURL*readURL){files=PMExtractArchive(readURL.path,destination,&readError);}];
+ if(!files||coordinationError){if(error)*error=readError?:coordinationError?:PMArchiveError(@"Unable to read selected archive");return nil;}
+ return files;
 }
 NSArray<NSString*>*PMExtractArchive(NSString*archive,NSString*destination,NSError**error){return PMExtractArchiveImpl(archive,destination,100000,1024ull*1024*1024,512ull*1024*1024,error);}
 NSArray<NSString*>*PMExtractArchiveLimited(NSString*archive,NSString*destination,NSUInteger maxEntries,unsigned long long maxUncompressed,unsigned long long maxFile,NSError**error){return PMExtractArchiveImpl(archive,destination,maxEntries,maxUncompressed,maxFile,error);}
