@@ -25,4 +25,11 @@ class LogicalRowsAndZeroSkew(unittest.TestCase):
   self.assertLess(geom.index('if(isZeroSkewTrack(d))'),geom.index('"nowTime"'))
   self.assertIn('if(skewMeshes.count(renderer))applySkew(r,renderer,0)',geom)
   self.assertIn('applySkew(r,renderer,rpeSkew',geom)
+ def test_renderer_iteration_does_not_allocate_per_note(self):
+  source=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text('utf8')
+  moved=source.split('void noteMoved(',1)[1].split('bool isZeroSkewTrack(',1)[0]
+  self.assertNotIn('std::vector<const char*>',moved)
+  self.assertIn('fields=hold?holdFields:tapFields',moved)
+  self.assertIn('fieldCount=hold?3:1',moved)
+  self.assertEqual(moved.count('fieldIndex<fieldCount'),2)
 if __name__=='__main__':unittest.main()

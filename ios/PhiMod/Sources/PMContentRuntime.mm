@@ -1372,8 +1372,12 @@ void noteMoved(Runtime&r,P controlObject,bool hold){
  // It is not a renderer lifetime flag. Let native missed Holds fade, and keep
  // successful bodies/skin geometry through the authored end time.
  bool ended=phimod::noteRenderFinished(r.get<int>(note,"type"),controlJudged,now,start,hold?r.get<float>(note,"holdTime"):0);
+ // Rendering visits this path for every live note every frame. Keep the
+ // same renderer order without constructing temporary heap vectors.
+ static constexpr const char*holdFields[]={"_holdHeadSpriteRenderer","_holdSpriteRenderer","_holdEndSpriteRenderer1"};
+ static constexpr const char*tapFields[]={"_spriteRenderer"};const char*const*fields=hold?holdFields:tapFields;int fieldCount=hold?3:1;
  if(ended){
-  for(const char*field:hold?std::vector<const char*>{"_holdHeadSpriteRenderer","_holdSpriteRenderer","_holdEndSpriteRenderer1"}:std::vector<const char*>{"_spriteRenderer"}){P renderer=r.get<P>(controlObject,field);if(r.alive(renderer)){bool no=false;r.call(renderer,"set_enabled",{"System.Boolean"},{&no});}}
+  for(int fieldIndex=0;fieldIndex<fieldCount;++fieldIndex){const char*field=fields[fieldIndex];P renderer=r.get<P>(controlObject,field);if(r.alive(renderer)){bool no=false;r.call(renderer,"set_enabled",{"System.Boolean"},{&no});}}
   return;
  }
 
@@ -1431,7 +1435,7 @@ void noteMoved(Runtime&r,P controlObject,bool hold){
  bool cover=d[@"isCover"]?[d[@"isCover"]boolValue]:true;
  if(n[@"pmRawSpeed"]&&rpeCovered(cover,now,start,scalar(n[@"floorPosition"]),currentFloor,scalar(n[@"pmRawSpeed"],1)))alpha=0;
  if(hold&&now>=start+r.get<float>(note,"holdTime"))alpha=0;
- for(const char*field:hold?std::vector<const char*>{"_holdHeadSpriteRenderer","_holdSpriteRenderer","_holdEndSpriteRenderer1"}:std::vector<const char*>{"_spriteRenderer"}){
+ for(int fieldIndex=0;fieldIndex<fieldCount;++fieldIndex){const char*field=fields[fieldIndex];
   P renderer=r.get<P>(controlObject,field);if(!r.alive(renderer))continue;
   Color color=r.unbox<Color>(r.call(renderer,"get_color"));
   bool sourceGeometry=n[@"pmRawSpeed"]!=nil;
