@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/phimod-content.XXXXXX")"
-trap 'rm -f "$OUT/core" "$OUT/host" "$OUT/unlock" "$OUT/text" "$OUT/cover" "$OUT/pcm" "$OUT/compact" "$OUT/trash" "$OUT/opacity" "$OUT/framecache" "$OUT/visibility" "$OUT/export" "$OUT/cachedtrack" "$OUT/difficulties" "$OUT/selection" "$OUT/arrows" "$OUT/modlayout" "$OUT/recoveryindex" "$OUT/contentio" "$OUT/selectorrows"; rmdir "$OUT"' EXIT
+trap 'rm -f "$OUT/core" "$OUT/host" "$OUT/unlock" "$OUT/text" "$OUT/cover" "$OUT/pcm" "$OUT/compact" "$OUT/trash" "$OUT/opacity" "$OUT/framecache" "$OUT/visibility" "$OUT/export" "$OUT/cachedtrack" "$OUT/difficulties" "$OUT/selection" "$OUT/arrows" "$OUT/modlayout" "$OUT/recoveryindex" "$OUT/contentio" "$OUT/selectorrows" "$OUT/selectorsort"; rmdir "$OUT"' EXIT
 clang++ -std=c++17 -Wall -Wextra -Werror "$ROOT/tests/PMRPECoreTest.cpp" -o "$OUT/core"
 clang++ -std=c++17 -Wall -Wextra -Werror "$ROOT/tests/PMCoverGeometryTest.cpp" -o "$OUT/cover"
 "$OUT/cover"
@@ -65,3 +65,8 @@ python3 "$ROOT/tests/test_logical_rows_and_zero_skew.py"
 clang++ -std=c++17 -O2 -Wall -Wextra -Werror "$ROOT/tests/PMSelectorRowRefreshTest.cpp" -o "$OUT/selectorrows"
 "$OUT/selectorrows"
 python3 "$ROOT/tests/test_selector_refresh_cost.py"
+
+clang++ -std=c++17 -O2 -Wall -Wextra -Werror "$ROOT/tests/PMSelectorSortTest.cpp" -o "$OUT/selectorsort"
+"$OUT/selectorsort"
+python3 "$ROOT/tests/test_shared_at_sort.py"
+python3 "$ROOT/tests/test_import_picker_lifecycle.py"

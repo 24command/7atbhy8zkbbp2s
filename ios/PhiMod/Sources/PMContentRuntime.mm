@@ -4,6 +4,7 @@
 #include "../Core/PMUIInteraction.hpp"
 #include "../Core/PMSelectorDifficulty.hpp"
 #include "../Core/PMSelectorRowRefresh.hpp"
+#include "../Core/PMSelectorSort.hpp"
 #include "../Core/PMRPEVisibility.hpp"
 #include "../Core/PMIntervalIndex.hpp"
 #include "../Core/PMFrameCache.hpp"
@@ -39,8 +40,10 @@ void prepareDifficultyGroup(Runtime&r,P selector);
 void selectExistingDifficulty(Runtime&r,P selector,P item,int requested,bool userInitiated=false);
 void reconcileDifficultyButtons(Runtime&r,P selector);
 bool hasDifficultyPager(P selector);
+void finishDifficultySort(Runtime&r,P selector);
 
 namespace {
+phimod::DeferredSelectorSort deferredDifficultySort;
 struct V2{float x,y;};struct V3{float x,y,z;};struct Rect{float x,y,w,h;};struct Color{float r,g,b,a;};struct Bounds{V3 center,extents;};
 Runtime*runtime=nullptr;bool playing=false,lastCustom=false,appliedMainline=false;NSUInteger applied=0;NSString*levelID=nil,*pendingSong=nil;int pendingSlot=0;
 int hiddenChapterCards=0;uint32_t chapterSelectorRoot=0;
@@ -110,7 +113,9 @@ std::map<std::string,std::vector<NSDictionary*>>extraDifficulties;
 std::map<std::string,NSDictionary*>stockAT;
 std::map<std::string,NSDictionary*>extraByID;
 int slotIndex(NSString*s){NSInteger i=[@[@"EZ",@"HD",@"IN",@"AT"]indexOfObject:s ?: @"IN"];return i==NSNotFound?3:(int)i;}
-NSDictionary*songFor(NSString*identifier,int slot){auto it=variants.find(identifier.UTF8String);if(it!=variants.end()){auto found=it->second.find(slot);if(found!=it->second.end())return [found->second[@"pmOfficial"]boolValue]?nil:found->second;}auto direct=extraByID.find(identifier.UTF8String?:"");if(direct!=extraByID.end())return direct->second;for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"] isEqualToString:identifier])return s;return nil;}
+NSDictionary*songFor(NSString*identifier,int slot){auto it=variants.find(identifier.UTF8String);if(it!=variants.end()){auto found=it->second.find(slot);if(found!=it->second.end())return [found->second[@"pmOfficial"]boolValue]?nil:found->second;}auto direct=extraByID.find(identifier.UTF8String?:"");if(direct!=extraByID.end())return direct->second;static NSDictionary*byID=nil;static NSUInteger revision=NSUIntegerMax;NSUInteger current=PMContentStore.shared.revision;
+ if(!byID||revision!=current){NSMutableDictionary*index=[NSMutableDictionary new];for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"]){NSString*key=s[@"id"];if(key.length&&!index[key])index[key]=s;}byID=index;revision=current;}
+ return identifier?byID[identifier]:nil;}
 NSString*groupFor(NSString*identifier){for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"] isEqualToString:identifier])return [s[@"groupId"] length]?s[@"groupId"]:identifier;return identifier;}
 void capture(Runtime&r){if(baseline)return;P gi=r.mainGame();P song=r.get<P>(gi,"song"),chapters=r.get<P>(gi,"chapters");if(!song||!chapters)return;NSDictionary*capturedBase=encode(r,song);if(![capturedBase isKindOfClass:NSDictionary.class])return;NSMutableArray*a=[NSMutableArray new];for(uintptr_t i=0,n=r.array_length(chapters);i<n;++i){id c=encode(r,r.arrayAt(chapters,(int)i));if(![c isKindOfClass:NSDictionary.class])return;[a addObject:c];}if(!a.count)return;baseline=capturedBase;originalChapters=a;@synchronized(PMContentStore.shared){officialCache=@{@"songBase":baseline,@"chapters":originalChapters};}}
 NSDictionary*nativeSong(NSString*group,NSDictionary*s,std::map<int,NSDictionary*>&members){NSMutableArray*difficulty=[NSMutableArray new],*charters=[NSMutableArray new],*mods=[NSMutableArray new],*images=[NSMutableArray new],*unlocks=[NSMutableArray new];for(int i=0;i<4;++i){NSDictionary*v=members.count(i)?members[i]:nil;[difficulty addObject:v?@(MAX(.1,PMDifficultyNumber(v[@"difficulty"]))):@0];[charters addObject:v[@"charter"] ?: @""];[mods addObject:@{@"levelMods":@[]}];[images addObject:@[]];[unlocks addObject:@{@"unlockType":@(-1),@"unlockInfo":@[]}];}return @{@"songsId":group,@"songsKey":group,@"songsName":s[@"title"] ?: group,@"songsTitle":s[@"title"] ?: group,@"composer":s[@"composer"] ?: @"",@"illustrator":s[@"illustrator"] ?: @"",@"difficulty":difficulty,@"charter":charters,@"levels":@[@"EZ",@"HD",@"IN",@"AT"],@"previewTime":s[@"preview"] ?: @0,@"previewEndTime":s[@"previewEnd"] ?: @15,@"unlockInfo":unlocks,@"judgeLineImages":images,@"levelMods":mods};}
@@ -515,6 +520,7 @@ void clearSparseButtons(Runtime&r){
 }
 #include "PMSelectorRowPresentation.inc"
 void selectorLoadingEnd(Runtime&r,bool finishSelected){
+ deferredDifficultySort.clear();
  clearSelectorRowPresentation(r);
  clearVariantCovers(r);
  clearSparseButtons(r);
@@ -546,7 +552,7 @@ void refreshVariantRecords(Runtime&r,P selector,P item,NSString*group){
   r.call(records,"Add",{"LevelRecord"},{value});
  }
  for(auto&member:variantsForGroup->second){int slot=member.first;if(slot<0||slot>3)continue;
-  NSString*id=member.second[@"id"],*level=@[@"EZ",@"HD",@"IN",@"AT"][slot];
+  NSString*id=member.second[@"id"],*level=PMDifficultyRecordLevel(member.second);
   P value=r.call(game,"GetSongRecord",{"System.String","System.String"},{r.managedString(id),r.managedString(level)});
   r.call(records,"set_Item",{"System.Int32","LevelRecord"},{&slot,value});
  }
@@ -576,6 +582,7 @@ void prepareSelectorItems(Runtime&r,P selector){
 void selectorDifficultyUI(Runtime&r,P selector){
 
  if(r.get<bool>(selector,"exit"))return;
+ finishDifficultySort(r,selector);
  reconcileLogicalRows(r,selector);
  if(hasDifficultyPager(selector)){difficultyPager(r,selector);return;}
  P items=r.call(selector,"get_SongItems");int count=r.count(items),index=r.get<int>(selector,"nowSong"),slot=r.get<int>(selector,"nowLevel");

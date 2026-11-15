@@ -2,10 +2,11 @@ from pathlib import Path
 import unittest
 ROOT=Path(__file__).resolve().parents[1]
 class LogicalRowsAndZeroSkew(unittest.TestCase):
- def test_extra_name_is_not_official_at_slot(self):
+ def test_extra_names_share_at_list_but_keep_per_chart_records(self):
   row=(ROOT/'PhiMod/Sources/PMSelectorRowPresentation.inc').read_text('utf8')
-  self.assertIn('PMStockDifficulty(chosen[@"level"])<0',row)
-  self.assertIn('PMMatchingExtraDifficulty(entries->second,extra)',row)
+  self.assertIn('context.slot==3?"AT+extra":"native"',row)
+  self.assertNotIn('PMMatchingExtraDifficulty',row)
+  self.assertIn('members->second.at(slot)',row)
   self.assertIn('if(!present){maskRow(r,binding);continue;}',row)
   self.assertIn('binding.ratings',row)
   self.assertIn('listRowRecords',row)

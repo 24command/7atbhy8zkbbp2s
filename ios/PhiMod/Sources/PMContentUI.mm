@@ -31,6 +31,8 @@
 @interface PMContentController : UITableViewController <UIDocumentPickerDelegate,UISearchResultsUpdating>
 @property(nonatomic,strong) NSDictionary*db;
 @property(nonatomic,strong) NSArray<NSURL*>*pendingExports;
+@property(nonatomic,strong) UIDocumentPickerViewController*importPicker;
+@property(nonatomic,copy) NSString*pendingImportMessage;
 @property(nonatomic,strong) NSArray*items;
 @property(nonatomic,strong) UISegmentedControl*pages;
 @property(nonatomic,strong) UISearchController*search;
@@ -124,28 +126,82 @@
 
 - (void)group:(NSDictionary*)song{UIAlertController*a=[UIAlertController alertControllerWithTitle:@"多难度分组" message:@"填写另一谱面的 ID 合并为同一首；留空恢复独立。原版同难度以最后选择为准；额外难度追加到目标歌曲后。" preferredStyle:UIAlertControllerStyleAlert];[a addTextFieldWithConfigurationHandler:^(UITextField*f){f.text=song[@"groupId"];f.placeholder=@"pm_... 或原版歌曲 ID";}];[a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];[a addAction:[UIAlertAction actionWithTitle:@"保存并选用此版本" style:UIAlertActionStyleDefault handler:^(UIAlertAction*x){NSString*group=a.textFields.firstObject.text.length?a.textFields.firstObject.text:song[@"id"];NSMutableDictionary*d=[[PMContentStore.shared snapshot]mutableCopy];for(NSDictionary*target in d[@"songs"])if([target[@"id"]isEqualToString:group]){group=[target[@"groupId"]length]?target[@"groupId"]:group;break;}for(NSMutableDictionary*s in d[@"songs"])if([s[@"id"] isEqualToString:song[@"id"]])s[@"groupId"]=group;NSMutableDictionary*choices=[d[@"chartSelections"]mutableCopy] ?: [NSMutableDictionary new];int slot=PMStockDifficulty(song[@"level"]);if(slot>=0)choices[[NSString stringWithFormat:@"%@@%d",group,slot]]=song[@"id"];else{NSInteger order=0;for(NSDictionary*v in d[@"songs"])if([v[@"groupId"]isEqualToString:group])order=MAX(order,[v[@"difficultyOrder"]integerValue]+1);for(NSMutableDictionary*v in d[@"songs"])if([v[@"id"]isEqualToString:song[@"id"]])v[@"difficultyOrder"]=@(order);}d[@"chartSelections"]=choices;[self save:d];}]];[self presentViewController:a animated:YES completion:nil];}
 - (void)orderChapter:(NSString*)identifier{UIAlertController*a=[UIAlertController alertControllerWithTitle:@"排列到此章节之前" message:nil preferredStyle:UIAlertControllerStyleActionSheet];NSMutableArray*chapters=[self.db[@"chapters"]mutableCopy];[chapters addObjectsFromArray:[PMHookBackend contentSnapshot][@"chapters"] ?: @[]];for(NSDictionary*c in chapters){NSString*id=c[@"id"] ?: c[@"chapterCode"];if([id isEqualToString:identifier])continue;[a addAction:[UIAlertAction actionWithTitle:c[@"name"] ?: c[@"songInfo"][@"title"] style:UIAlertActionStyleDefault handler:^(UIAlertAction*x){NSMutableDictionary*d=[[PMContentStore.shared snapshot]mutableCopy];for(NSMutableDictionary*v in d[@"chapters"])if([v[@"id"]isEqualToString:identifier])v[@"before"]=id;[self save:d];}]];}a.popoverPresentationController.barButtonItem=self.navigationItem.rightBarButtonItem;[a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];[self presentViewController:a animated:YES completion:nil];}
+// Results may arrive before UIKit finishes its own picker dismissal. Keep them
+// until the manager is visible; import execution never depends on this callback.
+- (void)showPendingImportMessage {
+ if(!self.pendingImportMessage||!self.isViewLoaded||!self.view.window||self.presentedViewController||self.isBeingDismissed||self.navigationController.isBeingDismissed)return;
+ if(self.transitionCoordinator||self.navigationController.transitionCoordinator){
+  __weak PMContentController*weakSelf=self;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.1*NSEC_PER_SEC)),dispatch_get_main_queue(),^{[weakSelf showPendingImportMessage];});
+  return;
+ }
+ NSString*message=self.pendingImportMessage;self.pendingImportMessage=nil;[self message:message];
+}
+- (void)viewDidAppear:(BOOL)animated {
+ [super viewDidAppear:animated];[self showPendingImportMessage];
+}
 - (void)importFiles {
- if(self.busy)return;self.imageID=nil;
- PMDiagnosticsWrite("Content picker presenting (scoped import)");
- UIDocumentPickerViewController*p=[[UIDocumentPickerViewController alloc]initForOpeningContentTypes:@[UTTypeData,UTTypeZIP] asCopy:NO];
- p.allowsMultipleSelection=YES;p.delegate=self;[self presentViewController:p animated:YES completion:nil];
+ if(self.busy||self.importPicker)return;self.imageID=nil;self.imageIsChapter=NO;
+ PMDiagnosticsWrite("Content picker presenting (copy import)");
+ // Imported copies remain readable after the picker closes. Opening in place
+ // requires provider access and can block while Files is still presenting.
+ UIDocumentPickerViewController*p=[[UIDocumentPickerViewController alloc]initForOpeningContentTypes:@[UTTypeData,UTTypeZIP] asCopy:YES];
+ self.importPicker=p;p.allowsMultipleSelection=YES;p.delegate=self;[self presentViewController:p animated:YES completion:nil];
 }
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController*)picker {
  if(self.pendingExports){[PMContentStore.shared cleanupExports:self.pendingExports];self.pendingExports=nil;}
- PMDiagnosticsWrite("Content picker cancelled");self.imageID=nil;
+ if(picker==self.importPicker){self.importPicker=nil;picker.delegate=nil;}
+ PMDiagnosticsWrite("Content picker cancelled");self.imageID=nil;self.imageIsChapter=NO;
  [picker dismissViewControllerAnimated:YES completion:nil];
 }
-- (void)documentPicker:(UIDocumentPickerViewController*)picker didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls {if(self.pendingExports){[PMContentStore.shared cleanupExports:self.pendingExports];self.pendingExports=nil;[picker dismissViewControllerAnimated:YES completion:nil];return;}if(self.busy||!urls.count)return;PMDiagnosticsWrite([NSString stringWithFormat:@"Content picker selected %lu files",(unsigned long)urls.count].UTF8String);self.busy=YES;NSString*imageID=self.imageID,*chapter=self.selectedChapter;BOOL imageIsChapter=self.imageIsChapter;self.imageID=nil;self.imageIsChapter=NO;NSArray<NSURL*>*selected=[urls copy];PMScopedFileAccess*batchAccess=[[PMScopedFileAccess alloc]initWithURLs:selected];void (^start)(void)=^{if(imageID){NSURL*url=selected.firstObject;dispatch_async(self.worker,^{BOOL access=[url startAccessingSecurityScopedResource];UIImage*source=[UIImage imageWithContentsOfFile:url.path];if(access)[url stopAccessingSecurityScopedResource];[batchAccess close];dispatch_async(dispatch_get_main_queue(),^{if(!source){self.busy=NO;[self reload];[self message:@"无法读取封面图片"];return;}CGFloat aspect=imageIsChapter?1.35625:(16.0/9.0);PMImageCropController*crop=[[PMImageCropController alloc]initWithImage:source aspect:aspect completion:^(UIImage*result){self.busy=NO;if(result){NSError*saveError=nil;NSData*png=UIImagePNGRepresentation(result);BOOL saved=png&&[PMContentStore.shared replaceImageData:png identifier:imageID error:&saveError];[self reload];[self message:saved?@"封面已保存":(saveError.localizedDescription ?: @"封面保存失败")];}else[self reload];}];crop.allowsCompleteCover=YES;UINavigationController*nav=[[UINavigationController alloc]initWithRootViewController:crop];nav.modalPresentationStyle=UIModalPresentationFullScreen;[self presentViewController:nav animated:YES completion:nil];});});return;}[self setOperation:@"正在导入／转换文件"];dispatch_async(self.worker,^{NSMutableArray*errors=[NSMutableArray new];NSUInteger done=0,index=0;
- @try{for(NSURL*url in selected){@autoreleasepool{
-  ++index;NSString*progress=[NSString stringWithFormat:@"正在导入 %lu / %lu：%@",(unsigned long)index,(unsigned long)selected.count,url.lastPathComponent];
-  dispatch_async(dispatch_get_main_queue(),^{[self setOperation:progress];});
-  NSError*e=nil;BOOL ok=NO;NSTimeInterval began=NSDate.timeIntervalSinceReferenceDate;
-  PMDiagnosticsWrite([NSString stringWithFormat:@"Content import begin: %@",url.lastPathComponent].UTF8String);
-  @try{ok=[PMContentStore.shared importURL:url chapter:chapter error:&e];}
-  @catch(NSException*exception){e=[NSError errorWithDomain:@"PhiMod.Import" code:1 userInfo:@{NSLocalizedDescriptionKey:exception.reason ?: exception.name}];}
-  if(ok)done++;else[errors addObject:[NSString stringWithFormat:@"%@：%@ (%@ %ld)",url.lastPathComponent,e.localizedDescription?:@"失败",e.domain?:@"Import",(long)e.code]];
-  PMDiagnosticsWrite([NSString stringWithFormat:@"Content import %@: %@ %.2fs %@ (%@ %ld)",ok?@"ok":@"失败",url.lastPathComponent,NSDate.timeIntervalSinceReferenceDate-began,e.localizedDescription?:@"",e.domain?:@"",(long)e.code].UTF8String);
- }}}@finally{[batchAccess close];}dispatch_async(dispatch_get_main_queue(),^{self.busy=NO;[self reload];[self message:[NSString stringWithFormat:@"已完成 %lu / %lu\n%@",(unsigned long)done,(unsigned long)selected.count,[errors componentsJoinedByString:@"\n"]]];});});};if(picker.presentingViewController)[picker dismissViewControllerAnimated:YES completion:start];else start();}
+- (void)importSelectedURLs:(NSArray<NSURL*>*)urls picker:(UIDocumentPickerViewController*)picker {
+ // Consume the selection on the main thread before scheduling any work. A late
+ // or repeated delegate call cannot enqueue this picker a second time.
+ self.importPicker=nil;picker.delegate=nil;
+ NSArray<NSURL*>*selected=[urls copy];NSString*chapter=[self.selectedChapter copy];
+ if(selected.count){self.busy=YES;[self setOperation:@"正在导入／转换文件"];}
+ else self.pendingImportMessage=@"未收到可导入的文件，请重新选择";
+ if(picker.presentingViewController&&!picker.isBeingDismissed)
+  [picker dismissViewControllerAnimated:YES completion:^{[self showPendingImportMessage];}];
+ [self showPendingImportMessage];
+ if(!selected.count)return;
+ PMDiagnosticsWrite([NSString stringWithFormat:@"Content picker selected %lu files",(unsigned long)selected.count].UTF8String);
+ // Exactly one enqueue, independent of UIKit's automatic dismissal/completion.
+ // importURL owns per-file security access and coordinated provider reads, and
+ // releases access/staging in its finally block. Never acquire a batch on main.
+ dispatch_async(self.worker,^{
+  NSMutableArray<NSString*>*errors=[NSMutableArray new];NSUInteger done=0,index=0,failed=0;
+  for(NSURL*url in selected){@autoreleasepool{
+   ++index;NSString*progress=[NSString stringWithFormat:@"正在导入 %lu / %lu：%@",(unsigned long)index,(unsigned long)selected.count,url.lastPathComponent];
+   dispatch_async(dispatch_get_main_queue(),^{[self setOperation:progress];});
+   NSError*e=nil;BOOL ok=NO;NSTimeInterval began=NSDate.timeIntervalSinceReferenceDate;
+   PMDiagnosticsWrite([NSString stringWithFormat:@"Content import begin: %@",url.lastPathComponent].UTF8String);
+   @try{ok=[PMContentStore.shared importURL:url chapter:chapter error:&e];}
+   @catch(NSException*exception){e=[NSError errorWithDomain:@"PhiMod.Import" code:1 userInfo:@{NSLocalizedDescriptionKey:exception.reason ?: exception.name}];}
+   if(ok)done++;else{
+    ++failed;
+    // Bound retained error text even when a large batch or provider fails.
+    if(errors.count<20){
+     NSString*detail=[NSString stringWithFormat:@"%@：%@ (%@ %ld)",url.lastPathComponent,e.localizedDescription?:@"失败",e.domain?:@"Import",(long)e.code];
+     [errors addObject:detail.length>512?[[detail substringToIndex:512]stringByAppendingString:@"…"]:detail];
+    }
+   }
+   PMDiagnosticsWrite([NSString stringWithFormat:@"Content import %@: %@ %.2fs %@ (%@ %ld)",ok?@"ok":@"失败",url.lastPathComponent,NSDate.timeIntervalSinceReferenceDate-began,e.localizedDescription?:@"",e.domain?:@"",(long)e.code].UTF8String);
+  }}
+  if(failed>errors.count)[errors addObject:[NSString stringWithFormat:@"另有 %lu 个文件导入失败",(unsigned long)(failed-errors.count)]];
+  NSString*summary=[NSString stringWithFormat:@"已完成 %lu / %lu\n%@",(unsigned long)done,(unsigned long)selected.count,[errors componentsJoinedByString:@"\n"]];
+  dispatch_async(dispatch_get_main_queue(),^{self.busy=NO;[self reload];self.pendingImportMessage=summary;[self showPendingImportMessage];});
+ });
+}
+- (void)documentPicker:(UIDocumentPickerViewController*)picker didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls {
+ if(self.pendingExports){[PMContentStore.shared cleanupExports:self.pendingExports];self.pendingExports=nil;[picker dismissViewControllerAnimated:YES completion:nil];return;}
+ if(picker==self.importPicker){if(!self.busy)[self importSelectedURLs:urls picker:picker];return;}
+ // Other document pickers here are cover selection only; ignore stale import callbacks.
+ if(self.busy||!urls.count||!self.imageID)return;
+ self.busy=YES;NSString*imageID=self.imageID;BOOL imageIsChapter=self.imageIsChapter;self.imageID=nil;self.imageIsChapter=NO;NSArray<NSURL*>*selected=[urls copy];
+ void (^start)(void)=^{if(imageID){NSURL*url=selected.firstObject;dispatch_async(self.worker,^{BOOL access=[url startAccessingSecurityScopedResource];UIImage*source=[UIImage imageWithContentsOfFile:url.path];if(access)[url stopAccessingSecurityScopedResource];dispatch_async(dispatch_get_main_queue(),^{if(!source){self.busy=NO;[self reload];[self message:@"无法读取封面图片"];return;}CGFloat aspect=imageIsChapter?1.35625:(16.0/9.0);PMImageCropController*crop=[[PMImageCropController alloc]initWithImage:source aspect:aspect completion:^(UIImage*result){self.busy=NO;if(result){NSError*saveError=nil;NSData*png=UIImagePNGRepresentation(result);BOOL saved=png&&[PMContentStore.shared replaceImageData:png identifier:imageID error:&saveError];[self reload];[self message:saved?@"封面已保存":(saveError.localizedDescription ?: @"封面保存失败")];}else[self reload];}];crop.allowsCompleteCover=YES;UINavigationController*nav=[[UINavigationController alloc]initWithRootViewController:crop];nav.modalPresentationStyle=UIModalPresentationFullScreen;[self presentViewController:nav animated:YES completion:nil];});});return;}};
+ if(picker.presentingViewController)[picker dismissViewControllerAnimated:YES completion:start];else start();
+}
 - (void)export:(NSString*)identifier chapter:(BOOL)chapter {if(self.busy)return;self.busy=YES;[self setOperation:chapter?@"正在导出章节包":@"正在导出谱面包"];[self reload];dispatch_async(self.worker,^{NSError*e=nil;NSURL*url=nil;@autoreleasepool{url=chapter?[PMContentStore.shared exportChapter:identifier error:&e]:[PMContentStore.shared exportSong:identifier error:&e];}dispatch_async(dispatch_get_main_queue(),^{self.busy=NO;[self reload];if(!url){[self message:e.localizedDescription];return;}UIDocumentPickerViewController*p=[[UIDocumentPickerViewController alloc]initForExportingURLs:@[url] asCopy:YES];self.pendingExports=@[url];p.delegate=self;[self presentViewController:p animated:YES completion:nil];});});}
 - (void)apply {if(self.busy)return;NSDictionary*r=[PMHookBackend contentCommand:@"apply" identifier:@"" slot:0];if([r[@"ok"] boolValue])[self dismissViewControllerAnimated:YES completion:nil];else[self message:r[@"message"]];}
 @end

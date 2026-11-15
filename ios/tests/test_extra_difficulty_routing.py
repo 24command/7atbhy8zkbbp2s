@@ -65,9 +65,10 @@ class ExtraDifficultyRouting(unittest.TestCase):
   reconcile=page.split('void reconcileDifficultyButtons(',1)[1].split('void selectExistingDifficulty(',1)[0]
   self.assertIn('nativeDifficultyMask(r,r.at(items,index))',reconcile)
   self.assertIn('i!=slot',reconcile)
- def test_automatic_selection_is_silent_and_does_not_sort(self):
+ def test_automatic_selection_is_silent_and_defers_sort_until_release(self):
   page=(ROOT/'PhiMod/Sources/PMDifficultyPager.inc').read_text('utf8')
-  selection=page.split('void selectExistingDifficulty(',1)[1].split('void restoreDifficultyBar(',1)[0]
+  selection=page.split('void selectExistingDifficulty(',1)[1].split('void finishDifficultySort(',1)[0]
+  self.assertIn('deferredDifficultySort.request',selection)
   self.assertIn('bool userInitiated',selection)
   self.assertEqual(selection.count('"SetLevel"'),1)
   self.assertIn('if(userInitiated){r.put(selector,"fingerOnSongList",false);try{r.call(selector,"SetLevel"',selection)

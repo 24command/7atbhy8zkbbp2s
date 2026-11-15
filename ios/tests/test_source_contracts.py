@@ -391,13 +391,16 @@ public static class Marshal // TypeDefIndex: 3
   self.assertIn('Content reference write preflight passed',content)
   self.assertIn('Content LoadScene begin:',content)
   self.assertIn('Chapter is empty;',content)
- def test_picker_holds_access_before_dismissal_and_processes_serially(self):
+ def test_picker_copied_files_start_on_worker_independent_of_dismissal(self):
   s=(ROOT/'PhiMod/Sources/PMContentUI.mm').read_text(encoding='utf-8')
   method=s[s.index('- (void)importFiles'):s.index('- (void)export:')]
-  self.assertIn('asCopy:NO',method)
-  self.assertIn('PMScopedFileAccess*batchAccess=',method)
-  self.assertLess(method.index('initWithURLs:selected'),method.index('void (^start)'))
-  self.assertIn('@finally{[batchAccess close];}',method)
+  self.assertIn('asCopy:YES',method)
+  self.assertNotIn('asCopy:NO',method)
+  batch=method.split('- (void)importSelectedURLs:',1)[1].split('- (void)documentPicker:',1)[0]
+  self.assertNotIn('PMScopedFileAccess',batch)
+  self.assertIn('self.importPicker=nil;picker.delegate=nil',batch)
+  self.assertNotIn('completion:start',batch)
+  self.assertIn('dispatch_async(self.worker',batch)
   self.assertIn('dispatch_async(self.worker',method)
   self.assertIn('dismissViewControllerAnimated:YES completion:start',method)
   self.assertIn('documentPickerWasCancelled:',method)

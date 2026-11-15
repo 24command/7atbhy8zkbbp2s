@@ -16,9 +16,10 @@ void clearDifficultyPager(Runtime&r,bool restoreBar){difficultyTap.reset();diffi
 NSDictionary*selectedDifficulty(NSString*group,int slot){return songFor(group,slot);}
 NSDictionary*difficultyForSong(Runtime&r,void*song,int slot){return frozenDifficulty(r,song)?:songFor(r.string(r.get<P>(song,"songsId")),slot);}
 void bindTransport(Runtime&r,P selector,P item,NSString*group,NSDictionary*chart){
- auto&members=variants[group.UTF8String];members[3]=chart;
+ auto&members=variants[group.UTF8String];bool changed=!members.count(3)||members[3]!=chart;members[3]=chart;
  P song=r.get<P>(item,"songInfo"),d=r.get<P>(song,"difficulty");float number=std::max(.1,PMDifficultyNumber(chart[@"difficulty"]));r.arrayPutFloat(d,3,number);
  pmunlock::difficultyChanged(r);recordSlot=-1;sparseSlot=-1;initializedSlot=-1;
+ if(changed&&r.get<int>(selector,"nowLevel")==3)deferredDifficultySort.request(uintptr_t(selector));
  refreshVariantRecords(r,selector,item,group);
 }
 void rebuildDifficultyEntries(NSString*group){
@@ -47,7 +48,7 @@ void selectExistingDifficulty(Runtime&r,P selector,P item,int requested,bool use
  // reconciliation must neither emit audio nor move the list under a finger.
  bool finger=r.get<bool>(selector,"fingerOnSongList");r.put(selector,"levelNum",std::max(3,extent));
  if(userInitiated){r.put(selector,"fingerOnSongList",false);try{r.call(selector,"SetLevel",{"System.Int32"},{&selected});}catch(...){r.put(selector,"fingerOnSongList",finger);throw;}r.put(selector,"fingerOnSongList",finger);}
- int before=r.get<int>(selector,"nowLevel");r.put(selector,"nowLevel",selected);r.put(selector,"lastLevel",selected);r.call(selector,"SetText");
+ int before=r.get<int>(selector,"nowLevel");if(!userInitiated&&before!=selected)deferredDifficultySort.request(uintptr_t(selector));else if(userInitiated)deferredDifficultySort.clear();r.put(selector,"nowLevel",selected);r.put(selector,"lastLevel",selected);r.call(selector,"SetText");
  // lastLevel suppresses the game's next global row refresh. Do that refresh
  // explicitly on a silent fallback, without invoking SetLevel/audio/SortSong.
  if(!userInitiated&&before!=selected){P items=r.call(selector,"get_SongItems");for(int i=0,n=r.count(items);i<n;++i)r.call(r.at(items,i),"SetText",{"System.Int32"},{&selected});}
@@ -55,6 +56,27 @@ void selectExistingDifficulty(Runtime&r,P selector,P item,int requested,bool use
  if(!userInitiated)r.call(selector,"ReplaceCover",{"System.Int32"},{&selected});
 
  recordSlot=-1;sparseSlot=-1;initializedSlot=-1;
+}
+// Native SortSong repositions by song identity and applies the user's direction.
+// Coalesce automatic fallbacks while the finger/inertia is moving: no SetLevel
+// here, so no second sound and no list jumping underneath an active gesture.
+void finishDifficultySort(Runtime&r,P selector){
+ uintptr_t owner=uintptr_t(selector);if(!deferredDifficultySort.pending(owner))return;
+ int sortType=r.get<int>(selector,"sortType");if(!phimod::levelDependentSort(sortType)){deferredDifficultySort.clear();return;}
+ bool touching=r.get<bool>(selector,"fingerOnSongList")||r.unbox<int>(r.stat(r.type("UnityEngine","Input"),"get_touchCount"))>0;
+ if(!deferredDifficultySort.ready(owner,sortType,touching,r.get<float>(selector,"listMoveSpeed")))return;
+ P items=r.call(selector,"get_SongItems");int index=r.get<int>(selector,"nowSong");if(index<0||index>=r.count(items)){deferredDifficultySort.clear();return;}
+ P selectedItem=r.at(items,index);uint32_t keep=r.gchandle_new(selectedItem,false);deferredDifficultySort.clear();
+ try{
+  bool instantiate=false;r.call(selector,"SortSong",{"System.Boolean"},{&instantiate});
+  items=r.call(selector,"get_SongItems");int count=r.count(items),now=r.get<int>(selector,"nowSong");
+  // Defensive identity check, including a native list rebuilt during sorting.
+  if(now<0||now>=count||r.at(items,now)!=target(r,keep))for(int i=0;i<count;++i)if(r.at(items,i)==target(r,keep)){
+   r.put(selector,"nowSong",i);r.put(selector,"targetSong",i);r.put(selector,"nowSongSelectorValue",float(i));r.put(selector,"lastFrameSongSelectorValue",float(i));r.put(selector,"listMoveSpeed",0.f);break;
+  }
+  r.call(selector,"SetText");listRowRefresh.invalidate();recordSlot=-1;sparseSlot=-1;
+ }catch(...){r.gchandle_free(keep);throw;}
+ r.gchandle_free(keep);
 }
 void restoreDifficultyBar(Runtime&r,P selector){
  clearSparseButtons(r);

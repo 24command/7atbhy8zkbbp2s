@@ -1,4 +1,4 @@
-// Extra difficulties have logical names, not the native AT transport index.
+// AT and all extra names share one list; each group uses its bound slot-3 chart.
 // Mask only row labels/rating visuals; never edit saves, native chart arrays or locks.
 namespace {
 struct RowRatingBinding{uint32_t controller=0,object=0;bool masked=false,wasActive=false;};
@@ -30,25 +30,21 @@ void maskRow(Runtime&r,ListRowBinding&binding){
  for(auto&rating:binding.ratings){P object=target(r,rating.object);if(!r.alive(object))continue;if(!rating.masked)rating.wasActive=r.unbox<bool>(r.call(object,"get_activeSelf"));rating.masked=true;r.call(object,"SetActive",{"System.Boolean"},{&no});}
 }
 struct ListRowContext {
- P items=nullptr,selectedItem=nullptr;int count=0,slot=-1;NSDictionary*chosen=nil;NSString*extra=nil;phimod::SelectorRowKey key;
+ P items=nullptr,selectedItem=nullptr;int count=0,slot=-1;phimod::SelectorRowKey key;
 };
 bool listRowContext(Runtime&r,P selector,ListRowContext&context){
  context.items=r.call(selector,"get_SongItems");context.count=r.count(context.items);context.slot=r.get<int>(selector,"nowLevel");int selected=r.get<int>(selector,"nowSong");
  if(context.slot<0||context.slot>3||selected<0||selected>=context.count)return false;
  context.selectedItem=r.at(context.items,selected);
- if(context.slot==3){P song=r.get<P>(context.selectedItem,"songInfo");NSString*group=r.string(r.get<P>(song,"songsId"));NSDictionary*chosen=songFor(group,3);context.chosen=chosen;
-  if(chosen&&PMStockDifficulty(chosen[@"level"])<0)context.extra=PMDifficultyName(chosen[@"level"]);
- }
- context.key={uintptr_t(selector),uintptr_t(context.items),r.get<int>(context.items,"_version"),context.count,context.slot,(uint64_t)PMContentStore.shared.revision,(context.extra?:@"native").UTF8String};return true;
+ context.key={uintptr_t(selector),uintptr_t(context.items),r.get<int>(context.items,"_version"),context.count,context.slot,(uint64_t)PMContentStore.shared.revision,context.slot==3?"AT+extra":"native"};return true;
 }
 void reconcileLogicalRows(Runtime&r,P selector){
  ListRowContext context;if(!listRowContext(r,selector,context))return;
- int slot=context.slot;NSString*extra=context.extra;NSDictionary*chosen=context.chosen;bool logicalChanged=listRowRefresh.full(context.key);
+ int slot=context.slot;bool logicalChanged=listRowRefresh.full(context.key);
  NSUInteger revision=context.key.revision;if(listRowRecordRevision!=revision){for(auto&record:listRowRecords)r.gchandle_free(record.second);listRowRecords.clear();listRowRecordRevision=revision;}
  auto update=[&](P item){if(!item)return;if(logicalChanged)r.call(item,"SetText",{"System.Int32"},{&slot});
  P song=r.get<P>(item,"songInfo");NSString*id=r.string(r.get<P>(song,"songsId"));auto members=variants.find(id.UTF8String?:"");NSDictionary*chart=nil;bool present=false;
-  if(extra){if(item==context.selectedItem)chart=chosen;else{auto entries=extraDifficulties.find(id.UTF8String?:"");if(entries!=extraDifficulties.end())chart=PMMatchingExtraDifficulty(entries->second,extra);}present=chart!=nil;}
-  else if(members!=variants.end()){if(slot==3&&extraDifficulties.count(id.UTF8String?:"")){auto at=stockAT.find(id.UTF8String);if(at!=stockAT.end())chart=at->second;}else if(members->second.count(slot))chart=members->second.at(slot);present=chart!=nil;}
+  if(members!=variants.end()){if(members->second.count(slot))chart=members->second.at(slot);present=chart!=nil;}
   else{P values=r.get<P>(song,"difficulty");present=values&&uintptr_t(slot)<r.array_length(values)&&r.unbox<float>(r.arrayAt(values,slot))>0;}
   NSString*grade=chart?PMDifficultyText(chart):nil;P record=nullptr;
   if(chart){NSString*level=PMDifficultyRecordLevel(chart);std::string key=std::string([chart[@"id"]UTF8String])+"/"+level.UTF8String;auto saved=listRowRecords.find(key);if(saved==listRowRecords.end()){record=r.call(r.mainGame(),"GetSongRecord",{"System.String","System.String"},{r.managedString(chart[@"id"]),r.managedString(level)});saved=listRowRecords.emplace(key,r.gchandle_new(record,false)).first;}record=target(r,saved->second);
