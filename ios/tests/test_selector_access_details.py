@@ -87,7 +87,9 @@ class SparseDifficultyTests(unittest.TestCase):
   self.assertIn('sparseButtons.push_back({r.gchandle_new(button,false),previous,enabled})',c)
   self.assertIn('clearSparseButtons(r);',c.split('void selectorLoadingEnd(',1)[1])
   sparse=c.split('void selectorDifficultyUI(',1)[1].split('// Native difficulty bars assume',1)[0]
-  self.assertIn('if(!present)',sparse)
+  self.assertIn('reconcileLogicalRows(r,selector)',sparse)
+  rows=(ROOT/'PhiMod/Sources/PMSelectorRowPresentation.inc').read_text(encoding='utf8')
+  self.assertIn('if(!present){maskRow(r,binding);continue;}',rows)
   self.assertIn('"HideInfo"',sparse)
   self.assertIn('sparseRevision==revision){maintainSparseSlots(r);reconcileDifficultyButtons(r,selector);return;}',sparse)
  def test_unlock_slot_refreshes_text_and_selection(self):

@@ -31,7 +31,12 @@ void preparePackExtras(Runtime&r,const std::map<std::string,std::string>&meta){
 void finishPackEffects(Runtime&r){
  if(!packEffectsPending)return;
  double now=r.unbox<float>(r.stat(r.type("UnityEngine","Time"),"get_time"));
- for(auto&e:packEffects){if(e.initialized)continue;P source=target(r,e.source);
+ // Appends and forward placement keep uninitialized effects in a suffix,
+ // including after an exception. Skip the already-published prefix without
+ // deferring same-frame effects or changing their forward placement order.
+ auto first=packEffects.end();
+ while(first!=packEffects.begin()&&!(first-1)->initialized)--first;
+ for(auto it=first;it!=packEffects.end();++it){auto&e=*it;if(e.initialized)continue;P source=target(r,e.source);
   if(!r.alive(source)){e.initialized=true;e.start=now-packFxDuration;continue;}
   V3 position=r.unbox<V3>(r.call(e.sourceTransform,"get_position"));
   V3 nativeScale=r.unbox<V3>(r.call(e.sourceTransform,"get_lossyScale"));

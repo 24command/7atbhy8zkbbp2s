@@ -12,3 +12,10 @@ static inline NSArray<NSNumber*>*PMDifficultyRGB(id input){
  for(NSString*part in parts){NSScanner*scanner=[NSScanner scannerWithString:[part stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]];int n;if(![scanner scanInt:&n]||!scanner.isAtEnd||n<0||n>255)return nil;[out addObject:@(n)];}return out;
 }
 static inline NSString*PMDifficultyRecordLevel(NSDictionary*s){int slot=PMStockDifficulty(s[@"level"]);return slot<0?@"AT":@[@"EZ",@"HD",@"IN",@"AT"][slot];}
+
+// A native AT transport slot never implies that another song has this extra chart.
+template<class Charts> static inline NSDictionary*PMMatchingExtraDifficulty(const Charts&charts,NSString*name){
+ if(!name.length)return nil;
+ for(NSDictionary*chart:charts)if(PMStockDifficulty(chart[@"level"])<0&&[PMDifficultyName(chart[@"level"])isEqualToString:name])return chart;
+ return nil;
+}

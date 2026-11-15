@@ -4,6 +4,7 @@
 #import "PMImageCropController.h"
 #include "PMContentRuntime.hpp"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <objc/runtime.h>
 @interface PMChapterSongList:UITableViewController<UISearchResultsUpdating,UIDocumentPickerDelegate>
 @property(nonatomic,copy) NSString*chapter;
 @property(nonatomic,strong) NSArray*all;
@@ -14,11 +15,238 @@
 @property(nonatomic,strong) UISegmentedControl*scope;
 @property(nonatomic,copy) NSString*coverID;
 @end
-void PMChooseChapter(UIViewController*presenter,void(^chosen)(NSString*)){
- UIAlertController*a=[UIAlertController alertControllerWithTitle:@"\u9009\u62e9\u76ee\u6807\u7ae0\u8282" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
- NSDictionary*db=[PMContentStore.shared snapshot];NSMutableArray*chapters=[db[@"chapters"]mutableCopy];[chapters addObjectsFromArray:pmcontent::cachedOfficialSnapshot()[@"chapters"]?:@[]];
- for(NSDictionary*c in chapters){NSString*id=c[@"id"]?:c[@"chapterCode"],*name=c[@"name"]?:c[@"songInfo"][@"title"]?:id;[a addAction:[UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault handler:^(UIAlertAction*x){chosen(id);}]];}
- [a addAction:[UIAlertAction actionWithTitle:@"\u53d6\u6d88" style:UIAlertActionStyleCancel handler:nil]];UIView*anchor=presenter.navigationController.view?:presenter.view;CGRect visible=UIEdgeInsetsInsetRect(anchor.bounds,anchor.safeAreaInsets);a.popoverPresentationController.sourceView=anchor;a.popoverPresentationController.sourceRect=CGRectMake(CGRectGetMidX(visible),CGRectGetMidY(visible),1,1);a.popoverPresentationController.permittedArrowDirections=0;[presenter presentViewController:a animated:YES completion:nil];
+// One request per presentation container, including the action-sheet handoff.
+// Do not borrow PMContentUI's busy flag: cancelling must not strand its toolbar.
+static char PMChapterPickerRequestKey;
+
+static NSDictionary *PMChapterPickerDictionary(id value) {
+  return [value isKindOfClass:NSDictionary.class] ? value : @{};
+}
+static NSArray *PMChapterPickerArray(id value) {
+  return [value isKindOfClass:NSArray.class] ? value : @[];
+}
+static NSString *PMChapterPickerString(id value) {
+  if (![value isKindOfClass:NSString.class]) return nil;
+  NSString *text = [value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+  return text.length ? text : nil;
+}
+static NSString *PMChapterPickerReadableTitle(id value) {
+  NSString *text = PMChapterPickerString(value);
+  if (!text) return nil;
+  // Cached native metadata may contain localization keys, not display strings.
+  // Never guess a translation or invoke the game runtime from this UIKit page.
+  if ([text hasPrefix:@"\\"] || [text hasPrefix:@"#"] || [text hasPrefix:@"$"] || [text hasPrefix:@"@"] ||
+      [text hasPrefix:@"{"] || [text hasPrefix:@"<"]) return nil;
+  NSString *pattern = @"(?i)^(?:(?:chapter(?:name|title|s)?|mainstory|sidestory|collection|localization|localisation|i18n)(?:[0-9][a-z0-9_./:-]*|[_.:/-][a-z0-9_./:-]+)|chapter(?:name|title)|[a-z0-9]+(?:_[a-z0-9]+)+|(?:in|loc|locale|lang|text|ui)[./:][a-z0-9_./:-]+)$";
+  if ([text rangeOfString:pattern options:NSRegularExpressionSearch].location != NSNotFound) return nil;
+  return text;
+}
+static NSArray<NSDictionary *> *PMChapterPickerRows(void) {
+  NSDictionary *db = PMChapterPickerDictionary([PMContentStore.shared snapshot]);
+  NSDictionary *official = PMChapterPickerDictionary(pmcontent::cachedOfficialSnapshot());
+  NSMutableArray *chapters = [PMChapterPickerArray(db[@"chapters"]) mutableCopy];
+  [chapters addObjectsFromArray:PMChapterPickerArray(official[@"chapters"])];
+  NSDictionary *overrides = PMChapterPickerDictionary(db[@"chapterOverrides"]);
+  NSMutableArray *rows = [NSMutableArray new];
+  NSMutableSet *seen = [NSMutableSet new];
+  for (id value in chapters) {
+    NSDictionary *chapter = PMChapterPickerDictionary(value);
+    NSString *identifier = PMChapterPickerString(chapter[@"id"]) ?: PMChapterPickerString(chapter[@"chapterCode"]);
+    if (!identifier || [seen containsObject:identifier]) continue;
+    NSDictionary *info = PMChapterPickerDictionary(chapter[@"songInfo"]);
+    NSDictionary *patch = PMChapterPickerDictionary(overrides[identifier]);
+    NSString *title = PMChapterPickerReadableTitle(patch[@"title"]) ?:
+        PMChapterPickerReadableTitle(chapter[@"name"]) ?:
+        PMChapterPickerReadableTitle(chapter[@"title"]) ?:
+        PMChapterPickerReadableTitle(info[@"title"]) ?: identifier;
+    [rows addObject:@{@"id":identifier, @"title":title}];
+    [seen addObject:identifier];
+  }
+  return rows;
+}
+
+@interface PMChapterPickerPage : UITableViewController <UIAdaptivePresentationControllerDelegate>
+@property(nonatomic,copy) NSArray<NSDictionary *> *chapters;
+@property(nonatomic,copy) void (^chosen)(NSString *);
+@property(nonatomic,weak) UIViewController *source;
+@property(nonatomic,weak) UIViewController *owner;
+@property(nonatomic) NSTimeInterval deadline;
+@property(nonatomic) BOOL waiting;
+@property(nonatomic) BOOL presentationStarted;
+@property(nonatomic) BOOL ready;
+@property(nonatomic) BOOL finishing;
+- (void)presentWhenReady;
+- (void)releaseRequest;
+@end
+
+@implementation PMChapterPickerPage
+- (void)viewDidLoad {
+  [super viewDidLoad];
+  self.title = @"\u9009\u62e9\u76ee\u6807\u7ae0\u8282";
+  self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc]
+      initWithBarButtonSystemItem:UIBarButtonSystemItemCancel target:self action:@selector(cancel)];
+  self.navigationItem.leftBarButtonItem.enabled = NO;
+  self.tableView.userInteractionEnabled = NO;
+  self.tableView.rowHeight = UITableViewAutomaticDimension;
+  self.tableView.estimatedRowHeight = 64;
+  self.tableView.alwaysBounceVertical = YES;
+  if (!self.chapters.count) {
+    UILabel *empty = [UILabel new];
+    empty.text = @"\u6682\u65e0\u53ef\u9009\u7ae0\u8282";
+    empty.textAlignment = NSTextAlignmentCenter;
+    empty.numberOfLines = 0;
+    empty.textColor = UIColor.secondaryLabelColor;
+    self.tableView.backgroundView = empty;
+  }
+}
+- (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section {
+  return self.chapters.count;
+}
+- (UITableViewCell *)tableView:(UITableView *)table cellForRowAtIndexPath:(NSIndexPath *)index {
+  UITableViewCell *cell = [table dequeueReusableCellWithIdentifier:@"ChapterChoice"];
+  if (!cell) cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"ChapterChoice"];
+  NSDictionary *chapter = self.chapters[index.row];
+  cell.textLabel.text = chapter[@"title"];
+  cell.textLabel.numberOfLines = 0;
+  cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+  cell.textLabel.adjustsFontForContentSizeCategory = YES;
+  cell.detailTextLabel.text = [chapter[@"title"] isEqualToString:chapter[@"id"]] ? nil : chapter[@"id"];
+  cell.detailTextLabel.numberOfLines = 0;
+  cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
+  cell.detailTextLabel.adjustsFontForContentSizeCategory = YES;
+  return cell;
+}
+- (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)index {
+  [table deselectRowAtIndexPath:index animated:YES];
+  if (index.row < 0 || (NSUInteger)index.row >= self.chapters.count) return;
+  [self finishWithIdentifier:self.chapters[index.row][@"id"]];
+}
+- (void)cancel { [self finishWithIdentifier:nil]; }
+- (void)finishWithIdentifier:(NSString *)identifier {
+  UINavigationController *navigation = self.navigationController;
+  if (!self.ready || self.finishing || !navigation.presentingViewController ||
+      navigation.isBeingPresented || navigation.isBeingDismissed || navigation.transitionCoordinator) return;
+  self.finishing = YES;
+  self.ready = NO;
+  self.tableView.userInteractionEnabled = NO;
+  self.navigationItem.leftBarButtonItem.enabled = NO;
+  [navigation dismissViewControllerAnimated:YES completion:^{
+    void (^callback)(NSString *) = self.chosen;
+    UIViewController *source = self.source, *owner = self.owner;
+    BOOL visible = source.isViewLoaded && source.view.window && owner &&
+        !source.isBeingDismissed && !owner.isBeingDismissed;
+    [self releaseRequest]; // Clear the gate BEFORE callback: it may immediately reopen.
+    if (visible && identifier.length && callback) callback(identifier);
+  }];
+}
+- (void)releaseRequest {
+  self.ready = NO;
+  self.waiting = NO;
+  self.chosen = nil;
+  UIViewController *owner = self.owner;
+  if (owner && objc_getAssociatedObject(owner, &PMChapterPickerRequestKey) == self)
+    objc_setAssociatedObject(owner, &PMChapterPickerRequestKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+- (void)presentationControllerDidDismiss:(UIPresentationController *)presentationController {
+  if (!self.finishing) [self releaseRequest]; // Interactive dismissal is cancellation, never a choice.
+}
+- (void)viewDidDisappear:(BOOL)animated {
+  [super viewDidDisappear:animated];
+  // Also release on an external/programmatic dismissal of the containing UI.
+  if (self.presentationStarted && !self.finishing &&
+      (self.navigationController.isBeingDismissed || !self.navigationController.presentingViewController))
+    [self releaseRequest];
+}
+- (void)retryAfterTransitionOf:(UIViewController *)controller {
+  if (self.waiting) return;
+  self.waiting = YES;
+  __weak PMChapterPickerPage *weakSelf = self;
+  dispatch_block_t retry = ^{
+    PMChapterPickerPage *page = weakSelf;
+    if (!page.waiting) return;
+    page.waiting = NO;
+    [page presentWhenReady];
+  };
+  id<UIViewControllerTransitionCoordinator> transition = controller.transitionCoordinator;
+  if (transition && [transition animateAlongsideTransition:nil completion:^(id<UIViewControllerTransitionCoordinatorContext> context) {
+    dispatch_async(dispatch_get_main_queue(), retry);
+  }]) return;
+  // UIKit may expose a transitioning flag before/after it exposes a coordinator.
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), retry);
+}
+- (void)presentWhenReady {
+  UIViewController *owner = self.owner, *source = self.source;
+  if (!owner || objc_getAssociatedObject(owner, &PMChapterPickerRequestKey) != self || self.presentationStarted) return;
+  if (!source || NSProcessInfo.processInfo.systemUptime >= self.deadline) { [self releaseRequest]; return; }
+  if (owner.isBeingPresented || owner.isBeingDismissed || owner.transitionCoordinator) {
+    [self retryAfterTransitionOf:owner]; return;
+  }
+  if (source.isBeingPresented || source.isBeingDismissed || source.transitionCoordinator) {
+    [self retryAfterTransitionOf:source]; return;
+  }
+  UIViewController *modal = source.presentedViewController ?: owner.presentedViewController;
+  if (modal) {
+    if (modal.isBeingPresented || modal.isBeingDismissed || modal.transitionCoordinator) {
+      [self retryAfterTransitionOf:modal]; return;
+    }
+    // Only consume the operation actionSheet, never dismiss an unrelated editor/alert.
+    if (![modal isKindOfClass:UIAlertController.class] ||
+        ((UIAlertController *)modal).preferredStyle != UIAlertControllerStyleActionSheet) {
+      [self releaseRequest]; return;
+    }
+    self.waiting = YES;
+    [modal dismissViewControllerAnimated:YES completion:^{
+      self.waiting = NO;
+      [self presentWhenReady];
+    }];
+    return;
+  }
+  if (!source.isViewLoaded || !source.view.window || !owner.isViewLoaded || !owner.view.window) {
+    [self releaseRequest]; return;
+  }
+  self.chapters = PMChapterPickerRows();
+  UINavigationController *navigation = [[UINavigationController alloc] initWithRootViewController:self];
+  navigation.modalPresentationStyle = owner.traitCollection.userInterfaceIdiom == UIUserInterfaceIdiomPad
+      ? UIModalPresentationFormSheet : UIModalPresentationFullScreen;
+  navigation.preferredContentSize = CGSizeMake(540, 620);
+  [navigation setNavigationBarHidden:NO animated:NO];
+  navigation.presentationController.delegate = self;
+  self.presentationStarted = YES;
+  [owner presentViewController:navigation animated:YES completion:^{
+    if (objc_getAssociatedObject(owner, &PMChapterPickerRequestKey) == self &&
+        navigation.presentingViewController && !navigation.isBeingDismissed && !owner.isBeingDismissed) {
+      self.ready = YES;
+      self.tableView.userInteractionEnabled = YES;
+      self.navigationItem.leftBarButtonItem.enabled = YES;
+    } else [self releaseRequest];
+  }];
+}
+@end
+
+void PMChooseChapter(UIViewController *presenter, void (^chosen)(NSString *)) {
+  // Leave the UIAlertAction handler first, so UIKit can start its automatic dismissal.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    UIViewController *source = presenter;
+    if ([source isKindOfClass:UIAlertController.class]) source = source.presentingViewController;
+    if (!source || !chosen) return;
+    UIViewController *owner = source;
+    while (owner.parentViewController) owner = owner.parentViewController;
+    if (objc_getAssociatedObject(owner, &PMChapterPickerRequestKey)) return;
+    PMChapterPickerPage *page = [[PMChapterPickerPage alloc] initWithStyle:UITableViewStyleInsetGrouped];
+    page.source = source;
+    page.owner = owner;
+    page.chosen = chosen;
+    page.deadline = NSProcessInfo.processInfo.systemUptime + 5.0;
+    objc_setAssociatedObject(owner, &PMChapterPickerRequestKey, page, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // Bound an abandoned UIKit handoff even if its completion never arrives.
+    __weak PMChapterPickerPage *weakPage = page;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      PMChapterPickerPage *pending = weakPage;
+      if (!pending.presentationStarted || !pending.navigationController.presentingViewController)
+        [pending releaseRequest];
+    });
+    [page presentWhenReady];
+  });
 }
 @implementation PMChapterSongList
 - (void)viewDidLoad{

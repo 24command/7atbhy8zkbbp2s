@@ -12,6 +12,7 @@
 #include <vector>
 #include <array>
 #include <map>
+#include <tuple>
 #include <set>
 #include <initializer_list>
 #include <type_traits>
@@ -73,7 +74,9 @@ struct Runtime {
     P (*array_new)(P,uintptr_t)=nullptr;
     uintptr_t (*array_length)(P)=nullptr;
     std::map<std::pair<P,std::string>,P> fieldCache;
+    std::map<std::tuple<P,std::string,std::string,bool>,P> validatedFields;
     std::set<std::pair<P,const void*>> checkedValueClasses;
+    std::set<std::pair<P,const void*>> checkedReadFields;
     std::map<std::string,P> typeCache;
     std::map<std::string,P,std::less<>> gameClassCache;
     std::map<std::pair<P,std::string>,P> methodCache;
@@ -198,10 +201,14 @@ struct Runtime {
         return same;
     }
     P field(P c,const char *name,const char *type,bool isStatic) {
+        // Cache metadata ONLY after its type/static contract succeeds. Values
+        // (e.g. live note speed) are still read on every access.
+        auto key=std::make_tuple(c,std::string(name),std::string(type),isStatic);
+        auto cached=validatedFields.find(key);if(cached!=validatedFields.end())return cached->second;
         P f=class_get_field_from_name(c,name);
         if (!f || bool(field_get_flags(f)&0x10)!=isStatic || !typeIs(field_get_type(f),type))
             throw std::runtime_error(std::string("Field contract mismatch: ")+name);
-        return f;
+        validatedFields.emplace(std::move(key),f);return f;
     }
     template<class T> T staticValue(P c,const char *name,const char *type) {
         T v{}; field_static_get_value(field(c,name,type,true),&v); return v;
@@ -287,7 +294,12 @@ struct Runtime {
         }
         checkedValueClasses.insert(key);
     }
-    template<class T> T get(P obj,const char *name) {P f=objectField(obj,name);checkClass<T>(class_from_type(field_get_type(f)));T v{};field_get_value(obj,f,&v);return v;}
+    template<class T> void checkReadField(P f){
+        static const char typeToken=0;auto key=std::make_pair(f,static_cast<const void*>(&typeToken));
+        if(checkedReadFields.count(key))return;
+        checkClass<T>(class_from_type(field_get_type(f)));checkedReadFields.insert(key);
+    }
+    template<class T> T get(P obj,const char *name) {P f=objectField(obj,name);checkReadField<T>(f);T v{};field_get_value(obj,f,&v);return v;}
     template<class T> void put(P obj,const char *name,T value){
         P f=objectField(obj,name);checkClass<T>(class_from_type(field_get_type(f)));
         if constexpr(std::is_same_v<T,P>) {

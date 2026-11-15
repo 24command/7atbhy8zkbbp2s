@@ -76,7 +76,7 @@ std::vector<size_t>fakeSchedule;std::set<size_t>activeFakes;size_t fakeCursor=0;
 struct ControlPoint{double x,value;int easing;};
 using VisualTrack=phimod::CachedRPETrack;
 std::map<std::pair<NSArray*,int>,VisualTrack>visualTracks;
-std::map<NSArray*,std::vector<ControlPoint>>controlCache;
+std::map<NSArray*,std::vector<ControlPoint>>controlCache;std::map<NSArray*,bool>zeroSkewTracks;
 phimod::FrameCache<int,double>sourceFloorFrame;phimod::FrameCache<NSDictionary*,bool>sourceAlphaFrame;
 std::vector<Fake>fakeNotes;std::map<int,std::vector<phimod::RpeFloorSegment>>sourceFloors;std::map<size_t,std::pair<uint32_t,uint32_t>>fakeHoldEnds;std::map<size_t,uint32_t>fakeRenderers;std::map<size_t,V3>fakeScales;std::map<size_t,double>fakeRetryAt;std::set<size_t>failedFakes;std::vector<uint32_t>visualRoots;
 // Engine-provided baseline sortingOrder per judge line, so pmDecor.zOrder=0
@@ -239,7 +239,7 @@ P audio(Runtime&r,NSString*path){
  }catch(...){r.gchandle_free(clipRoot);throw;}
 }
 NSString*keyID(NSString*key,NSString**kind){if([key hasPrefix:@"PM/"]){NSArray*p=[key componentsSeparatedByString:@"/"];if(p.count<3)return nil;*kind=[[p[2] componentsSeparatedByString:@"@"]firstObject];return p[1];}NSRange pm=[key rangeOfString:@"pm_"];if(pm.location==NSNotFound)return nil;NSString*rest=[key substringFromIndex:pm.location];NSString*id=[[rest componentsSeparatedByString:@"/"]firstObject];if(![PMContentStore.shared asset:id])return nil;NSString*lower=[[key stringByReplacingOccurrencesOfString:id withString:@""]lowercaseString];*kind=[lower containsString:@"music"]?@"music":[lower containsString:@"chart"]?@"chart":[lower containsString:@"blur"]?@"blur":@"image";return id;}
-void clearVisuals(Runtime&r){clearSkew(r);clearHud(r);restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();extrasBoundChart=nullptr;recoveredSourceNotes.clear();sourceCandidates.clear();sourceCandidatesReady=false;sourceRecoveryIndexes.clear();sourceRecoveryWork.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();plainLineRenderers.clear();failedVisualLines.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();visualTracks.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();sourceFloorFrame.clear();sourceAlphaFrame.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();uiControlLines.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
+void clearVisuals(Runtime&r){clearSkew(r);clearHud(r);restoreHoldHitFX(r);for(auto h:visualRoots){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});r.gchandle_free(h);}visualRoots.clear();extras.clear();extrasBoundChart=nullptr;recoveredSourceNotes.clear();sourceCandidates.clear();sourceCandidatesReady=false;sourceRecoveryIndexes.clear();sourceRecoveryWork.clear();noteScales.clear();lineScales.clear();for(auto e:decorText)r.gchandle_free(e.second);for(auto e:decorImage)r.gchandle_free(e.second);for(auto e:fakeRenderers)r.gchandle_free(e.second);decorText.clear();decorImage.clear();storyVisuals.clear();plainLineRenderers.clear();failedVisualLines.clear();storySprites.clear();storyMaterial=nullptr;storyRetry.clear();storyReported.clear();storyFiles=nil;storyIndexed=false;storyFrameCamera=nullptr;storyFrameWidth=0;fakeNotes.clear();fakeSchedule.clear();activeFakes.clear();fakeVisualCache.clear();controlCache.clear();zeroSkewTracks.clear();visualTracks.clear();fakeCursor=0;fakeScheduleReady=false;fakeLastTime=0;fakeRenderers.clear();fakeScales.clear();fakeRetryAt.clear();for(auto&entry:fakeHoldEnds){r.gchandle_free(entry.second.first);r.gchandle_free(entry.second.second);}fakeHoldEnds.clear();sourceFloors.clear();sourceFloorFrame.clear();sourceAlphaFrame.clear();lineBaseOrder.clear();storyOrders.clear();inertLineVisuals.clear();uiControlLines.clear();rpeIntroRetired=false;reportedLineAlphaCorrections.clear();storyHoldOrder=1028;storyNoteOrder=1030;failedFakes.clear();currentChart=nil;}
 struct ChapterCoverFit{P sprite=nullptr;uint32_t image=0;};std::map<P,ChapterCoverFit>chapterCoverFits;
 void fitExpandedChapterCover(Runtime&r,P loader){
  if(!r.alive(loader))return;P image=r.get<P>(loader,"_image");if(!r.alive(image))return;P sprite=r.call(image,"get_sprite");if(!r.alive(sprite))return;
@@ -512,7 +512,9 @@ void clearSparseButtons(Runtime&r){
  for(auto entry:sparsePlaceholders)r.gchandle_free(entry.first);sparsePlaceholders.clear();
  sparseButtons.clear();sparseSelector=sparseItem=nullptr;sparseSlot=sparseCount=-1;sparseRevision=NSUIntegerMax;
 }
+#include "PMSelectorRowPresentation.inc"
 void selectorLoadingEnd(Runtime&r,bool finishSelected){
+ clearSelectorRowPresentation(r);
  clearVariantCovers(r);
  clearSparseButtons(r);
  initializedSelector=nullptr;initializedCount=initializedSlot=-1;initializedRevision=NSUIntegerMax;
@@ -572,13 +574,7 @@ void prepareSelectorItems(Runtime&r,P selector){
 void selectorDifficultyUI(Runtime&r,P selector){
 
  if(r.get<bool>(selector,"exit"))return;
- // Native row pooling/SetText can rewrite a missing grade to 0 without
- // changing the selected item or difficulty cache key. Restore existing-chart
- // text too after result return; keep native locked/hidden visibility intact.
- P liveItems=r.call(selector,"get_SongItems");int liveSlot=r.get<int>(selector,"nowLevel");
- for(int j=0;j<r.count(liveItems);++j){P item=r.at(liveItems,j),song=r.get<P>(item,"songInfo");NSString*id=r.string(r.get<P>(song,"songsId"));auto group=variants.find(id.UTF8String?:"");if(group==variants.end())continue;bool present=group->second.count(liveSlot)!=0;
-  for(const char*field:{"selectorItemUpside","selectorItemDownside"}){P row=r.get<P>(item,field);if(!r.alive(row))continue;P label=r.get<P>(row,"difficulty");if(!r.alive(label))continue;NSString*grade=present?PMDifficultyText(group->second.at(liveSlot)):@"";if(![r.string(r.call(label,"get_text"))isEqualToString:grade])r.call(label,"set_text",{"System.String"},{r.managedString(grade)});}
- }
+ reconcileLogicalRows(r,selector);
  if(hasDifficultyPager(selector)){difficultyPager(r,selector);return;}
  P items=r.call(selector,"get_SongItems");int count=r.count(items),index=r.get<int>(selector,"nowSong"),slot=r.get<int>(selector,"nowLevel");
  if(slot<0||slot>3||index<0||index>=count)return;
@@ -594,10 +590,6 @@ void selectorDifficultyUI(Runtime&r,P selector){
  clearSparseButtons(r);
  for(int j=0;j<count;++j){P item=r.at(items,j),song=r.get<P>(item,"songInfo");NSString*id=r.string(r.get<P>(song,"songsId"));auto group=variants.find(id.UTF8String?:"");
   if(group==variants.end()||![id hasPrefix:@"pm_"])continue;
-  bool present=group->second.count(slot)!=0;
-  if(!present)for(const char*field:{"selectorItemUpside","selectorItemDownside"}){
-   P row=r.get<P>(item,field);if(!r.alive(row))continue;P label=r.get<P>(row,"difficulty");if(r.alive(label)){P object=r.call(label,"get_gameObject");bool no=false;if(r.unbox<bool>(r.call(object,"get_activeSelf")))r.call(object,"SetActive",{"System.Boolean"},{&no});}
-  }
   if(j!=index)continue;
   P bar=r.get<P>(selector,"levelBarController"),infos=bar?r.get<P>(bar,"levelInfos"):nullptr;
   for(int i=0;infos&&i<4&&uintptr_t(i)<r.array_length(infos);++i){P info=r.arrayAt(infos,i);if(!info)continue;bool available=group->second.count(i)!=0;
@@ -1457,11 +1449,17 @@ void noteMoved(Runtime&r,P controlObject,bool hold){
   int order=hold?storyHoldOrder:storyNoteOrder;r.call(renderer,"set_sortingOrder",{"System.Int32"},{&order});
  }
 }
+bool isZeroSkewTrack(NSDictionary*decor){
+ NSArray*events=decor[@"skewControl"];if(!events.count)return true;auto found=zeroSkewTracks.find(events);if(found!=zeroSkewTracks.end())return found->second;
+ const auto*points=controlTrack(decor,@"skewControl");bool zero=true;if(points)for(const auto&point:*points)if(point.value!=0){zero=false;break;}zeroSkewTracks.emplace(events,zero);return zero;
+}
 void finishNoteGeometry(Runtime&r,P controlObject,bool hold){
  if(hold||!currentChart||!r.alive(controlObject))return;P note=r.get<P>(controlObject,"noteInfor");auto found=extras.find(note);if(found==extras.end())return;
  int index=r.get<int>(note,"judgeLineIndex")/2;NSArray*lines=currentChart[@"judgeLineList"];if(index<0||index>=(int)lines.count)return;
  NSDictionary*d=lines[index][@"pmDecor"];P renderer=r.get<P>(controlObject,"_spriteRenderer");
- if(![d[@"skewControl"]count]&&!skewMeshes.count(renderer))return;
+ // Standard RPE emits a two-point all-zero skew track. No time/floor/scale
+ // or mesh query is necessary unless we previously installed a mesh to restore.
+ if(isZeroSkewTrack(d)){if(skewMeshes.count(renderer))applySkew(r,renderer,0);return;}
  float now=r.get<float>(r.get<P>(controlObject,"progressControl"),"nowTime");double current=sourceFloor(index,now,0);
  double distance=(scalar(found->second[@"floorPosition"])-current)*rpeFloorToDistance+scalar(found->second[@"pmYOffset"]);
  V3 scale=r.unbox<V3>(r.call(r.call(controlObject,"get_transform"),"get_localScale"));

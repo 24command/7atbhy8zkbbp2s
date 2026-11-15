@@ -25,6 +25,7 @@ void difficultyResultLabel(pmbridge::Runtime&,void*iterator);
 void difficultyTransitionLabel(pmbridge::Runtime&,void*selector);
 void difficultyIntro(pmbridge::Runtime&,void*level);
 void difficultyGameplayLabel(pmbridge::Runtime&,void*progress);
+void restoreSelectorRowVisibility(pmbridge::Runtime&);
 void selectorDifficultyUI(pmbridge::Runtime&,void*selector);
 NSDictionary*officialSnapshot();NSDictionary*cachedOfficialSnapshot();NSDictionary*command(NSString*action,NSString*identifier,int slot);
 void beforeInformation(pmbridge::Runtime&,void*level);

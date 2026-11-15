@@ -1,8 +1,13 @@
 #import "../PhiMod/Sources/PMDifficultyMetadata.h"
 #include "../PhiMod/Core/PMDifficultyPages.hpp"
 #include <cassert>
+#include <vector>
 #include <cstdio>
 int main(){@autoreleasepool{
+ NSDictionary*at=@{@"id":@"original",@"level":@"AT"},*beyond=@{@"id":@"pm_beyond",@"level":@"Beyond"},*sp=@{@"id":@"pm_sp",@"level":@"SP"};
+ std::vector<NSDictionary*>onlyOfficial{at},onlySP{sp},extra{at,beyond,sp},empty;
+ assert(PMMatchingExtraDifficulty(onlyOfficial,@"Beyond")==nil);assert(PMMatchingExtraDifficulty(onlySP,@"Beyond")==nil);
+ assert(PMMatchingExtraDifficulty(extra,@"Beyond")==beyond);assert(PMMatchingExtraDifficulty(extra,@"SP")==sp);assert(PMMatchingExtraDifficulty(extra,@"AT")==nil);assert(PMMatchingExtraDifficulty(empty,@"Beyond")==nil);
  assert(PMStockDifficulty(@"at")==3);assert(PMStockDifficulty(@"SP")==-1);assert(PMStockDifficulty(@"Another INFINITY")==-1);
  assert([PMDifficultyName(@"  SP  ")isEqualToString:@"SP"]);
  assert(PMDifficultyNumber(@"16.7")==16.7);for(NSString*s in @[@"",@"?",@"SP",@"16+",@"nan",@"-1"])assert(PMDifficultyNumber(s)==0);

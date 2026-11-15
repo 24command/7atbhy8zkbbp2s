@@ -47,7 +47,11 @@ void selectExistingDifficulty(Runtime&r,P selector,P item,int requested,bool use
  // reconciliation must neither emit audio nor move the list under a finger.
  bool finger=r.get<bool>(selector,"fingerOnSongList");r.put(selector,"levelNum",std::max(3,extent));
  if(userInitiated){r.put(selector,"fingerOnSongList",false);try{r.call(selector,"SetLevel",{"System.Int32"},{&selected});}catch(...){r.put(selector,"fingerOnSongList",finger);throw;}r.put(selector,"fingerOnSongList",finger);}
- r.put(selector,"nowLevel",selected);r.put(selector,"lastLevel",selected);r.call(selector,"SetText");
+ int before=r.get<int>(selector,"nowLevel");r.put(selector,"nowLevel",selected);r.put(selector,"lastLevel",selected);r.call(selector,"SetText");
+ // lastLevel suppresses the game's next global row refresh. Do that refresh
+ // explicitly on a silent fallback, without invoking SetLevel/audio/SortSong.
+ if(!userInitiated&&before!=selected){P items=r.call(selector,"get_SongItems");for(int i=0,n=r.count(items);i<n;++i)r.call(r.at(items,i),"SetText",{"System.Int32"},{&selected});}
+
  if(!userInitiated)r.call(selector,"ReplaceCover",{"System.Int32"},{&selected});
 
  recordSlot=-1;sparseSlot=-1;initializedSlot=-1;

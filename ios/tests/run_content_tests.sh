@@ -56,3 +56,8 @@ clang++ -std=c++17 -O2 -Wall -Wextra -Werror "$ROOT/tests/PMRecoveryIndexTest.cp
 clang++ -std=c++17 -fobjc-arc -framework Foundation "$ROOT/tests/PMContentIOTest.mm" -o "$OUT/contentio"
 "$OUT/contentio"
 python3 "$ROOT/tests/test_content_memory_contracts.py"
+
+python3 "$ROOT/tests/test_chapter_picker_page.py"
+python3 "$ROOT/tests/test_dense_effects_regression.py"
+python3 "$ROOT/tests/test_bridge_metadata_cache.py"
+python3 "$ROOT/tests/test_logical_rows_and_zero_skew.py"
