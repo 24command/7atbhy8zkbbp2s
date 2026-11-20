@@ -11,6 +11,15 @@ UIImage*PMDecodeCoverData(NSData*data,NSError**error){
  if(!bitmap){if(error)*error=coverError(@"Cannot prepare cover pixels");return nil;}
  UIImage*result=[UIImage imageWithCGImage:bitmap scale:1 orientation:UIImageOrientationUp];CGImageRelease(bitmap);return result;
 }
+UIImage*PMBlurCover(UIImage*uprightImage,CGFloat radius,NSError**error){
+ CIImage*input=[CIImage imageWithCGImage:uprightImage.CGImage];
+ CIFilter*blur=[CIFilter filterWithName:@"CIGaussianBlur"];[blur setValue:[input imageByClampingToExtent] forKey:kCIInputImageKey];[blur setValue:@(radius) forKey:kCIInputRadiusKey];
+ CIImage*filtered=[blur.outputImage imageByCroppingToRect:input.extent];
+ static CIContext*context;static dispatch_once_t once;dispatch_once(&once,^{context=[CIContext contextWithOptions:@{kCIContextUseSoftwareRenderer:@YES}];});
+ CGImageRef bitmap=filtered?[context createCGImage:filtered fromRect:input.extent]:nullptr;
+ if(!bitmap){if(error)*error=coverError(@"Cannot blur cover background");return nil;}
+ UIImage*blurred=[UIImage imageWithCGImage:bitmap];CGImageRelease(bitmap);return blurred;
+}
 UIImage*PMCompleteCover(UIImage*image,CGFloat aspect,NSError**error){
  if(!image.CGImage||!std::isfinite(aspect)||aspect<=0){if(error)*error=coverError(@"Invalid cover aspect or image");return nil;}
  @try{
@@ -27,13 +36,7 @@ UIImage*PMCompleteCover(UIImage*image,CGFloat aspect,NSError**error){
  // The background alone uses aspect-fill and cropping. Foreground uses aspect-fit.
  auto fill=pmcover::fit(source.width,source.height,canvas.width,canvas.height,true);
  UIImage*background=[renderer imageWithActions:^(UIGraphicsImageRendererContext*c){[[UIColor blackColor]setFill];UIRectFill((CGRect){CGPointZero,canvas});[image drawInRect:CGRectMake(fill.x,fill.y,fill.w,fill.h)];}];
- CIImage*input=[CIImage imageWithCGImage:background.CGImage];
- CIFilter*blur=[CIFilter filterWithName:@"CIGaussianBlur"];[blur setValue:[input imageByClampingToExtent] forKey:kCIInputImageKey];[blur setValue:@(MAX(2,longest*.025)) forKey:kCIInputRadiusKey];
- CIImage*filtered=[blur.outputImage imageByCroppingToRect:input.extent];
- static CIContext*context;static dispatch_once_t once;dispatch_once(&once,^{context=[CIContext contextWithOptions:@{kCIContextUseSoftwareRenderer:@YES}];});
- CGImageRef bitmap=filtered?[context createCGImage:filtered fromRect:input.extent]:nullptr;
- if(!bitmap){if(error)*error=coverError(@"Cannot blur cover background");return nil;}
- UIImage*blurred=[UIImage imageWithCGImage:bitmap];CGImageRelease(bitmap);
+ UIImage*blurred=PMBlurCover(background,MAX(2,longest*.025),error);if(!blurred)return nil;
  auto fit=pmcover::fit(source.width,source.height,canvas.width,canvas.height,false);
  return [renderer imageWithActions:^(UIGraphicsImageRendererContext*c){[blurred drawInRect:(CGRect){CGPointZero,canvas}];[image drawInRect:CGRectMake(fit.x,fit.y,fit.w,fit.h)];}];
  }@catch(NSException*exception){if(error)*error=coverError(exception.reason?:@"Cover composition failed");return nil;}

@@ -49,6 +49,20 @@ int main(){@autoreleasepool{
  assert(mz_zip_reader_file_stat(&z,0,&st));assert(strcmp(st.m_filename,"chapter.json")==0);
  int n=mz_zip_reader_locate_file(&z,"music.ogg",nullptr,0);assert(n>=0);assert(mz_zip_reader_file_stat(&z,n,&st));assert(st.m_method==0);assert(st.m_uncomp_size==32ull*1024*1024);mz_zip_reader_end(&z);
  NSString*target=[root stringByAppendingPathComponent:@"roundtrip"];assert(PMExtractArchive(out,target,&error).count==2);assert([PMFileSHA256([target stringByAppendingPathComponent:@"music.ogg"])isEqualToString:hash]);
+ // The coordinated extractor reports verified completion for this URL alone.
+ NSURL *selectedURL=[NSURL fileURLWithPath:out];
+ __block unsigned long long last=0, expected=0; __block bool started=false, completed=false;
+ id observer=[NSNotificationCenter.defaultCenter addObserverForName:@"PMChartImportBytes" object:selectedURL queue:nil usingBlock:^(NSNotification *note){
+  auto done=[note.userInfo[@"done"] unsignedLongLongValue], total=[note.userInfo[@"total"] unsignedLongLongValue];
+  assert(total>0 && done<=total && done>=last && !completed);
+  if(!started){assert(done==0);expected=total;started=true;}
+  assert(total==expected);last=done;completed=done==total;
+ }];
+ assert(PMExtractArchiveURL(selectedURL,[root stringByAppendingPathComponent:@"progress"],&error).count==2);
+ [NSNotificationCenter.defaultCenter removeObserver:observer];assert(started && completed && expected>32ull*1024*1024);
+ NSError *limitError=nil; NSString *limited=[root stringByAppendingPathComponent:@"limited"];
+ assert(!PMExtractArchiveLimited(out,limited,10,32ull*1024*1024,32ull*1024*1024,&limitError));
+ assert(limitError && ![f fileExistsAtPath:limited]);
  // A bad member must not hide its error or poison the next member of a batch.
  NSString*bad=[root stringByAppendingPathComponent:@"broken.zip"];assert([@"not a zip" writeToFile:bad atomically:YES encoding:NSUTF8StringEncoding error:&error]);
  NSUInteger success=0,failure=0;NSArray*batch=@[out,bad,out];

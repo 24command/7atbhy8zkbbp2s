@@ -28,6 +28,15 @@
 - (void)prepareForReuse{[super prepareForReuse];self.coverKey=nil;self.cover.image=nil;}
 - (void)setHighlighted:(BOOL)highlighted animated:(BOOL)animated{[super setHighlighted:highlighted animated:animated];self.card.alpha=highlighted?.6:1;}
 @end
+// The coordinator may post on a different thread. Read and write both fields
+// under the same lock so the prompt and bar always describe the same file.
+@interface PMChartBatchProgress : NSObject
+@property(nonatomic) NSUInteger fileIndex;
+@property(nonatomic) double extractionFraction;
+@end
+@implementation PMChartBatchProgress
+@end
+
 @interface PMContentController : UITableViewController <UIDocumentPickerDelegate,UISearchResultsUpdating>
 @property(nonatomic,strong) NSDictionary*db;
 @property(nonatomic,strong) NSArray<NSURL*>*pendingExports;
@@ -154,12 +163,41 @@
  PMDiagnosticsWrite("Content picker cancelled");self.imageID=nil;self.imageIsChapter=NO;
  [picker dismissViewControllerAnimated:YES completion:nil];
 }
+- (void)showImportProgress:(PMChartBatchProgress*)state files:(NSArray<NSURL*>*)files {
+ UIProgressView *bar=[[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
+ bar.frame=CGRectMake(0,0,160,4);
+ bar.accessibilityLabel=@"导入总进度";
+ self.navigationItem.titleView=bar;
+ NSDate *started=NSDate.date;
+ __weak PMContentController *weakSelf=self;
+ [self.operationTimer invalidate];
+ self.operationTimer=[NSTimer timerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer){
+  PMContentController *owner=weakSelf;
+  if(!owner){[timer invalidate];return;}
+  NSUInteger index;
+  double fraction;
+  @synchronized(state){index=state.fileIndex;fraction=state.extractionFraction;}
+  // Files have equal weight. Reserve the final tenth for store processing.
+  bar.progress=(index+0.9*fraction)/files.count;
+  NSString *phase=fraction==1 ? @"正在处理" : @"正在解压";
+  NSString *title=[NSString stringWithFormat:@"%@ %lu / %lu：%@ · %ld 秒",phase,
+                   (unsigned long)(index+1),(unsigned long)files.count,files[index].lastPathComponent,
+                   (long)(-started.timeIntervalSinceNow)];
+  if(![title isEqualToString:owner.operationTitle]){
+   owner.operationTitle=title;
+   owner.navigationItem.prompt=title;
+  }
+ }];
+ [[NSRunLoop mainRunLoop] addTimer:self.operationTimer forMode:NSRunLoopCommonModes];
+ [self.operationTimer fire];
+}
 - (void)importSelectedURLs:(NSArray<NSURL*>*)urls picker:(UIDocumentPickerViewController*)picker {
  // Consume the selection on the main thread before scheduling any work. A late
  // or repeated delegate call cannot enqueue this picker a second time.
  self.importPicker=nil;picker.delegate=nil;
  NSArray<NSURL*>*selected=[urls copy];NSString*chapter=[self.selectedChapter copy];
- if(selected.count){self.busy=YES;[self setOperation:@"正在导入／转换文件"];}
+ PMChartBatchProgress *state=[PMChartBatchProgress new];
+ if(selected.count){self.busy=YES;[self showImportProgress:state files:selected];}
  else self.pendingImportMessage=@"未收到可导入的文件，请重新选择";
  if(picker.presentingViewController&&!picker.isBeingDismissed)
   [picker dismissViewControllerAnimated:YES completion:^{[self showPendingImportMessage];}];
@@ -172,12 +210,19 @@
  dispatch_async(self.worker,^{
   NSMutableArray<NSString*>*errors=[NSMutableArray new];NSUInteger done=0,index=0,failed=0;
   for(NSURL*url in selected){@autoreleasepool{
-   ++index;NSString*progress=[NSString stringWithFormat:@"正在导入 %lu / %lu：%@",(unsigned long)index,(unsigned long)selected.count,url.lastPathComponent];
-   dispatch_async(dispatch_get_main_queue(),^{[self setOperation:progress];});
+   @synchronized(state){state.fileIndex=index++;state.extractionFraction=0;}
    NSError*e=nil;BOOL ok=NO;NSTimeInterval began=NSDate.timeIntervalSinceReferenceDate;
    PMDiagnosticsWrite([NSString stringWithFormat:@"Content import begin: %@",url.lastPathComponent].UTF8String);
+   NSNotificationCenter *center=NSNotificationCenter.defaultCenter;
+   id observer=[center addObserverForName:@"PMChartImportBytes" object:url queue:nil usingBlock:^(NSNotification *note){
+    uint64_t written=[note.userInfo[@"done"] unsignedLongLongValue];
+    uint64_t total=[note.userInfo[@"total"] unsignedLongLongValue];
+    double fraction=written==total ? 1.0 : (total ? (double)written/total : 0.0);
+    @synchronized(state){state.extractionFraction=MAX(state.extractionFraction,MIN(1.0,fraction));}
+   }];
    @try{ok=[PMContentStore.shared importURL:url chapter:chapter error:&e];}
    @catch(NSException*exception){e=[NSError errorWithDomain:@"PhiMod.Import" code:1 userInfo:@{NSLocalizedDescriptionKey:exception.reason ?: exception.name}];}
+   @finally{[center removeObserver:observer];}
    if(ok)done++;else{
     ++failed;
     // Bound retained error text even when a large batch or provider fails.
@@ -190,7 +235,7 @@
   }}
   if(failed>errors.count)[errors addObject:[NSString stringWithFormat:@"另有 %lu 个文件导入失败",(unsigned long)(failed-errors.count)]];
   NSString*summary=[NSString stringWithFormat:@"已完成 %lu / %lu\n%@",(unsigned long)done,(unsigned long)selected.count,[errors componentsJoinedByString:@"\n"]];
-  dispatch_async(dispatch_get_main_queue(),^{self.busy=NO;[self reload];self.pendingImportMessage=summary;[self showPendingImportMessage];});
+  dispatch_async(dispatch_get_main_queue(),^{self.navigationItem.titleView=self.pages;self.busy=NO;[self reload];self.pendingImportMessage=summary;[self showPendingImportMessage];});
  });
 }
 - (void)documentPicker:(UIDocumentPickerViewController*)picker didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls {
