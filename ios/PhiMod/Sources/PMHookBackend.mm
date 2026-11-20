@@ -234,7 +234,14 @@ void observe(float code,float offset,phimod::Rating rating){
  float before=attempt->hp();if(attempt->options().hpEnabled&&rating!=phimod::Rating::Perfect)diagf("HP judgement enter code=%.3f rating=%d hp=%.2f",code,(int)rating,before);bool accepted=attempt->observe(code,offset,rating);
  if(accepted&&attempt->options().hpEnabled&&before!=attempt->hp()){pmchallenge::observe(before,attempt->hp());diagf("HP state changed code=%.3f hp=%.2f -> %.2f; visual update deferred",code,before,attempt->hp());}
 }
+// The judgment that drains LIFE still runs its native callback. Later judgments,
+// including other notes in the same frame, must not change the course result.
+bool courseScoreFrozen(){
+ return applying() && attempt->trackLost() && (pmchallenge::hpRoot || pmchallenge::variable());
+}
 void onPerfect(P self,float code,float offset,V3 pos,bool hold,P mi){
+ if(courseScoreFrozen())return;
+
  if(applying()&&attempt->options().autoplay){
   try{auto &r=R();if(attempt->deferHold(code,offset,{pos.x,pos.y,pos.z},hold,r.get<float>(progress(),"nowTime")))return;
    if(!attempt->creditOnce(code))return;
@@ -243,6 +250,8 @@ void onPerfect(P self,float code,float offset,V3 pos,bool hold,P mi){
  observe(code,offset,phimod::Rating::Perfect);pmfeatures::observe(0);credit(self,code,offset,pos,hold,mi);
 }
 void onMiss(P self,float code,P mi){
+ if(courseScoreFrozen())return;
+
  diagnoseNativeMiss(code);
  if(applying()&&attempt->options().autoplay){
   // Android only defers type-3 holds to their real tail. Ordinary Tap/Drag/
@@ -253,10 +262,14 @@ void onMiss(P self,float code,P mi){
  }
  observe(code,0,phimod::Rating::Miss);pmfeatures::observe(3);if(pmhp::active())diagf("HP Miss original enter code=%.3f hp=%.2f",code,attempt?attempt->hp():-1);orig<void(*)(P,float,P)>(h::miss)(self,code,mi);if(pmhp::active())diagf("HP Miss original returned code=%.3f",code);
 }
-void onBad(P self,float code,float offset,P mi){observe(code,offset,phimod::Rating::Bad);pmfeatures::observe(2);orig<void(*)(P,float,float,P)>(h::bad)(self,code,offset,mi);
+void onBad(P self,float code,float offset,P mi){
+ if(courseScoreFrozen())return;
+observe(code,offset,phimod::Rating::Bad);pmfeatures::observe(2);orig<void(*)(P,float,float,P)>(h::bad)(self,code,offset,mi);
  if(timingHints::showBad)timingHints::show(code,offset,nullptr);
 }
-void onGood(P self,float code,float offset,V3 pos,bool hold,P mi){observe(code,offset,phimod::Rating::Good);pmfeatures::observe(1);orig<PerfectFn>(h::good)(self,code,offset,pos,hold,mi);timingHints::show(code,offset,&pos);}
+void onGood(P self,float code,float offset,V3 pos,bool hold,P mi){
+ if(courseScoreFrozen())return;
+observe(code,offset,phimod::Rating::Good);pmfeatures::observe(1);orig<PerfectFn>(h::good)(self,code,offset,pos,hold,mi);timingHints::show(code,offset,&pos);}
 void diagnosticTick(Runtime&r,P progressControl,const char *source){
  if(!progressControl)return;
  bool playing=r.get<bool>(progressControl,"isPlaying");
@@ -286,6 +299,7 @@ void tickGameplay(Runtime&r,P progressControl,const char *source){
   // Pending holds only credit at their real tail, not the engine's -220ms
   // completion point. Exactly one sample/HP award and one original Perfect.
   for(auto c:attempt->dueHolds(now,playing)){
+   if(courseScoreFrozen())break;
    observe(c.code,c.offset,phimod::Rating::Perfect);
    credit(score(),c.code,c.offset,{c.position[0],c.position[1],c.position[2]},c.hold,nullptr);
   }
@@ -318,6 +332,9 @@ void onProgressUpdate(P self,P mi){
  if(heartbeat)diagf("ProgressControl.Update enter n=%llu",(unsigned long long)count);
  try{if(pmpractice::beforeProgress(R(),self)){if(pmpractice::consumeRestart())restartPracticeSession();if(heartbeat)logProgressSnapshot(R(),self,"ProgressControl.Update paused",count);return;}}
  catch(const std::exception&e){diagf("Practice pre-update failed: %s",e.what());}
+ // Failure fading must keep advancing when the native judge stops updating.
+ if(attempt && attempt->trackLost() && !levelOverStarted && self==progress())
+  tickGameplay(R(),self,"HP failure progress");
  orig<VoidFn>(h::progressUpdate)(self,mi);
  if(heartbeat)diagf("ProgressControl.Update original returned n=%llu",(unsigned long long)count);
  try{pmhp::loadVisuals(R(),self);}catch(const std::exception&e){diagf("HP visual poll failed: %s",e.what());}
@@ -563,6 +580,7 @@ void onLevelInformation(P self,P mi){
  uint64_t count=++levelInfoCalls;diagf("LevelControl.SetInformation enter n=%llu",(unsigned long long)count);
  if(!broken)try{pmcontent::beforeInformation(R(),self);}catch(const std::exception&e){fault(e);}
  orig<VoidFn>(h::levelInfo)(self,mi);
+ try{pmhp::rememberChartCount(R(),self);}catch(const std::exception&e){diagf("Chart count cache: %s",e.what());}
  diagf("LevelControl.SetInformation original returned n=%llu",(unsigned long long)count);
  if(!broken)try{pmmodes::afterInformation(R(),self);pmcontent::afterChart(R(),self);pmfeatures::afterChart(R(),self);pmcontent::difficultyIntro(R(),self);}catch(const std::exception&e){fault(e);}
  diagf("LevelControl.SetInformation finished n=%llu",(unsigned long long)count);

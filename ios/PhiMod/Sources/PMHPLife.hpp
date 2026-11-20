@@ -19,6 +19,7 @@ void scoreFrame(pmbridge::Runtime&,void*);
 void flash(pmbridge::Runtime&);
 bool failureReady(pmbridge::Runtime&,void*);
 bool failing();
+void rememberChartCount(pmbridge::Runtime&,void*);
 void finishChallenge(pmbridge::Runtime&,void*);
 void finish(pmbridge::Runtime&);
 void validate(pmbridge::Runtime&);

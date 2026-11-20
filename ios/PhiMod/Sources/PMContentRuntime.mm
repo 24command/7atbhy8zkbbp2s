@@ -15,6 +15,7 @@
 #include "PMRuntimeFeatures.hpp"
 #import "PMContentStore.h"
 #import "PMCoverImage.h"
+#import <ImageIO/ImageIO.h>
 #import "PMChapterEditing.h"
 #import "PMChartConvert.h"
 #import "PMDiagnostics.h"
@@ -177,8 +178,25 @@ P image(Runtime&r,NSString*path,bool background=false,bool lineTexture=false,V2 
   if(!std::isfinite(sourceW)||!std::isfinite(sourceH)||sourceW<=0||sourceH<=0)throw std::runtime_error("Cover image dimensions invalid");
   const unsigned char pngMagic[8]={137,80,78,71,13,10,26,10};
   bool directPNG=!chapterBlur&&original.length>=8&&!memcmp(original.bytes,pngMagic,8)&&img.imageOrientation==UIImageOrientationUp&&sourceW<=maxSide&&sourceH<=maxSide;
-  if(directPNG)encoded=original;
-  else{
+  if(directPNG && original.length<=maxEncoded*1024*1024)encoded=original;
+  else if(!chapterBlur && !lineTexture){
+   // Decode a display-sized copy directly, including EXIF rotation. Avoid a
+   // full-resolution bitmap and PNG compression on the Unity transition frame.
+   CGImageSourceRef src=CGImageSourceCreateWithData((__bridge CFDataRef)original,nullptr);
+   CGImageRef reduced=src?CGImageSourceCreateThumbnailAtIndex(src,0,(__bridge CFDictionaryRef)@{
+    (__bridge NSString*)kCGImageSourceCreateThumbnailFromImageAlways:@YES,
+    (__bridge NSString*)kCGImageSourceCreateThumbnailWithTransform:@YES,
+    (__bridge NSString*)kCGImageSourceThumbnailMaxPixelSize:@(maxSide)}):nullptr;
+   if(src)CFRelease(src);
+   if(reduced){
+    UIImage *thumbnail=[UIImage imageWithCGImage:reduced];
+    auto alpha=CGImageGetAlphaInfo(reduced);
+    bool opaque=alpha==kCGImageAlphaNone || alpha==kCGImageAlphaNoneSkipFirst || alpha==kCGImageAlphaNoneSkipLast;
+    encoded=opaque?UIImageJPEGRepresentation(thumbnail,.93):UIImagePNGRepresentation(thumbnail);
+    CGImageRelease(reduced);
+   }
+  }
+  if(!encoded){
    CGFloat factor=MIN(1.0,maxSide/MAX(sourceW,sourceH));
    CGSize size=CGSizeMake(MAX(1,round(sourceW*factor)),MAX(1,round(sourceH*factor)));
    UIGraphicsImageRendererFormat*rendererFormat=[UIGraphicsImageRendererFormat defaultFormat];rendererFormat.scale=1;
@@ -602,7 +620,9 @@ void selectorLoadingEnd(Runtime&r,bool finishSelected){
  if(loadingSelector)r.gchandle_free(loadingSelector);loadingSelector=0;
  std::vector<P>remaining;for(auto&entry:selectorAssets)remaining.push_back(entry.first);
  for(P asset:remaining){auto found=selectorAssets.find(asset);if(found==selectorAssets.end())continue;
-  if(finishSelected&&selectedAssetIDs.count(found->second.identifier)){completeSelectorAsset(r,asset);continue;}
+  // Entry only needs the selected illustration here. A pending preview would
+  // synchronously decode the entire song just as the selector is being removed.
+  if(finishSelected&&!found->second.music&&selectedAssetIDs.count(found->second.identifier)){completeSelectorAsset(r,asset);continue;}
   // Consumers awaiting a cancelled scene request must not wait forever. Remove
   // it from AssetStore too, so returning to this song creates a fresh request.
   r.put(asset,"<IsDone>k__BackingField",true);r.put(asset,"<IsFailed>k__BackingField",true);assetRelease(r,asset,true);

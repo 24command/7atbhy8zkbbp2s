@@ -118,7 +118,7 @@ class SourceContracts(unittest.TestCase):
   self.assertIn('diagnosticTick(r,progressControl,source)',hook)
   progress_update=hook[hook.index('void onProgressUpdate('):hook.index('void onJudgeUpdate(')]
   self.assertIn('orig<VoidFn>(h::progressUpdate)(self,mi)',progress_update)
-  self.assertNotIn('tickGameplay(',progress_update)
+  self.assertRegex(progress_update,r'if\(attempt && attempt->trackLost\(\) && !levelOverStarted && self==progress\(\)\)\s*tickGameplay')
   self.assertIn('loadingMaskCleared=false',hook)
   self.assertIn('registerOne(note)',hook)
   self.assertNotIn('registerChart(',hook)
@@ -199,7 +199,7 @@ class SourceContracts(unittest.TestCase):
   self.assertIn('set_blocksRaycasts',ui);self.assertIn('set_interactable',ui)
  def test_native_hp_and_pending_failure_transition(self):
   hp=(ROOT/'PhiMod/Sources/PMHPLife.mm').read_text(encoding='utf-8')
-  for value in ('LevelMod/SecretChallengeLifeMod','LevelMod/HPDisplay','ConfigureCanvas','ApplyShaderParameters','SmoothDamp','InstantiateAsync','ReleaseInstance','AudioFadeOut','failure.ready(time(r))'):self.assertIn(value,hp)
+  for value in ('LevelMod/SecretChallengeLifeMod','LevelMod/HPDisplay','ConfigureCanvas','ApplyShaderParameters','SmoothDamp','InstantiateAsync','ReleaseInstance','AudioFadeOut','get_unscaledTime'):self.assertIn(value,hp)
   self.assertNotIn('r.call(self,"Start")',hp)
   prepare=hp[hp.index("void prepare("):hp.index("P valueCall(")]
   self.assertNotIn('r.put(info,"levelMods"',hp)

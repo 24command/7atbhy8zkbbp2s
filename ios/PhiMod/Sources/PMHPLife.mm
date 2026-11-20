@@ -1,4 +1,5 @@
 #include "PMHPLife.hpp"
+#import "PMContentStore.h"
 #include "../Core/PMFlowCore.hpp"
 #include <cmath>
 #include <cstdio>
@@ -147,32 +148,97 @@ void scoreFrame(Runtime&r,P score){
 void flash(Runtime&r){if(!enabled||finished)return;hitFlashAt=time(r);PMDiagnosticsWrite("HP hit feedback queued (MOD color animation)");}
 bool failing(){return failure.started();}
 void finish(Runtime&);
-void finishChallenge(Runtime&r,P progress){
- PMDiagnosticsWrite("HP challenge failure: preparing ChallengeModeOver");
- P gi=r.mainGame(),score=r.get<P>(progress,"scoreControl"),info=r.get<P>(progress,"levelInformation");
- r.call(score,"FreezeScore");
- P result=r.call(score,"GetLevelResultInfo");
- r.put(gi,"levelResultInfo",result);
- P items=r.get<P>(gi,"challengeSongItems");
- int index=r.get<int>(gi,"nowChallengeIndex")-1;
- if(!items||index<0||index>=r.count(items))throw std::runtime_error("HP challenge result index invalid");
- P codes=r.get<P>(gi,"noteCodes");
- P item=r.at(items,index);r.put(item,"result",result);r.put(item,"noteCodes",codes);
- for(int i=index+1;i<r.count(items);++i){
-  P empty=r.object_new(r.klass("LevelResultInfo"));r.call(empty,".ctor");r.put(r.at(items,i),"result",empty);
-  if(!codes)continue;
-  P emptyCodes=r.object_new(r.object_get_class(codes));r.call(emptyCodes,".ctor");r.put(r.at(items,i),"noteCodes",emptyCodes);
+// Cache the engine's actual count once per official difficulty and app build.
+static NSString *observedCountKey(NSString *identifier,NSString *level){
+ static NSString *prefix;
+ static dispatch_once_t once;
+ dispatch_once(&once,^{
+  NSDictionary *info=NSBundle.mainBundle.infoDictionary;
+  prefix=[NSString stringWithFormat:@"PhiMod.NoteCount.%@.%@/",info[@"CFBundleShortVersionString"],info[@"CFBundleVersion"]];
+ });
+ return [NSString stringWithFormat:@"%@%@|%@",prefix,identifier,level];
+}
+void rememberChartCount(Runtime &r,P level){
+ P start=r.get<P>(r.mainGame(),"levelStartInfo");
+ if(!start)return;
+ NSString *identifier=r.string(r.get<P>(start,"songsId")),*difficulty=r.string(r.get<P>(start,"songsLevel"));
+ if(!identifier.length || !difficulty.length || [identifier hasPrefix:@"pm_"])return;
+ int count=r.get<int>(r.get<P>(level,"levelInformation"),"numOfNotes");
+ if(count<=0)return;
+ NSString *key=observedCountKey(identifier,difficulty);
+ if([NSUserDefaults.standardUserDefaults integerForKey:key]!=count)
+  [NSUserDefaults.standardUserDefaults setInteger:count forKey:key];
+}
+static int courseNoteCount(Runtime &r,P entry){
+ P item=r.get<P>(entry,"songInfo"),song=r.get<P>(item,"songInfo");
+ NSString *identifier=r.string(r.get<P>(song,"songsId"));
+ NSString *folder=[PMContentStore.shared asset:identifier];
+ if(folder){
+  auto loadJSON=[&](NSString *file)->NSDictionary*{
+   NSData *data=[NSData dataWithContentsOfFile:[folder stringByAppendingPathComponent:file] options:NSDataReadingMappedIfSafe error:nil];
+   id doc=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]:nil;
+   return [doc isKindOfClass:NSDictionary.class]?doc:nil;
+  };
+  NSNumber *real=loadJSON(@"conversion.json")[@"realNotes"];
+  if([real isKindOfClass:NSNumber.class])return std::max(0,real.intValue);
+  // Legacy imports may predate conversion metadata. The native chart excludes fake notes.
+  NSDictionary *chart=loadJSON(@"chart-native.json");
+  if(chart){int count=0;for(NSDictionary *line in chart[@"judgeLineList"])for(NSString *side in @[@"notesAbove",@"notesBelow"])count += [line[side] count];return count;}
  }
- r.put(progress,"isPlaying",false);r.put(info,"levelOver",true);r.put(info,"canLevelOver",true);r.put(info,"canPause",false);
- finish(r);r.put(progress,"levelBreak",false);r.call(progress,"LevelBreak",{"System.String"},{r.string_new("ChallengeModeOver")});
+ static NSDictionary *const stock=@{
+#include "PMCourseNoteCounts.inc"
+ };
+ int slot=r.get<int>(entry,"levelIndex");
+ if(slot>=0 && slot<4){
+  NSString *level=@[@"EZ",@"HD",@"IN",@"AT"][slot];
+  NSNumber *observed=[NSUserDefaults.standardUserDefaults objectForKey:observedCountKey(identifier,level)];
+  if(observed.intValue>0)return observed.intValue;
+  for(NSString *idValue in @[identifier?:@"",r.string(r.get<P>(song,"songsKey"))?:@""]){
+   for(NSString *suffix in @[@"",@".0"]){
+    NSNumber *value=stock[[NSString stringWithFormat:@"%@%@|%@",idValue,suffix,level]];
+    if(value)return value.intValue;
+   }
+  }
+ }
+ PMDiagnosticsWrite([[NSString stringWithFormat:@"Missing course note count for %@ slot %d",identifier,slot] UTF8String]);return 0;
+}
+void finishChallenge(Runtime&r,P progress){
+ P gi=r.mainGame(),score=r.get<P>(progress,"scoreControl"),info=r.get<P>(progress,"levelInformation");
+ P items=r.get<P>(gi,"challengeSongItems");int index=r.get<int>(gi,"nowChallengeIndex")-1;
+ if(index<0 || index>=r.count(items))throw std::runtime_error("HP challenge result index invalid");
+ // The native end-of-song accessor also indexes the ghost-note history by
+ // difficulty. A partial run only needs the live scoreboard and judgment counts.
+ P result=r.object_new(r.klass("LevelResultInfo"));r.call(result,".ctor");
+ float points=r.get<float>(score,"_score"),percent=r.get<float>(score,"_percent");
+ if(options.noComboScore){
+  int total=r.get<int>(info,"numOfNotes");
+  if(total>0)points=std::clamp((r.get<int>(score,"perfect")+.65f*r.get<int>(score,"good"))*1000000.f/total,0.f,1000000.f);
+ }
+ r.call(result,"set_Score",{"System.Single"},{&points});
+ r.call(result,"set_Percent",{"System.Single"},{&percent});
+ for(const char *field:{"perfect","good","bad","miss","early","late"})r.put(result,field,r.get<int>(score,field));
+ r.put(result,"maxCombo",r.get<int>(score,"maxcombo"));
+ r.put(gi,"levelResultInfo",result);
+ P item=r.at(items,index);r.put(item,"result",result);
+ P codes=r.get<P>(score,"_noteCodes");r.put(item,"noteCodes",codes);
+ for(int i=index+1,n=r.count(items);i<n;++i){@autoreleasepool{
+  P entry=r.at(items,i),empty=r.object_new(r.klass("LevelResultInfo"));
+  r.call(empty,".ctor");r.put(entry,"result",empty);
+  r.put(empty,"miss",courseNoteCount(r,entry));
+  if(codes){P emptyCodes=r.object_new(r.object_get_class(codes));r.call(emptyCodes,".ctor");r.put(entry,"noteCodes",emptyCodes);}
+ }}
+ // LevelBreak schedules the change on ProgressControl.Update. Match the normal HP exit ordering.
+ r.call(progress,"LevelBreak",{"System.String"},{r.string_new("ChallengeModeOver")});
+ r.put(info,"levelOver",true);r.put(info,"canPause",false);
+ r.call(r.get<P>(progress,"audioSource"),"Stop");finish(r);
  PMDiagnosticsWrite("HP challenge failure: ChallengeModeOver requested");
 }
 bool failureReady(Runtime&r,P progress){
  if(!failure.started()){
   PMDiagnosticsWrite("HP failureReady: begin freeze/fade");
   P info=r.get<P>(progress,"levelInformation");r.put(info,"canPause",false);r.put(info,"canLevelOver",false);
-  r.put(r.get<P>(progress,"judgeControl"),"stopJudge",true);r.call(r.get<P>(progress,"scoreControl"),"FreezeScore");
-  failure.begin(time(r)); // Only start the delay after critical operations succeed.
+  r.put(r.get<P>(progress,"judgeControl"),"stopJudge",true);try{r.call(r.get<P>(progress,"scoreControl"),"FreezeScore");}catch(const std::exception&e){PMDiagnosticsWrite(e.what());}
+  failure.begin(r.unbox<float>(r.stat(r.type("UnityEngine","Time"),"get_unscaledTime"))); // Only start the delay after critical operations succeed.
   P mod=target(r,modRoot);
   if(r.alive(mod)){
    r.put(mod,"failed",true);P prefab=r.get<P>(mod,"redFlash");
@@ -183,7 +249,7 @@ bool failureReady(Runtime&r,P progress){
    r.call(mod,"StartCoroutine",{"System.Collections.IEnumerator"},{fade});
   }
  }
-  bool readyNow=failure.ready(time(r));
+  bool readyNow=failure.ready(r.unbox<float>(r.stat(r.type("UnityEngine","Time"),"get_unscaledTime")));
   if(readyNow)PMDiagnosticsWrite("HP failureReady: delay complete");
   return readyNow;
 }
