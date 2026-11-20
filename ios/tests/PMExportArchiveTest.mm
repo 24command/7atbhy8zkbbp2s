@@ -2,9 +2,36 @@
 #import "../PhiMod/Sources/PMArchive.h"
 #import "../PhiMod/Sources/PMFileDigest.h"
 #include "../PhiMod/Vendor/miniz/miniz.h"
+#import "../PhiMod/Sources/PMChapterExportPlan.h"
 #include <cassert>
 #include <cstdio>
+static void testChapterScope() {
+ NSDictionary *root = @{@"id":@"main", @"songs":@[@"start", @"native"]};
+ NSDictionary *foreign = @{@"id":@"foreign", @"songs":@[@"hard", @"easy", @"unrelated"]};
+ NSDictionary *required = @{@"id":@"required", @"songs":@[@"last", @"bonus"]};
+ NSDictionary *start = @{@"id":@"start", @"coverSwitch":@{@"ref":@"group"}};
+ NSDictionary *hard = @{@"id":@"hard", @"groupId":@"group", @"targetChapter":@"foreign",
+                        @"unlock":@{@"chain":@{@"enabled":@YES, @"song":@"last"}}};
+ NSDictionary *easy = @{@"id":@"easy", @"groupId":@"group", @"targetChapter":@"foreign"};
+ NSMutableDictionary *last = [@{@"id":@"last", @"targetChapter":@"required"} mutableCopy];
+ NSDictionary *db = @{@"chapters":@[root,foreign,required], @"songs":@[start,hard,easy,last,@{@"id":@"unrelated"},@{@"id":@"bonus"}]};
+ NSDictionary *plan = PMChapterExportPlan(db,root,@"loose");
+ assert(([plan[@"chapterIDs"] isEqual:@[@"main",@"loose"]]));
+ assert(([plan[@"orders"][@"main"] isEqual:@[@"start",@"native"]]));
+ assert(([plan[@"orders"][@"loose"] isEqual:@[@"hard",@"easy",@"last"]]));
+ assert(([plan[@"locations"] isEqual:@{@"start":@"main",@"hard":@"loose",@"easy":@"loose",@"last":@"loose"}]));
+ assert([plan[@"includedSongs"] count] == 4 && [plan[@"officialIDs"] isEqual:@[@"native"]]);
+ // Discover a chapter through a song it contains. Import needs one owner for that chart.
+ last[@"unlock"] = @{@"conditions":@[@{@"type":@"chapter", @"ref":@"required"}]};
+ plan = PMChapterExportPlan(db,root,@"loose");
+ assert(([plan[@"chapterIDs"] isEqual:@[@"main",@"required",@"loose"]]));
+ assert(([plan[@"orders"][@"required"] isEqual:@[@"last",@"bonus"]]));
+ assert(([plan[@"orders"][@"loose"] isEqual:@[@"hard",@"easy"]]));
+ assert([plan[@"locations"][@"last"] isEqual:@"required"]);
+ assert(![plan[@"includedSongs"] containsObject:@"unrelated"]);
+}
 int main(){@autoreleasepool{
+ testChapterScope();
  NSFileManager*f=NSFileManager.defaultManager;NSError*error=nil;
  NSString*root=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
  NSString*source=[root stringByAppendingPathComponent:@"source"],*out=[root stringByAppendingPathComponent:@"export.zip"];

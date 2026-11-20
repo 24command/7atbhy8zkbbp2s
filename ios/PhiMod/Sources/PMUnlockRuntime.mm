@@ -52,27 +52,13 @@ NSDictionary*unlockLibrary(){static NSDictionary*db=nil;static NSUInteger revisi
 NSDictionary*entity(NSString*id){unlockLibrary();return id?unlockEntities[id]:nil;}
 NSDictionary*songEntity(NSString*id,int slot){NSDictionary*chosen=pmcontent::selectedDifficulty(id,slot);if(chosen)return chosen;NSDictionary*db=unlockLibrary();NSArray*members=id?unlockSongGroups[id]:nil;if(!members.count)return nil;NSString*selected=db[@"chartSelections"][[NSString stringWithFormat:@"%@@%d",id,slot]];NSDictionary*fallback=nil;for(NSDictionary*s in members){if(![[s[@"level"] uppercaseString] isEqualToString:slotName(slot)])continue;if([s[@"id"] isEqualToString:selected])return s;if(!fallback)fallback=s;}return fallback;}
 NSDictionary*ruleFor(NSString*id){return PMNormalizeUnlockRule(entity(id)[@"unlock"]);}
-P record(Runtime&r,NSString*id,int slot){try{return r.call(r.mainGame(),"GetSongRecord",{"System.String","System.String"},{r.managedString(id),r.managedString(entity(id)?PMDifficultyRecordLevel(entity(id)):slotName(slot))});}catch(...){return nullptr;}}
+P record(Runtime&r,NSString*id,NSString*level){try{return r.call(r.mainGame(),"GetSongRecord",{"System.String","System.String"},{r.managedString(id),r.managedString(level)});}catch(...){return nullptr;}}
 double rksValue(Runtime&r){try{P gi=r.mainGame();P boxed=r.call(gi,"get_RankingScore");return r.unbox<float>(boxed);}catch(...){return -1;}}
-bool recordPass(Runtime&r,NSDictionary*c){
- NSString*type=c[@"type"],*ref=c[@"ref"];
- int slot=c[@"slot"]?[c[@"slot"] intValue]:-1;
- if([type isEqualToString:@"rks"]){double value=rksValue(r);return std::isfinite(value)&&value+1e-6>=[c[@"value"] doubleValue];}
- if(!ref.length)return false;
- NSDictionary*db=unlockLibrary();
- if([type isEqualToString:@"chapter"]){
-  NSArray*members=entity(ref)[@"songs"];
-  if(!members){for(NSDictionary*chapter in pmcontent::cachedOfficialSnapshot()[@"chapters"])if([chapter[@"chapterCode"] isEqualToString:ref]){NSMutableArray*ids=[NSMutableArray new];for(NSDictionary*song in chapter[@"songInfo"][@"songs"])if([song[@"songsId"] isKindOfClass:NSString.class])[ids addObject:song[@"songsId"]];members=ids;break;}}
-  if(![members isKindOfClass:NSArray.class]||!members.count)return false;
-  for(NSString*sid in members)if(!recordPass(r,@{@"type":@"score",@"ref":sid,@"slot":@(slot),@"value":@700000}))return false;
-  return true;
- }
- NSMutableArray*candidates=[PMUnlockReferenceSongs(db[@"songs"],ref) mutableCopy];
- if(!candidates.count)[candidates addObject:@{@"id":ref}];
- double threshold=[c[@"value"] doubleValue];
+bool candidatesPass(Runtime&r,NSArray*candidates,int slot,NSString*type,double threshold){
  for(NSDictionary*song in candidates)for(int s=slot<0?0:slot;s<=(slot<0?3:slot);++s){
-  if([song[@"level"]isKindOfClass:NSString.class]){int stock=PMStockDifficulty(song[@"level"]);if(stock>=0&&stock!=s)continue;if(stock<0&&((slot<0&&s!=3)||(slot>=0&&s!=3)))continue;}
-  P rec=record(r,song[@"id"],s);if(!rec)continue;
+  NSString*level=slotName(s);
+  if(song[@"level"] && ![PMDifficultyRecordLevel(song) isEqualToString:level])continue;
+  P rec=record(r,song[@"id"],level);if(!rec)continue;
   int score=r.get<int>(rec,"s");if(score<=0)continue;
   if([type isEqualToString:@"score"]&&score>=threshold)return true;
   if([type isEqualToString:@"acc"]){float acc=r.get<float>(rec,"a");if(std::isfinite(acc)&&acc+1e-6>=threshold)return true;}
@@ -80,6 +66,23 @@ bool recordPass(Runtime&r,NSDictionary*c){
   if([type isEqualToString:@"phi"]&&score==1000000)return true;
  }
  return false;
+}
+bool recordPass(Runtime&r,NSDictionary*c){
+ NSString*type=c[@"type"],*ref=c[@"ref"];
+ int slot=c[@"slot"]?[c[@"slot"] intValue]:-1;
+ if([type isEqualToString:@"rks"]){double value=rksValue(r);return std::isfinite(value)&&value+1e-6>=[c[@"value"] doubleValue];}
+ if(!ref.length)return false;
+ NSDictionary*db=unlockLibrary(),*official=pmcontent::cachedOfficialSnapshot();
+ static NSDictionary*indexedSnapshot=nil,*officialSongs=nil;
+ if(official!=indexedSnapshot){officialSongs=PMOfficialSongMap(official);indexedSnapshot=official;}
+ if([type isEqualToString:@"chapter"]){
+  return PMUnlockChapterPass(db,official,ref,unlockEntities,^bool(NSString*group){
+   NSArray*candidates=PMUnlockRecordCandidates(unlockSongGroups[group],group,officialSongs[group],slot,true);
+   return candidatesPass(r,candidates,slot,@"score",700000);
+  });
+ }
+ NSArray*candidates=PMUnlockRecordCandidates(unlockSongGroups[ref],ref,officialSongs[ref],slot,false);
+ return candidatesPass(r,candidates,slot,type,[c[@"value"] doubleValue]);
 }
 bool passes(Runtime&r,NSDictionary*rule){
  if(PMUnlockValidationError(rule))return false;

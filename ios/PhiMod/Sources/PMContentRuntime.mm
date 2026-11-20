@@ -323,6 +323,61 @@ void chapterPrepare(Runtime&r,P self){selectorLoadingEnd(r,false);for(auto&entry
  for(auto h:roots)r.gchandle_free(h);r.gchandle_free(previousRoot);r.gchandle_free(infosRoot);
  if(chapterSelectorRoot)r.gchandle_free(chapterSelectorRoot);chapterSelectorRoot=r.gchandle_new(self,false);
 }
+// ChapterSelector.Start counts the group save. Replace only the contribution
+// of slots whose backing chart has a different save identity.
+static void correctChapterRecordCounts(Runtime &r, P selector, P cards) {
+ const int slot = r.get<int>(selector,"_nowLevelIndex");
+ if (slot < 0 || slot > 3 || variants.empty() || !cards) return;
+ NSString *level = @[@"EZ", @"HD", @"IN", @"AT"][slot];
+ struct Counts { int clear, fc, phi; };
+ auto counts = [&](P record) -> Counts {
+  const int score = record ? r.get<int>(record,"s") : 0;
+  const bool phi = score >= 1000000;
+  return {score >= 700000, phi || (record && r.get<int>(record,"c") == 1), phi};
+ };
+ auto read = [&](NSString *sid, NSString *key) {
+  return counts(r.call(r.mainGame(),"GetSongRecord",{"System.String","System.String"},
+                       {r.managedString(sid),r.managedString(key)}));
+ };
+ std::map<std::string, Counts> deltas;
+ for (const auto &group : variants) {
+  auto member = group.second.find(slot);
+  if (member == group.second.end()) continue;
+  NSDictionary *chart = member->second;
+  NSString *sid = chart[@"id"], *groupID = [NSString stringWithUTF8String:group.first.c_str()];
+  NSString *key = PMDifficultyRecordLevel(chart);
+  if (!sid.length || ([sid isEqualToString:groupID] && [key isEqualToString:level])) continue;
+  Counts old = read(groupID,level), current = read(sid,key);
+  Counts delta = {current.clear-old.clear, current.fc-old.fc, current.phi-old.phi};
+  if (delta.clear || delta.fc || delta.phi) deltas.emplace(group.first,delta);
+ }
+ if (deltas.empty()) return;
+ for (uintptr_t index = 0; index < r.array_length(cards); ++index) {
+  P card = r.arrayAt(cards,(int)index), info = card ? r.get<P>(card,"songInfo") : nullptr;
+  P songs = info ? r.get<P>(info,"<songsBypassLimited>k__BackingField") : nullptr;
+  if (!songs) continue;
+  Counts total{};
+  const int size = r.count(songs);
+  for (int i = 0; i < size; ++i) {
+   P entry = r.at(songs,i);
+   if (!entry) continue;
+   auto found = deltas.find(r.string(r.get<P>(entry,"songsId")).UTF8String ?: "");
+   if (found == deltas.end()) continue;
+   total.clear += found->second.clear; total.fc += found->second.fc; total.phi += found->second.phi;
+  }
+  auto adjust = [&](const char *field, int change) {
+   if (!change) return;
+   P label = r.get<P>(card,field);
+   if (!r.alive(label)) return;
+   NSString *value = r.string(r.call(label,"get_text"));
+   NSScanner *scanner = [NSScanner scannerWithString:value ?: @""];
+   NSInteger number;
+   if ([scanner scanInteger:&number] && scanner.isAtEnd)
+    r.text(label,[@(MAX(0,number + change)) stringValue].UTF8String);
+  };
+  adjust("clearSongNum",total.clear); adjust("fullComboSongNum",total.fc); adjust("phiSongNum",total.phi);
+ }
+}
 void chapterReady(Runtime&r,P self){
  P cards=r.get<P>(self,"_chapterInfos");
  for(uintptr_t i=0;cards&&i<r.array_length(cards);++i){P card=r.arrayAt(cards,(int)i);NSString*id=r.string(r.get<P>(card,"chapterCode"));if(![id hasPrefix:@"pm_"]&&![NSFileManager.defaultManager fileExistsAtPath:[[PMContentStore.shared coverFolder:id]stringByAppendingPathComponent:@"image.png"]])continue;
@@ -353,6 +408,7 @@ void chapterReady(Runtime&r,P self){
   }
   if(!gaps.empty()){std::sort(gaps.begin(),gaps.end());float step=gaps[gaps.size()/2];V2 size=r.unbox<V2>(r.call(panel,"get_sizeDelta"));size.x=std::max(step,size.x-hiddenChapterCards*step);r.call(panel,"set_sizeDelta",{"UnityEngine.Vector2"},{&size});}
  }
+ correctChapterRecordCounts(r,self,cards);
  syncChapterCoverFallbacks(r);
  log(@"Content ChapterSelector.Start completed");
 }

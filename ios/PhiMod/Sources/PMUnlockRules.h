@@ -1,6 +1,8 @@
 #pragma once
 #import <Foundation/Foundation.h>
 #include <cmath>
+#import "PMDifficultyMetadata.h"
+#import "PMChapterEditing.h"
 
 // Android org.json accepts numeric strings and treats optional JSON null as
 // absent. Normalize only known schema fields; unknown condition types still fail.
@@ -71,9 +73,45 @@ inline NSString *PMUnlockValidationError(id raw) {
  return nil;
 }
 
-// A selected custom chart is a difficulty-specific identity. A group ID is a
-// fallback only when it is not itself an existing chart ID.
-inline NSArray* PMUnlockReferenceSongs(NSArray*songs,NSString*reference){
- for(NSDictionary*song in songs)if([song[@"id"]isEqualToString:reference])return @[song];
- NSMutableArray*group=[NSMutableArray new];for(NSDictionary*song in songs)if([song[@"groupId"]isEqualToString:reference])[group addObject:song];return group;
+// Chapter references always describe logical songs. Direct references prefer
+// the exact chart unless the caller explicitly asks for a different slot.
+inline NSArray* PMUnlockReferenceSongs(NSArray*songs, NSString*reference, int slot=-1, bool logicalSong=false){
+ NSMutableArray*members=[NSMutableArray new];
+ for(NSDictionary*song in songs){
+  BOOL exact=[song[@"id"] isEqualToString:reference];
+  int actual=PMStockDifficulty(PMDifficultyRecordLevel(song));
+  if(exact && !logicalSong && (slot<0 || slot==actual))return @[song];
+  if((slot<0 || slot==actual) && (exact || [song[@"groupId"] isEqualToString:reference]))[members addObject:song];
+ }
+ return members;
+}
+
+// songs is the index bucket for reference (chart ID or group ID).
+inline NSArray* PMUnlockRecordCandidates(NSArray*songs, NSString*reference, NSDictionary*officialSong, int slot, bool logicalSong){
+ NSArray*custom=PMUnlockReferenceSongs(songs,reference,slot,logicalSong);
+ if(!logicalSong && [custom.firstObject[@"id"] isEqualToString:reference])return custom;
+ if(!officialSong){
+  if(!songs.count)return @[@{@"id":reference}]; // Legacy native lookup.
+  return custom;
+ }
+ NSMutableArray*candidates=[custom mutableCopy];
+ NSArray*difficulty=officialSong[@"difficulty"],*levels=@[@"EZ",@"HD",@"IN",@"AT"];
+ for(int i=0;i<4 && i<(int)difficulty.count;++i){
+  if((slot<0 || slot==i) && [difficulty[i] doubleValue]>0)
+   [candidates addObject:@{@"id":reference,@"level":levels[i]}];
+ }
+ return candidates;
+}
+
+inline bool PMUnlockChapterPass(NSDictionary*db, NSDictionary*official, NSString*chapter, NSDictionary*entities,
+                                bool (^groupPass)(NSString*group)){
+ NSMutableSet*checked=[NSMutableSet new];
+ for(NSString*member in PMChapterSongIDs(db,official,chapter)){
+  NSString*group=entities[member][@"groupId"];
+  if(!group.length)group=member;
+  if([checked containsObject:group])continue;
+  if(!groupPass(group))return false;
+  [checked addObject:group];
+ }
+ return checked.count>0;
 }
