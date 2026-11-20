@@ -72,8 +72,8 @@ def main() -> None:
         raise RuntimeError(f"missing framework executable: {args.framework / 'PhiMod'}")
 
     binary = (args.framework / "PhiMod").read_bytes()
-    if b"PMGameplay-v1" in binary or any(marker not in binary for marker in (b"PMJudgeHook-v1", b"PMGameplay-v2", b"PMGameplay-contract-v2-72-ios403")):
-        raise RuntimeError("Stale framework: requires PMGameplay-v2 with all 72 gates; rebuild the new sources first")
+    if b"PMGameplay-v1" in binary or any(marker not in binary for marker in (b"PMJudgeHook-v1", b"PMGameplay-v2", b"PMGameplay-contract-v2-74-ios403")):
+        raise RuntimeError("Stale framework: requires PMGameplay-v2 with all 74 gates; rebuild the new sources first")
 
     tools = Path(__file__).resolve().parent
     from patch_judge_windows import parse

@@ -9,6 +9,8 @@
 #import "PMHookBackend.h"
 #import "PMContentUI.h"
 #include "PMContentRuntime.hpp"
+#include "PMUnlockRuntime.hpp"
+#include "PMChallengeRun.hpp"
 #include "../Core/PMSettingsTabRoute.hpp"
 #include "../Core/PMUIInteraction.hpp"
 #include "../Core/PMModSettingsLayout.hpp"
@@ -173,6 +175,7 @@ void projectTab(Runtime&r){P tab=target(r,tabRoot);if(!r.alive(tab))return;P txt
 - (void)cancel{self.saveRequested=NO;self.draft=nil;self.hidden=YES;[self endEditing:YES];}
 @end
 
+#include "PMChallengeSelection.inc"
 namespace pmscene {
 using namespace sceneimpl;
 #include "PMNativeModSettings.inc"
@@ -187,8 +190,9 @@ bool settingsTabRequest(Runtime&r,void*owner,int index){
 void settingsLeave(Runtime&r,const char*reason){if(nativeTabSwitch)return;tabTap.reset();if(modEditorOpen)PMDiagnosticsWrite((std::string("MOD page leave reason=")+reason).c_str());restore(r,hidden,"SetActive");clearNativeSettings(r);restore(r,animations,"set_enabled");restore(r,mutes,"set_mute");modEditorOpen=false;[[PMModEditor shared] cancel];
  P owner=target(r,settingRoot);if(r.alive(owner)){P tabs=r.get<P>(owner,"tabAnimators");int index=r.get<int>(owner,"currentTab");if(tabs&&index>=0&&uintptr_t(index)<r.array_length(tabs)){P tr=transform(r,r.arrayAt(tabs,index)),slider=r.get<P>(owner,"sliderController");V2 pos=r.unbox<V2>(r.call(tr,"get_anchoredPosition")),size=r.unbox<V2>(r.call(tr,"get_sizeDelta"));if(slider)r.call(slider,"MoveTo",{"System.Single","System.Single"},{&pos.x,&size.x});}}
 }
-void selectorOff(Runtime&r){clearSelector(r);}
+void selectorOff(Runtime&r){challengeSelection::clear(r);clearSelector(r);}
 void selectorFrame(Runtime&r,P self){runtime=&r;if(modEditorOpen)settingsLeave(r,"selector-active");if(settingRoot){clearTabBackdrop(r);dispose(r,tabRoot,true);dispose(r,settingRoot,false);tabButton=tabText=nullptr;}
+ challengeSelection::frame(r,self);
  if(target(r,selectorRoot)!=self)makeSelector(r,self);if(!built)return;
  NSDictionary*s=[[PMSettings shared] snapshot];bool visible=[s[@"showShortcuts"] boolValue]&&r.unbox<bool>(r.call(go(r,mirrorTransform),"get_activeInHierarchy"))&&!r.get<bool>(self,"exit");
  V3 position=r.unbox<V3>(r.call(mirrorTransform,"get_localPosition")),scale=r.unbox<V3>(r.call(mirrorTransform,"get_localScale"));
@@ -302,8 +306,8 @@ void settingsFrame(Runtime&r,P self){runtime=&r;
  }
  if(nativeAdvanced){projectTab(r);[editor layoutEditor];}
 }
-bool ownsButton(P button){return button&&(buttons.count(button)||button==tabButton||nativeActions.count(button));}
-bool press(Runtime&r,P button){if(pressNativeSetting(r,button))return true;auto found=buttons.find(button);if(found!=buttons.end()){int i=found->second;P owner=target(r,selectorRoot);if(!r.alive(owner)||r.get<bool>(owner,"exit")||r.get<bool>(owner,"isMoving"))return true;NSString*key=keys[i];NSInteger old=[[[PMSettings shared] value:key] integerValue];NSNumber*value=i==2?@((old+1)%5):i==3?@((old+1)%3):@(!old);NSString*error=nil;[[PMSettings shared] setValue:value forKey:key error:&error];return true;}
+bool ownsButton(P button){return button&&(challengeSelection::owns(button)||buttons.count(button)||button==tabButton||nativeActions.count(button));}
+bool press(Runtime&r,P button){if(challengeSelection::owns(button)){challengeSelection::add(r);return true;}if(pressNativeSetting(r,button))return true;auto found=buttons.find(button);if(found!=buttons.end()){int i=found->second;P owner=target(r,selectorRoot);if(!r.alive(owner)||r.get<bool>(owner,"exit")||r.get<bool>(owner,"isMoving"))return true;NSString*key=keys[i];NSInteger old=[[[PMSettings shared] value:key] integerValue];NSNumber*value=i==2?@((old+1)%5):i==3?@((old+1)%3):@(!old);NSString*error=nil;[[PMSettings shared] setValue:value forKey:key error:&error];return true;}
  if(button!=tabButton)return false;P self=target(r,settingRoot);if(!r.alive(self))return true;if(modEditorOpen)return true;
  PMDiagnosticsWrite("MOD tab click received; creating native fourth page");
  modEditorOpen=true;

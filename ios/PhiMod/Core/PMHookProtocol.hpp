@@ -78,6 +78,8 @@ enum Index : std::uint32_t {
  skinSoundHit=69,
  skinSoundNA=70,
  skinSoundUnity=71,
+ challengeAdvance=72,
+ challengeResultStart=73,
  Count
 };
 struct Entry {std::uint32_t site,original;std::uint64_t gateway;};

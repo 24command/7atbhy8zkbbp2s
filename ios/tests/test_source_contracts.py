@@ -8,7 +8,7 @@ class SourceContracts(unittest.TestCase):
   protocol=(ROOT/'PhiMod/Core/PMHookProtocol.hpp').read_text(encoding='utf-8')
   header=(ROOT/'PhiMod/Core/PMHookManifest.hpp').read_text(encoding='utf-8')
   generated=re.findall(r'\{(0x[0-9a-f]+)u,(0x[0-9a-f]+)u\}',header)
-  self.assertEqual(len(manifest),72);self.assertEqual(len(generated),72)
+  self.assertEqual(len(manifest),74);self.assertEqual(len(generated),74)
   for i,(entry,(site,word)) in enumerate(zip(manifest,generated)):
    self.assertRegex(protocol,r'\b'+re.escape(entry['id'])+'='+str(i)+r',')
    self.assertEqual(int(site,16),entry['rva'])
@@ -205,7 +205,7 @@ class SourceContracts(unittest.TestCase):
   self.assertNotIn('lastTickFrame',hook)
   self.assertIn('HP failure ready; returning to SongSelector',hook)
   self.assertIn('pmhp::finish(r)',hook)
-  self.assertIn('if(options.hpEnabled)pmhp::beginAttempt(attempt->hp())',hook)
+  self.assertIn('attempt->seedTrackHP(pmchallenge::beginTrack(r,p,options.hpMax));pmhp::beginAttempt(attempt->hp())',hook)
  def test_hold_array_edit_is_scoped_and_no_android_layout(self):
   bridge=(ROOT/'PhiMod/Sources/PMIL2CPP.hpp').read_text(encoding='utf-8')
   modes=(ROOT/'PhiMod/Sources/PMChartModes.mm').read_text(encoding='utf-8')
@@ -229,7 +229,7 @@ class SourceContracts(unittest.TestCase):
   hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf-8')
   ui=(ROOT/'PhiMod/Sources/PhiModBootstrap.mm').read_text(encoding='utf-8')
   settings=(ROOT/'PhiMod/Sources/PMSettings.mm').read_text(encoding='utf-8')
-  self.assertIn('PMGameplay-contract-v2-72-ios403',hook)
+  self.assertIn('PMGameplay-contract-v2-74-ios403',hook)
   self.assertIn('audioUpdate=55', (ROOT/'PhiMod/Core/PMHookProtocol.hpp').read_text(encoding='utf-8'))
   self.assertIn('lineCreateNote=56', (ROOT/'PhiMod/Core/PMHookProtocol.hpp').read_text(encoding='utf-8'))
   self.assertIn('AddressableAudioSource.Update', (ROOT/'tools/gameplay_hook_manifest.json').read_text(encoding='utf-8'))
@@ -285,7 +285,7 @@ class SourceContracts(unittest.TestCase):
  def test_packager_rejects_old_framework_before_copying_payload(self):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp);(root/'source/Payload').mkdir(parents=True);(root/'PhiMod.framework').mkdir()
-   for marker in (b'PMJudgeHook-v1\0PMGameplay-v2\0PMGameplay-contract-v2-68\0',b'PMGameplay-v1',b'PMGameplay-v2',b'PMGameplay-v2\0PMGameplay-contract-v2-72-ios403'):
+   for marker in (b'PMJudgeHook-v1\0PMGameplay-v2\0PMGameplay-contract-v2-68\0',b'PMGameplay-v1',b'PMGameplay-v2',b'PMGameplay-v2\0PMGameplay-contract-v2-74-ios403'):
     (root/'PhiMod.framework/PhiMod').write_bytes(marker)
     result=subprocess.run([sys.executable,str(ROOT/'tools/package_unsigned_ipa.py'),'--source',str(root/'source'),'--framework',str(root/'PhiMod.framework'),'--output',str(root/'out.ipa')],capture_output=True,text=True,encoding="utf-8",errors="replace")
     self.assertNotEqual(result.returncode,0);self.assertIn('Stale framework',result.stderr);self.assertFalse((root/'out.ipa').exists())

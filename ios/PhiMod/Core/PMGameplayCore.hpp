@@ -184,6 +184,7 @@ class Session {
  bool shouldApplyGameplay() const {return phase_==Phase::Playing&&coverage_.safe()&&!failed_;}
  Phase phase() const {return phase_;}
  bool excluded() const {return excluded_;}
+ void seedTrackHP(float value){hp_=std::clamp(value,0.f,active_.hpMax);}
  float hp() const {return hp_;}
  bool trackLost() const {return lost_;}
  std::uint64_t serial() const {return serial_;}

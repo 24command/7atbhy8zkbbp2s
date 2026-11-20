@@ -574,5 +574,21 @@
     "args": "int",
     "bytes": "f85fbca9",
     "instruction": "stp x24, x23, [sp, #-0x40]!"
+  },
+  {
+    "id": "challengeAdvance",
+    "name": "ChallengeModeControl.<Start>d__21.MoveNext",
+    "rva": 22154212,
+    "args": "",
+    "bytes": "ff8301d1",
+    "instruction": "sub sp, sp, #0x60"
+  },
+  {
+    "id": "challengeResultStart",
+    "name": "ChallengeModeOverControl.Start",
+    "rva": 22159512,
+    "args": "",
+    "bytes": "ff0302d1",
+    "instruction": "sub sp, sp, #0x80"
   }
 ]

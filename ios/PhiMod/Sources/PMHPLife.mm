@@ -160,6 +160,7 @@ void finishChallenge(Runtime&r,P progress){
  P item=r.at(items,index);r.put(item,"result",result);r.put(item,"noteCodes",codes);
  for(int i=index+1;i<r.count(items);++i){
   P empty=r.object_new(r.klass("LevelResultInfo"));r.call(empty,".ctor");r.put(r.at(items,i),"result",empty);
+  if(!codes)continue;
   P emptyCodes=r.object_new(r.object_get_class(codes));r.call(emptyCodes,".ctor");r.put(r.at(items,i),"noteCodes",emptyCodes);
  }
  r.put(progress,"isPlaying",false);r.put(info,"levelOver",true);r.put(info,"canLevelOver",true);r.put(info,"canPause",false);
