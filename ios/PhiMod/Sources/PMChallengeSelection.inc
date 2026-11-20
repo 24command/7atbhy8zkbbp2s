@@ -124,11 +124,11 @@ static void add(Runtime &r) {
     P items=r.call(owner,"get_SongItems"); int index=r.get<int>(owner,"nowSong"), slot=r.get<int>(owner,"nowLevel");
     if(index<0 || index>=r.count(items) || slot<0 || slot>3) return;
     P item=r.at(items,index), song=r.get<P>(item,"songInfo"), numbers=r.get<P>(song,"difficulty");
-    if(!r.get<bool>(item,"visible") || !r.unbox<bool>(r.call(item,"get_Unlocked")) || !numbers || uintptr_t(slot)>=r.array_length(numbers) || !(r.unbox<float>(r.arrayAt(numbers,slot))>0)) return;
+    if(!r.get<bool>(item,"visible") || !r.unbox<bool>(r.call(item,"get_Unlocked")) || !numbers || uintptr_t(slot)>=r.array_length(numbers)) return;
     P lock=r.get<P>(owner,"locked");
     if(r.alive(lock) && r.unbox<bool>(r.call(lock,"get_activeInHierarchy"))) return;
     NSDictionary *chart=pmcontent::difficultyForSong(r,song,slot);
-    if(!chart && !stockChartOpen(r,song,slot)) return;
+    if(!chart && (!(r.unbox<float>(r.arrayAt(numbers,slot))>0) || !stockChartOpen(r,song,slot))) return;
     NSString *name=chart[@"title"] ?: r.string(r.get<P>(song,"songsName"));
     NSString *level=chart[@"level"] ?: @[@"EZ",@"HD",@"IN",@"AT"][slot];
     NSString *caption=[NSString stringWithFormat:@"%@ · %@",name,level];

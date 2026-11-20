@@ -1,3 +1,4 @@
+#import "PMDifficultyMetadata.h"
 #include "../Core/PMBuildInfo.hpp"
 #import "PMHookBackend.h"
 #import "PMSettings.h"
@@ -710,7 +711,12 @@ bool onChallengeAdvance(P self,P mi){
   diagf("Free challenge transition: %s",e.what());auto&r=R();pmchallenge::cancelVariable(r);
   try{r.stat(r.type("UnityEngine.SceneManagement","SceneManager"),"LoadScene",{"System.String"},{r.string_new("SongSelector")});}catch(const std::exception&error){diagf("Challenge exit: %s",error.what());}return false;
  }
- return orig<JudgeFn>(h::challengeAdvance)(self,mi);
+ bool yielded = orig<JudgeFn>(h::challengeAdvance)(self,mi);
+ if (yielded) contentBoundary("Challenge intro labels", [&]{
+  auto &r = R();
+  if (r.get<int>(self,"<>1__state") == 1) pmcontent::challengeIntroLabels(r,self);
+ });
+ return yielded;
 }
 void onChallengeResultStart(P self,P mi){
  auto&r=R();if(pmchallengeresults::start(r,self))return;

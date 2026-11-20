@@ -19,6 +19,8 @@ NSDictionary*difficultyForSong(pmbridge::Runtime&,void*song,int slot);
 bool difficultyInput(pmbridge::Runtime&,void*selector);
 bool ownsDifficultyButton(void*button);
 bool pressDifficultyButton(pmbridge::Runtime&,void*button);
+NSDictionary *challengeEntryChart(pmbridge::Runtime&,void*);
+void challengeIntroLabels(pmbridge::Runtime&,void*);
 void freezeChallengeDifficulties(pmbridge::Runtime&,void*selector=nullptr);
 void difficultySelectorOff(pmbridge::Runtime&);
 void difficultyResultLabel(pmbridge::Runtime&,void*iterator);

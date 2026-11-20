@@ -238,6 +238,29 @@ NSDictionary*difficultyDisplayChart(Runtime&r){
  if(![cachedID isEqualToString:id]||revision!=current){cachedID=id;revision=current;cached=nil;for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"]isEqualToString:id]){cached=s;break;}}
  return cached;
 }
+// A queued custom chart has a private SongInfo clone with its exact chart ID.
+// The selector may already have rebound the shared AT slot to another chart.
+NSDictionary *challengeEntryChart(Runtime &r, P entry) {
+ if (!entry) return nil;
+ P item = r.get<P>(entry, "songInfo");
+ if (!item || r.get<int>(item, "sortIndex") != -2147483000) return nil;
+ P song = r.get<P>(item, "songInfo");
+ if (!song) return nil;
+ if (NSDictionary *chart = frozenDifficulty(r, song)) return chart;
+ NSString *identifier = r.string(r.get<P>(song, "songsId"));
+ for (NSDictionary *chart in [PMContentStore.shared snapshot][@"songs"])
+  if ([chart[@"id"] isEqualToString:identifier]) return chart;
+ return nil;
+}
+void challengeIntroLabels(Runtime &r, P iterator) {
+ P entry = r.get<P>(iterator, "<currentSongEntry>5__2");
+ NSDictionary *chart = challengeEntryChart(r, entry);
+ if (!chart) return;
+ P owner = r.get<P>(iterator, "<>4__this");
+ if (!r.alive(owner)) return;
+ difficultyText(r, r.get<P>(owner, "levelText"), PMDifficultyName(chart[@"level"]));
+ difficultyText(r, r.get<P>(owner, "difficulty"), PMDifficultyText(chart));
+}
 void difficultyTransitionLabel(Runtime&r,void*raw){
  P selector=raw;if(!r.alive(selector)||!r.get<bool>(selector,"exit"))return;NSDictionary*chart=difficultyDisplayChart(r);if(!chart)return;
  // Verified serialized level7 fields point to StartInfos/SelectedSong/Level,

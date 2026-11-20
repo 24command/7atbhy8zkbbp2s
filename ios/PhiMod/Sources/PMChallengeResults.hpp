@@ -128,6 +128,10 @@ void showCard(Runtime &r, P card, P item) {
     if (difficulty && slot >= 0 && uintptr_t(slot) < r.array_length(difficulty))
         snprintf(buffer, sizeof(buffer), "%.1f", double(r.unbox<float>(r.arrayAt(difficulty, slot))));
     label("songsDifficulty", buffer);
+    if (NSDictionary *chart = pmcontent::challengeEntryChart(r, item)) {
+        label("songsLevel", PMDifficultyName(chart[@"level"]).UTF8String);
+        label("songsDifficulty", PMDifficultyText(chart).UTF8String);
+    }
     snprintf(buffer, sizeof(buffer), "%07d", result ? r.get<int>(result,"<IntScore>k__BackingField") : 0);
     label("scoreText", result ? buffer : "—");
     for (auto stat : {"perfect", "good", "bad", "miss", "early", "late"}) {
