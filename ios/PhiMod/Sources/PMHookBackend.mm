@@ -98,7 +98,8 @@ void updateRealtimeAccuracy(Runtime&r,P score,bool enabled){
  int p=r.get<int>(score,"perfect"),g=r.get<int>(score,"good"),b=r.get<int>(score,"bad"),m=r.get<int>(score,"miss"),judged=p+g+b+m;double accuracy=judged>0?100.0*(p+.65*g)/judged:100.0;char text[32];snprintf(text,sizeof(text),"%.2f%%",accuracy);bool visible=r.unbox<bool>(r.call(official,"get_isActiveAndEnabled"));r.call(realtimeAccuracyText,"set_enabled",{"System.Boolean"},{&visible});if(realtimeAccuracyLast!=text){r.text(realtimeAccuracyText,text);realtimeAccuracyLast=text;}
 }
 struct PlaybackJudgeScope{Runtime&r;explicit PlaybackJudgeScope(Runtime&value):r(value){pmpractice::judgeRateEnter(r);}~PlaybackJudgeScope(){pmpractice::judgeRateLeave();}};
-void resetChartRegistration(){registered.clear();missDiagnosticCount=0;}
+#include "PMEarlyLate.inc"
+void resetChartRegistration(){timingHints::shown.clear();registered.clear();missDiagnosticCount=0;}
 void restartPracticeSession(){
  if(attempt&&attempt->phase()==phimod::Phase::Playing){attempt->restartSegment();resetChartRegistration();try{pmmodes::restartSegment(R());if(attempt->options().hpEnabled)pmhp::beginAttempt(attempt->hp());diagf("Practice segment session reset hp=%.2f",attempt->hp());}catch(const std::exception&e){diagf("Practice session reset failed: %s",e.what());}}
 }
@@ -161,6 +162,7 @@ void begin(P p){
  diagf("ProgressControl.Start armed baseline P=%.4f G=%.4f B=%.4f",baseline.perfect,baseline.good,baseline.bad);
 }
 void onAwake(P self,P mi){
+ timingHints::clear();timingHints::enabled=PMSettingBool("earlyLateHints");
  diagf("LevelControl.Awake enter");
  try{pmcontent::levelBegin(R());pmfeatures::levelBegin(R(),self);pmunlock::clear(R());}catch(const std::exception&e){diagf("Content/feature begin: %s",e.what());}
  progressUpdateCalls=judgeUpdateCalls=0;lastProgressHeartbeat=lastJudgeHeartbeat={};diagHaveState=false;
@@ -179,6 +181,7 @@ void onAwake(P self,P mi){
 }
 void onDestroy(P self,P mi){
  diagf("LevelControl.OnDestroy enter");
+ timingHints::clear();
  try{clearRealtimeAccuracy(R());}catch(const std::exception&e){diagf("Live ACC cleanup: %s",e.what());}
   if(attempt){attempt->result();if(attempt->excluded())guard.store(true);}
   resultPresented=false;levelOverStarted=false;loadingMaskCleared=false;judgeUpdateSeen=false;
@@ -245,8 +248,8 @@ void onMiss(P self,float code,P mi){
  }
  observe(code,0,phimod::Rating::Miss);pmfeatures::observe(3);if(pmhp::active())diagf("HP Miss original enter code=%.3f hp=%.2f",code,attempt?attempt->hp():-1);orig<void(*)(P,float,P)>(h::miss)(self,code,mi);if(pmhp::active())diagf("HP Miss original returned code=%.3f",code);
 }
-void onBad(P self,float code,float offset,P mi){observe(code,offset,phimod::Rating::Bad);pmfeatures::observe(2);orig<void(*)(P,float,float,P)>(h::bad)(self,code,offset,mi);}
-void onGood(P self,float code,float offset,V3 pos,bool hold,P mi){observe(code,offset,phimod::Rating::Good);pmfeatures::observe(1);orig<PerfectFn>(h::good)(self,code,offset,pos,hold,mi);}
+void onBad(P self,float code,float offset,P mi){observe(code,offset,phimod::Rating::Bad);pmfeatures::observe(2);orig<void(*)(P,float,float,P)>(h::bad)(self,code,offset,mi);timingHints::show(code,offset,nullptr);}
+void onGood(P self,float code,float offset,V3 pos,bool hold,P mi){observe(code,offset,phimod::Rating::Good);pmfeatures::observe(1);orig<PerfectFn>(h::good)(self,code,offset,pos,hold,mi);timingHints::show(code,offset,&pos);}
 void diagnosticTick(Runtime&r,P progressControl,const char *source){
  if(!progressControl)return;
  bool playing=r.get<bool>(progressControl,"isPlaying");

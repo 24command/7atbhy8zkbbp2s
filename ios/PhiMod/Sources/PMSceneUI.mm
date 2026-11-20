@@ -25,12 +25,14 @@ struct Bounds{float l=1e9f,r=-1e9f,b=1e9f,t=-1e9f;float width()const{return r-l;
 struct Item{uint32_t root=0;P tr=nullptr,button=nullptr,bg=nullptr,text=nullptr,sizer=nullptr,group=nullptr;V3 offset{};float fit=1;int display=-1;};
 Runtime *runtime=nullptr;uint32_t selectorRoot=0,settingRoot=0,tabRoot=0;
 P mirror=nullptr,mirrorText=nullptr,mirrorTransform=nullptr,mirrorButton=nullptr,mirrorGroup=nullptr,tabButton=nullptr,tabText=nullptr;
-std::array<Item,7> items{};std::map<P,int> buttons;bool built=false,layoutReady=false,modEditorOpen=false,tabFailed=false;unsigned ticks=0;
+constexpr int shortcutCount=8;
+std::array<Item,shortcutCount> items{};std::map<P,int> buttons;bool built=false,layoutReady=false,modEditorOpen=false,tabFailed=false;unsigned ticks=0;
 std::vector<std::pair<uint32_t,bool>> hidden,animations,mutes;
-static const char *labels[]={"AutoPlay","Noise","Unified","AP / FC","HP","Full Screen","Accuracy"};
-static NSString *keys[]={@"autoplay",@"noise",@"unified",@"challenge",@"hpEnabled",@"fullScreen",@"accuracy"};
-static NSString *shortcutKeys[]={@"shortcutAutoPlay",@"shortcutNoise",@"shortcutUnified",@"shortcutChallenge",@"shortcutHp",@"shortcutFullScreen",@"shortcutAccuracy"};
-BOOL shortcutVisible(NSDictionary*s,int i){return i>=0&&i<7&&[s[shortcutKeys[i]] boolValue];}
+static const char *labels[]={"AutoPlay","Noise","Unified","AP / FC","HP","Full Screen","Accuracy","Early / Late"};
+static NSString *keys[]={@"autoplay",@"noise",@"unified",@"challenge",@"hpEnabled",@"fullScreen",@"accuracy",@"earlyLateHints"};
+static NSString *shortcutKeys[]={@"shortcutAutoPlay",@"shortcutNoise",@"shortcutUnified",@"shortcutChallenge",@"shortcutHp",@"shortcutFullScreen",@"shortcutAccuracy",@"shortcutEarlyLate"};
+static_assert(sizeof(labels)/sizeof(*labels)==shortcutCount && sizeof(keys)/sizeof(*keys)==shortcutCount && sizeof(shortcutKeys)/sizeof(*shortcutKeys)==shortcutCount);
+BOOL shortcutVisible(NSDictionary*s,int i){return i>=0&&i<shortcutCount&&[s[shortcutKeys[i]] boolValue];}
 P target(Runtime&r,uint32_t root){return root?r.gchandle_get_target(root):nullptr;}
 P go(Runtime&r,P p){return r.call(p,"get_gameObject");}
 P transform(Runtime&r,P p){return r.call(p,"get_transform");}
@@ -54,7 +56,7 @@ void makeSelector(Runtime&r,P self){
   mirrorButton=r.component(go(r,mirror),r.type("UnityEngine.UI","Button"));
   mirrorGroup=r.component(source,r.type("UnityEngine","CanvasGroup"));
   if(!mirrorButton)throw std::runtime_error("Mirror button component missing");
-  for(int i=0;i<7;++i){auto &s=items[i];P obj=clone(r,source,parent,s.root);
+  for(int i=0;i<shortcutCount;++i){auto &s=items[i];P obj=clone(r,source,parent,s.root);
    active(r,obj,false);s.tr=transform(r,obj);
    P bg=child(r,s.tr,"Button"),text=child(r,s.tr,"Text");
    if(!bg||!text)throw std::runtime_error("Mirror prefab hierarchy mismatch");
@@ -78,7 +80,7 @@ void makeSelector(Runtime&r,P self){
  built=true;ticks=0;
 }
 void selectorLayout(Runtime&r){
- NSDictionary*s=[[PMSettings shared] snapshot];std::vector<int>activeIndices;for(int i=0;i<7;++i)if(shortcutVisible(s,i))activeIndices.push_back(i);P parent=r.call(mirrorTransform,"get_parent");V3 position=r.unbox<V3>(r.call(mirrorTransform,"get_localPosition")),scale=r.unbox<V3>(r.call(mirrorTransform,"get_localScale"));Bounds b=bounds(r,mirror,parent);Rect area=r.unbox<Rect>(r.call(parent,"get_rect"));float gap=std::max(4.f,b.height()*.18f),available=area.x+area.w-b.l-gap;if(!std::isfinite(available)||available<=b.width())throw std::runtime_error("Mirror layout area invalid");std::array<float,7>widths{};for(int i:activeIndices){auto&sItem=items[i];setV3(r,sItem.tr,"set_localScale",scale);setV3(r,sItem.tr,"set_localPosition",position);rebuild(r,sItem.tr);widths[i]=std::max(1.f,bounds(r,sItem.bg,parent).width());}if(activeIndices.empty()){layoutReady=true;return;}size_t firstCount=std::min<size_t>(3,activeIndices.size());float first=0,second=0;for(size_t k=0;k<activeIndices.size();++k)(k<firstCount?first:second)+=widths[activeIndices[k]];float fit=std::clamp(std::min((available-b.width()-gap*3)/std::max(1.f,first),(available-gap*3)/std::max(1.f,second)),.1f,1.f);V3 fitted{scale.x*fit,scale.y*fit,scale.z};float edge=b.r+gap,row=b.height()+gap;for(size_t k=0;k<activeIndices.size();++k){int i=activeIndices[k];auto&sItem=items[i];if(k==firstCount)edge=b.l-row*.267949f;setV3(r,sItem.tr,"set_localScale",fitted);Bounds q=bounds(r,sItem.bg,parent);sItem.offset={edge-q.l,k<firstCount?0:-row,0};sItem.fit=fit;edge+=q.width()+gap;}layoutReady=true;}
+ NSDictionary*s=[[PMSettings shared] snapshot];std::vector<int>activeIndices;for(int i=0;i<shortcutCount;++i)if(shortcutVisible(s,i))activeIndices.push_back(i);P parent=r.call(mirrorTransform,"get_parent");V3 position=r.unbox<V3>(r.call(mirrorTransform,"get_localPosition")),scale=r.unbox<V3>(r.call(mirrorTransform,"get_localScale"));Bounds b=bounds(r,mirror,parent);Rect area=r.unbox<Rect>(r.call(parent,"get_rect"));float gap=std::max(4.f,b.height()*.18f),available=area.x+area.w-b.l-gap;if(!std::isfinite(available)||available<=b.width())throw std::runtime_error("Mirror layout area invalid");std::array<float,shortcutCount>widths{};for(int i:activeIndices){auto&sItem=items[i];setV3(r,sItem.tr,"set_localScale",scale);setV3(r,sItem.tr,"set_localPosition",position);rebuild(r,sItem.tr);widths[i]=std::max(1.f,bounds(r,sItem.bg,parent).width());}if(activeIndices.empty()){layoutReady=true;return;}size_t firstCount=std::min<size_t>(3,activeIndices.size());float first=0,second=0;for(size_t k=0;k<activeIndices.size();++k)(k<firstCount?first:second)+=widths[activeIndices[k]];float fit=std::clamp(std::min((available-b.width()-gap*3)/std::max(1.f,first),(available-gap*std::max<size_t>(1,activeIndices.size()-firstCount))/std::max(1.f,second)),.1f,1.f);V3 fitted{scale.x*fit,scale.y*fit,scale.z};float edge=b.r+gap,row=b.height()+gap;for(size_t k=0;k<activeIndices.size();++k){int i=activeIndices[k];auto&sItem=items[i];if(k==firstCount)edge=b.l-row*.267949f;setV3(r,sItem.tr,"set_localScale",fitted);Bounds q=bounds(r,sItem.bg,parent);sItem.offset={edge-q.l,k<firstCount?0:-row,0};sItem.fit=fit;edge+=q.width()+gap;}layoutReady=true;}
 void restore(Runtime&r,std::vector<std::pair<uint32_t,bool>>&v,const char*method){for(auto x:v){P p=target(r,x.first);try{if(r.alive(p))r.call(p,method,{"System.Boolean"},{&x.second});}catch(...){}r.gchandle_free(x.first);}v.clear();}
 void stash(Runtime&r,std::vector<std::pair<uint32_t,bool>>&v,P p,const char*getter,const char*setter,bool value){if(!r.alive(p))return;bool old=r.unbox<bool>(r.call(p,getter));v.emplace_back(r.gchandle_new(p,false),old);r.call(p,setter,{"System.Boolean"},{&value});}
 UIWindow *window(){for(UIScene *scene in UIApplication.sharedApplication.connectedScenes)if([scene isKindOfClass:UIWindowScene.class]&&scene.activationState==UISceneActivationStateForegroundActive)for(UIWindow*w in ((UIWindowScene*)scene).windows)if(w.isKeyWindow)return w;return nil;}
@@ -204,7 +206,7 @@ void selectorFrame(Runtime&r,P self){runtime=&r;if(modEditorOpen)settingsLeave(r
  visible=visible&&layoutReady;
  Color fill=r.unbox<Color>(r.call(mirror,"get_color")),fg=r.unbox<Color>(r.call(mirrorText,"get_color"));float alpha=mirrorGroup?r.unbox<float>(r.call(mirrorGroup,"get_alpha")):1;
  bool interactive=visible&&!r.get<bool>(self,"isMoving")&&r.unbox<bool>(r.call(mirrorButton,"get_interactable"))&&[[PMHookBackend status][@"ok"] boolValue];
- for(int i=0;i<7;++i){auto &it=items[i];bool supported=shortcutVisible(s,i);active(r,target(r,it.root),visible&&supported);bool click=interactive&&supported;r.call(it.button,"set_interactable",{"System.Boolean"},{&click});if(it.group){r.call(it.group,"set_alpha",{"System.Single"},{&alpha});
+ for(int i=0;i<shortcutCount;++i){auto &it=items[i];bool supported=shortcutVisible(s,i);active(r,target(r,it.root),visible&&supported);bool click=interactive&&supported;r.call(it.button,"set_interactable",{"System.Boolean"},{&click});if(it.group){r.call(it.group,"set_alpha",{"System.Single"},{&alpha});
    bool interact=mirrorGroup?r.unbox<bool>(r.call(mirrorGroup,"get_interactable")):true;
    bool raycasts=mirrorGroup?r.unbox<bool>(r.call(mirrorGroup,"get_blocksRaycasts")):true;
    r.call(it.group,"set_interactable",{"System.Boolean"},{&interact});r.call(it.group,"set_blocksRaycasts",{"System.Boolean"},{&raycasts});}
