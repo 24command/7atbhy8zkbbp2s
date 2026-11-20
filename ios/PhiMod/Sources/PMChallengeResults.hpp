@@ -41,7 +41,7 @@ void afterStart(Runtime &r, P self) {
         for (int tier = 0; sprites && uintptr_t(tier) < r.array_length(sprites); ++tier) {
             int value = r.unbox<int>(r.stat(rules, "GetLifeForTierIndex", {"System.Int32"}, {&tier}));
             P sprite = r.arrayAt(sprites, tier);
-            if (sprite && pmchallenge::life == value) {
+            if (sprite && pmchallenge::initialLife == value) {
                 r.call(badge, "set_sprite", {"UnityEngine.Sprite"}, {sprite});
                 return;
             }
@@ -57,7 +57,7 @@ void afterStart(Runtime &r, P self) {
         int center = 4; bool fit = true;
         r.call(hp,"set_alignment",{"UnityEngine.TextAnchor"},{&center});
         r.call(hp,"set_resizeTextForBestFit",{"System.Boolean"},{&fit});
-        snprintf(text, sizeof(text), "%g\nLIFE", double(pmchallenge::life));
+        snprintf(text, sizeof(text), "%g\nLIFE", double(pmchallenge::initialLife));
         r.text(hp,text);
     } catch (const std::exception &e) { diagf("Challenge HP result: %s", e.what()); }
 }
