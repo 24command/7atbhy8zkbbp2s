@@ -18,7 +18,11 @@ class ResumeIntegrityTests(unittest.TestCase):
         for invalid in ("x.lengthOfBytesUsingEncoding:", "__block std::function", "seenSongs[sid]", "cid==loose"):
             self.assertNotIn(invalid, text)
         self.assertIn("manifestSafePath(name)", text)
-        self.assertIn("graphLimitExceeded", text)
+        plan = (SOURCES / "PMChapterExportPlan.h").read_text(encoding="utf-8-sig")
+        self.assertIn("PMChapterExportPlan(db,main", text)
+        self.assertIn("included.count >= 2000", plan)
+        self.assertIn("chapterIDs.count >= 129", plan)
+        self.assertIn("if (limitExceeded) return nil", plan)
         self.assertIn("validateUnlockMedia(sourceChapter", text)
 
 if __name__ == "__main__":
