@@ -137,14 +137,24 @@ static void launch(Runtime &r,P control,P list) {
     Root oldList(r,r.get<P>(game,"challengeSongItems")), hidden(r,r.get<P>(game,"hiddenChallengeSongItem"));
     int oldIndex=r.get<int>(game,"nowChallengeIndex");
     bool oldLife=r.get<bool>(game,"secretChallengeLifeEnabled");
-    Root transition(r,r.call(control,"TurnToNextScene",{"System.String"},{r.string_new("ChallengeMode")}));
+    // Stock Play validates three slots and truncates its list. Give it a
+    // separate launch list; the run controller owns the actual playing order.
+    Root slots(r,r.object_new(r.object_get_class(list)));
+    r.call(slots.get(),".ctor");
+    int count=r.count(list);
+    for(int i=0;i<3;++i){
+        P entry=r.at(list,std::min(i,count-1));
+        r.call(slots.get(),"Add",{entryType},{entry});
+    }
     launching=true;
     try {
-        r.put(game,"challengeSongItems",list); r.put(game,"nowChallengeIndex",0);
-        r.put(game,"hiddenChallengeSongItem",P(nullptr)); r.put(game,"secretChallengeLifeEnabled",false);
         pmchallenge::startVariable(r,list);
-        if(!r.call(control,"StartCoroutine",{"System.Collections.IEnumerator"},{transition.get()}))
-            throw std::runtime_error("Challenge transition did not start");
+        withQueue(r,control,slots.get(),[&]{ r.call(control,"Play"); });
+        // Play may reject a protected Chapter 9 combination without throwing.
+        if(r.get<P>(game,"challengeSongItems")!=slots.get())
+            throw std::runtime_error("Native challenge start declined");
+        r.put(game,"challengeSongItems",list);
+        r.put(game,"secretChallengeLifeEnabled",false);
     } catch(...) {
         launching=false; pmchallenge::cancelVariable(r);
         r.put(game,"challengeSongItems",oldList.get()); r.put(game,"nowChallengeIndex",oldIndex);

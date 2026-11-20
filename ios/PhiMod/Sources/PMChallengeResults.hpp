@@ -194,9 +194,11 @@ bool route(Runtime &r, P button, P pointer, bool isPointer) {
         if (isPointer && (!pointer || r.enumValue(r.call(pointer,"get_button"),"UnityEngine.EventSystems.PointerEventData.InputButton") != 0)) return true;
         if (!r.unbox<bool>(r.call(button,"IsActive")) || !r.unbox<bool>(r.call(button,"IsInteractable"))) return true;
         if (input == Action::Leave) {
-            P transition = r.call(self,"TurnToNextScene",{"System.String"},{r.string_new("SongSelector")});
-            r.call(self,"StartCoroutine",{"System.Collections.IEnumerator"},{transition});
+            // Back(false) runs the native cut-out, sound and Loading scene.
+            bool keepRank = false;
             view.leaving = true;
+            try { r.call(self,"Back",{"System.Boolean"},{&keepRank}); }
+            catch (...) { view.leaving = false; throw; }
         } else {
             view.page = std::max(0, std::min(view.pages - 1, view.page + (input == Action::Next ? 1 : -1)));
             show(r,self);

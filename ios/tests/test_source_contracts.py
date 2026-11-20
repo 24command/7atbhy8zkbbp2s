@@ -3,6 +3,17 @@ import json,re,unittest,subprocess,sys,tempfile
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 class SourceContracts(unittest.TestCase):
+ def test_free_challenge_native_transitions(self):
+  selection=(ROOT/'PhiMod/Sources/PMChallengeSelection.inc').read_text('utf8')
+  launch=selection.split('static void launch(',1)[1].split('static void press(',1)[0]
+  self.assertIn('r.call(control,"Play")',launch)
+  self.assertIn('withQueue(r,control,slots.get()',launch)
+  self.assertIn('pmchallenge::startVariable(r,list)',launch)
+  self.assertNotIn('TurnToNextScene',launch)
+  result=(ROOT/'PhiMod/Sources/PMChallengeResults.hpp').read_text('utf8')
+  self.assertIn('bool keepRank = false;',result)
+  self.assertIn('r.call(self,"Back",{"System.Boolean"},{&keepRank})',result)
+  self.assertNotIn('TurnToNextScene',result)
  def test_manifest_cpp_protocol_is_not_stale(self):
   manifest=json.loads((ROOT/'tools/gameplay_hook_manifest.json').read_text(encoding='utf-8'))
   protocol=(ROOT/'PhiMod/Core/PMHookProtocol.hpp').read_text(encoding='utf-8')
