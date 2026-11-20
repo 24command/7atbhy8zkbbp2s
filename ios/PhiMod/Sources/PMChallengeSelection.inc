@@ -5,7 +5,9 @@ constexpr NSUInteger pageSize = 3;
 constexpr const char *entryType = "Phigros2.SongSelector.Scripts.ChallengeSongItem";
 static uint32_t ownerRoot, listRoot;
 static P selectButton, undoButton, playButton, previous, next;
-static uint32_t arrows[2]{};
+static uint32_t arrows[2]{}, ordinalLabels[3]{};
+static NSString *originalLabels[3];
+static double nextLayout=0;
 static int page=0;
 static bool launching=false;
 static constexpr int lastPage(int count){return count ? (count-1)/3 : 0;}
@@ -21,7 +23,15 @@ struct Root {
 };
 
 static void clear(Runtime &r) {
+    for(int i=0;i<3;++i){
+        P label=target(r,ordinalLabels[i]);
+        if(originalLabels[i] && r.alive(label))
+            r.call(label,"set_text",{"System.String"},{r.managedString(originalLabels[i])});
+        originalLabels[i]=nil;
+        dispose(r,ordinalLabels[i],false);
+    }
     for(auto &handle:arrows) dispose(r,handle,true);
+    nextLayout=0;
     selectButton=undoButton=playButton=previous=next=nullptr;
     page=0; launching=false;
     dispose(r,listRoot,false);
@@ -44,6 +54,16 @@ static void interactable(Runtime &r,P button,bool enabled){
     if (r.unbox<bool>(r.call(button,"get_interactable"))!=enabled)
         r.call(button,"set_interactable",{"System.Boolean"},{&enabled});
 }
+static NSString *ordinal(int64_t number){
+    int tens=number%100, ones=number%10;
+    const char *suffix="th";
+    if(tens<11 || tens>13){
+        if(ones==1)suffix="st";
+        else if(ones==2)suffix="nd";
+        else if(ones==3)suffix="rd";
+    }
+    return [NSString stringWithFormat:@"%lld%s",(long long)number,suffix];
+}
 static void refresh(Runtime &r,P control,P list){
     int count=r.count(list);
     page=std::clamp(page,0,lastPage(count));
@@ -51,6 +71,8 @@ static void refresh(Runtime &r,P control,P list){
     P images=r.get<P>(control,"songCoverImages"),labels=r.get<P>(control,"difficulty"),bands=r.get<P>(control,"levelImage");
     for(int i=0;i<3;++i){
         int index=page*3+i;P image=r.at(images,i);
+        P placeholder=target(r,ordinalLabels[i]);
+        if(placeholder)r.call(placeholder,"set_text",{"System.String"},{r.managedString(ordinal(int64_t(page)*3+i+1))});
         active(r,go(r,image),index<count);
         if(index>=count)continue;
         P entry=r.at(list,index),item=r.get<P>(entry,"songInfo"),song=r.get<P>(item,"songInfo");
@@ -74,19 +96,58 @@ static void refresh(Runtime &r,P control,P list){
     }
     interactable(r,undoButton,count>0); interactable(r,playButton,count>0);
 }
-static void buildArrows(Runtime &r,P control){
-    P end=r.arrayAt(r.get<P>(control,"songCoverPanel"),2), parent=r.call(end,"get_parent");
-    P font=r.call(r.at(r.get<P>(control,"difficulty"),0),"get_font");
-    sceneimpl::Rect bounds=r.unbox<sceneimpl::Rect>(r.call(end,"get_rect"));
+// The serialized songCoverImages are the three visible cells in the queue bar.
+static P slotRect(Runtime &r,P control,int slot){
+    P image=r.at(r.get<P>(control,"songCoverImages"),slot);
+    return r.call(transform(r,image),"get_parent");
+}
+static P queueCanvas(Runtime &r,P end){
+    P bar=r.call(end,"get_parent");
+    P canvasRect=r.call(bar,"get_parent");
+    P canvas=r.component(go(r,canvasRect),r.type("UnityEngine","Canvas"));
+    return transform(r,r.call(canvas,"get_rootCanvas"));
+}
+static void layoutArrows(Runtime &r,P control){
+    P end=slotRect(r,control,2);
+    auto cell=r.unbox<sceneimpl::Rect>(r.call(end,"get_rect"));
+    P canvas=queueCanvas(r,end);
+    auto canvasRect=r.unbox<sceneimpl::Rect>(r.call(canvas,"get_rect"));
+    P screen=r.type("UnityEngine","Screen");
+    auto safe=r.unbox<sceneimpl::Rect>(r.stat(screen,"get_safeArea"));
+    int width=r.unbox<int>(r.stat(screen,"get_width")),height=r.unbox<int>(r.stat(screen,"get_height"));
+    if(width<=0 || height<=0 || canvasRect.w<=0 || canvasRect.h<=0)return;
+    if(safe.w<=0 || safe.h<=0)safe={0,0,float(width),float(height)};
+    float left=canvasRect.x+safe.x/width*canvasRect.w, right=left+safe.w/width*canvasRect.w;
+    float bottom=canvasRect.y+safe.y/height*canvasRect.h, top=bottom+safe.h/height*canvasRect.h;
     for(int i=0;i<2;++i){
-        V2 size{std::max(42.f,bounds.h*.55f),bounds.h*.47f};
-        P button=pagerLabel(r,parent,font,i?"→":"←",0,true,size);
-        arrows[i]=r.gchandle_new(go(r,button),false);
-        P rect=transform(r,button);
-        r.call(rect,"set_sizeDelta",{"UnityEngine.Vector2"},{&size});
-        V3 local{bounds.x+bounds.w+size.x*.6f,bounds.y+bounds.h*(i?.25f:.75f),0};
-        V3 world=r.unbox<V3>(r.call(end,"TransformPoint",{"UnityEngine.Vector3"},{&local}));
+        P rect=transform(r,i?next:previous);
+        auto size=r.unbox<V2>(r.call(rect,"get_sizeDelta"));
+        V3 corner{cell.x+cell.w,cell.y+cell.h*(i?.25f:.75f),0};
+        V3 world=r.unbox<V3>(r.call(end,"TransformPoint",{"UnityEngine.Vector3"},{&corner}));
+        V3 pos=r.unbox<V3>(r.call(canvas,"InverseTransformPoint",{"UnityEngine.Vector3"},{&world}));
+        float mx=size.x*.5f+6,my=size.y*.5f+6;
+        pos.x=right-left>=2*mx?std::clamp(pos.x+mx,left+mx,right-mx):(left+right)*.5f;
+        pos.y=top-bottom>=2*my?std::clamp(pos.y,bottom+my,top-my):(bottom+top)*.5f;
+        world=r.unbox<V3>(r.call(canvas,"TransformPoint",{"UnityEngine.Vector3"},{&pos}));
         r.call(rect,"set_position",{"UnityEngine.Vector3"},{&world});
+    }
+}
+static void buildArrows(Runtime &r,P control){
+    const char *names[]={"Text","Text (1)","3rdText"};
+    for(int i=0;i<3;++i){
+        P object=child(r,slotRect(r,control,i),names[i]);
+        if(object){
+            P label=r.component(object,r.type("UnityEngine.UI","Text"));
+            if(label){ordinalLabels[i]=r.gchandle_new(label,false); originalLabels[i]=r.string(r.call(label,"get_text"));}
+        }
+    }
+    P label=r.at(r.get<P>(control,"difficulty"),0), font=r.call(label,"get_font");
+    P canvas=queueCanvas(r,slotRect(r,control,2));
+    auto cell=r.unbox<sceneimpl::Rect>(r.call(slotRect(r,control,2),"get_rect"));
+    V2 size{std::max(42.f,cell.h*.55f),cell.h*.47f};
+    for(int i=0;i<2;++i){
+        P button=pagerLabel(r,canvas,font,i?"→":"←",0,true,size);
+        arrows[i]=r.gchandle_new(go(r,button),false);
         (i?next:previous)=button;
     }
 }
@@ -178,7 +239,18 @@ static void press(Runtime &r,P button){
 }
 static void frame(Runtime &r,P owner){
     if(ownerRoot && target(r,ownerRoot)!=owner)clear(r);
-    if(!PMSettingBool("freeChallenge")){if(ownerRoot)clear(r);return;}
+    if(!PMSettingBool("freeChallenge")){
+        if(ownerRoot && !launching){
+            P control=r.get<P>(owner,"challengeSongSelectorControl");
+            clear(r);
+            if(r.alive(control)){
+                P images=r.get<P>(control,"songCoverImages");
+                for(int i=0;i<r.count(images);++i)active(r,go(r,r.at(images,i)),false);
+                r.call(control,"SetText");
+            }
+        }
+        return;
+    }
     if(launching)return;
     P control=r.get<P>(owner,"challengeSongSelectorControl");
     if(!r.alive(control)||!r.unbox<bool>(r.call(control,"get_isActiveAndEnabled"))){if(ownerRoot)clear(r);return;}
@@ -186,9 +258,8 @@ static void frame(Runtime &r,P owner){
     if(!ownerRoot){
         P stock=r.get<P>(control,"challengeSongItems");
         if(!stock||r.count(stock))return;
-        P panels=r.get<P>(control,"songCoverPanel");
-        if(!panels||r.array_length(panels)<3)return;
-        sceneimpl::Rect box=r.unbox<sceneimpl::Rect>(r.call(r.arrayAt(panels,2),"get_rect"));
+        if(r.count(r.get<P>(control,"songCoverImages"))<3)return;
+        sceneimpl::Rect box=r.unbox<sceneimpl::Rect>(r.call(slotRect(r,control,2),"get_rect"));
         if(box.w<=0||box.h<=0)return;
         Root list(r,r.object_new(r.object_get_class(stock)));r.call(list.get(),".ctor");
         ownerRoot=r.gchandle_new(owner,false);listRoot=r.gchandle_new(list.get(),false);
@@ -196,6 +267,8 @@ static void frame(Runtime &r,P owner){
             buildArrows(r,control);refresh(r,control,list.get());
         }catch(...){clear(r);throw;}
     }
+    double now=NSDate.timeIntervalSinceReferenceDate;
+    if(now>=nextLayout){layoutArrows(r,control);nextLayout=now+.25;}
     // The stock selector may reset these states after a difficulty change.
     bool filled=r.count(target(r,listRoot))>0;
     interactable(r,playButton,filled);interactable(r,undoButton,filled);

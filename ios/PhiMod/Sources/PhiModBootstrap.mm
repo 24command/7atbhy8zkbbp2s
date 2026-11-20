@@ -342,6 +342,8 @@ static UIColor *PMColor(uint32_t argb) {
    [self addSetting:@"holdFx" title:@"Hold 特效间隔 / ms" boolean:NO];
   }else{
    [self addSetting:@"hpEnabled" title:@"HP 生存" boolean:YES];
+   [self addSetting:@"freeChallenge" title:@"课题模式 · 任意曲数" boolean:YES];
+   [self addSetting:@"challengeCarryHP" title:@"课题继承 HP（需开启 HP 生存）" boolean:YES];
    [self addSetting:@"hpTopEffect" title:@"顶部 HP 特效" boolean:YES];
    [self addSetting:@"hpBackgroundEffect" title:@"背景 HP 特效" boolean:YES];
    [self addSetting:@"hpMax" title:@"最大 HP" boolean:NO];
