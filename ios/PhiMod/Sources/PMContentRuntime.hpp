@@ -22,6 +22,7 @@ bool pressDifficultyButton(pmbridge::Runtime&,void*button);
 NSDictionary *challengeEntryChart(pmbridge::Runtime&,void*);
 void challengeIntroLabels(pmbridge::Runtime&,void*);
 void freezeChallengeDifficulties(pmbridge::Runtime&,void*selector=nullptr);
+void prepareChallengeArtwork(pmbridge::Runtime&);
 void difficultySelectorOff(pmbridge::Runtime&);
 void difficultyResultLabel(pmbridge::Runtime&,void*iterator);
 void difficultyTransitionLabel(pmbridge::Runtime&,void*selector);

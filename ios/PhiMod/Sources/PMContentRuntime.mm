@@ -177,8 +177,8 @@ P image(Runtime&r,NSString*path,bool background=false,bool lineTexture=false,V2 
   sourceW=img.size.width*img.scale;sourceH=img.size.height*img.scale;
   if(!std::isfinite(sourceW)||!std::isfinite(sourceH)||sourceW<=0||sourceH<=0)throw std::runtime_error("Cover image dimensions invalid");
   const unsigned char pngMagic[8]={137,80,78,71,13,10,26,10};
-  bool directPNG=!chapterBlur&&original.length>=8&&!memcmp(original.bytes,pngMagic,8)&&img.imageOrientation==UIImageOrientationUp&&sourceW<=maxSide&&sourceH<=maxSide;
-  if(directPNG && original.length<=maxEncoded*1024*1024)encoded=original;
+  bool directPNG=!chapterBlur&&original.length>=8&&original.length<=maxEncoded*1024*1024&&!memcmp(original.bytes,pngMagic,8)&&img.imageOrientation==UIImageOrientationUp&&sourceW<=maxSide&&sourceH<=maxSide;
+  if(directPNG)encoded=original;
   else if(!chapterBlur && !lineTexture){
    // Decode a display-sized copy directly, including EXIF rotation. Avoid a
    // full-resolution bitmap and PNG compression on the Unity transition frame.
@@ -764,8 +764,8 @@ bool assetConstructor(Runtime&r,P self,P key){NSString*kind=nil,*identifier=keyI
  }
  try{std::string cacheKey=r.string(key).UTF8String;P obj=nullptr;auto found=assets.find(cacheKey);if(found!=assets.end())obj=target(r,found->second);if(!r.alive(obj)){NSString*folder=[PMContentStore.shared asset:identifier];if([kind isEqualToString:@"chart"]){NSString*json=[NSString stringWithContentsOfFile:[folder stringByAppendingPathComponent:@"chart-native.json"] encoding:NSUTF8StringEncoding error:nil];if(!json)throw std::runtime_error("Custom chart not found");log([NSString stringWithFormat:@"Content chart text ready: chars=%lu",(unsigned long)json.length]);obj=r.object_new(r.type("UnityEngine","TextAsset"));uint32_t h=r.gchandle_new(obj,false);try{r.call(obj,".ctor",{"System.String"},{r.managedString(json)});}catch(...){r.gchandle_free(h);throw;}r.gchandle_free(h);}else if([kind isEqualToString:@"music"]){NSString*m4a=[folder stringByAppendingPathComponent:@"music.m4a"];NSString*caf=[folder stringByAppendingPathComponent:@"music.caf"];obj=audio(r,[NSFileManager.defaultManager fileExistsAtPath:m4a]?m4a:caf);}else{
    NSString*path=[identifier isEqualToString:@"pm_avatar"]?[folder stringByAppendingPathComponent:@"image.png"]:pmunlock::coverPath(r,identifier);
-   bool chapterBlur=[kind isEqualToString:@"chapterBlur"];
-   obj=image(r,path,chapterBlur||[kind isEqualToString:@"blur"],false,{.5f,.5f},chapterBlur);
+   bool blurred=[kind isEqualToString:@"chapterBlur"]||[kind isEqualToString:@"blur"]||[kind isEqualToString:@"courseBlur"];
+   obj=image(r,path,blurred,false,{.5f,.5f},blurred);
   }assets[cacheKey]=r.gchandle_new(obj,false);}refs[self]=cacheKey;users[cacheKey]++;r.put(self,"obj",obj);r.put(self,"<IsDone>k__BackingField",true);r.put(self,"<IsFailed>k__BackingField",false);if([kind isEqualToString:@"image"]||[kind isEqualToString:@"chapterBlur"])try{syncChapterCoverFallbacks(r);}catch(const std::exception&e){log([NSString stringWithFormat:@"Content chapter cover fallback failed: %s",e.what()]);}log([@"Content asset loaded: " stringByAppendingString:r.string(key)]);}catch(const std::exception&e){r.put<P>(self,"obj",nullptr);r.put(self,"<IsDone>k__BackingField",true);r.put(self,"<IsFailed>k__BackingField",true);log([NSString stringWithFormat:@"Content asset failed: %@ (%s)",r.string(key),e.what()]);}return true;}
 bool assetRelease(Runtime&r,P self,bool force){
  NSString*kind=nil;P key=r.get<P>(self,"key");if(!keyID(r.string(key),&kind))return false;

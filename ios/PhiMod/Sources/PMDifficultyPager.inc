@@ -261,6 +261,43 @@ void challengeIntroLabels(Runtime &r, P iterator) {
  difficultyText(r, r.get<P>(owner, "levelText"), PMDifficultyName(chart[@"level"]));
  difficultyText(r, r.get<P>(owner, "difficulty"), PMDifficultyText(chart));
 }
+void prepareChallengeArtwork(Runtime &r){
+ P game=r.mainGame(),queue=r.get<P>(game,"challengeSongItems");
+ int index=r.get<int>(game,"nowChallengeIndex");
+ // Chapter 9's hidden entry and the terminal result transition are native-owned.
+ if(index<0 || index>=3 || index>=r.count(queue))return;
+ P entry=r.at(queue,index),item=r.get<P>(entry,"songInfo"),song=r.get<P>(item,"songInfo");
+ int slot=r.get<int>(entry,"levelIndex");if(slot<0||slot>3)return;
+ NSString *idValue=r.string(r.get<P>(song,"songsId"));
+ NSDictionary *custom=challengeEntryChart(r,entry);
+ if(!custom && [idValue hasPrefix:@"pm_"])custom=songFor(idValue,slot);
+ NSString *foreground=nil,*background=nil;
+ if(custom && ![custom[@"pmOfficial"] boolValue]){
+  NSString *id=custom[@"id"];if(!id.length)return;
+  NSUInteger revision=PMContentStore.shared.revision;
+  // Course loads are awaited by MoveNext, not by the selector's scroll/debounce worker.
+  foreground=[NSString stringWithFormat:@"PM/%@/courseImage@%lu",id,(unsigned long)revision];
+  background=[NSString stringWithFormat:@"PM/%@/courseBlur@%lu",id,(unsigned long)revision];
+ }else{
+  NSString *original=r.string(r.get<P>(item,"coverAssetCode"));
+  if(![original.lastPathComponent hasPrefix:@"Illustration"] ||
+     [original.lastPathComponent containsString:@"Locked"])return;
+  // GetLevelStartInfo resolves the original's difficulty-specific illustration.
+  P info=r.call(song,"GetLevelStartInfo",{"System.Int32"},{&slot});
+  foreground=info?r.string(r.get<P>(info,"illustrationKey")):nil;
+  NSString *dir=[@"Assets/Tracks" stringByAppendingPathComponent:idValue];
+  if(![foreground.stringByDeletingLastPathComponent isEqualToString:dir])return;
+  NSString *file=foreground.lastPathComponent;
+  if(![file isEqualToString:@"Illustration.jpg"] && !([file hasPrefix:@"Illustration_"]&&[file hasSuffix:@".jpg"]))return;
+  NSString *level=[file isEqualToString:@"Illustration.jpg"]?@"":[file.stringByDeletingPathExtension substringFromIndex:@"Illustration_".length];
+  background=r.string(r.stat(r.klass("IdBuilder"),"BuildBlurImageId",{"System.String","System.String"},{r.managedString(idValue),r.managedString(level)}));
+ }
+ if(!background.length || !foreground.length)return;
+ if([foreground isEqualToString:r.string(r.get<P>(item,"coverAssetCode"))] && [background isEqualToString:r.string(r.get<P>(item,"coverBlurAssetCode"))])return;
+ P copy=r.call(item,"MemberwiseClone");uint32_t root=r.gchandle_new(copy,false);
+ try{r.put(copy,"coverAssetCode",r.managedString(foreground));r.put(copy,"coverBlurAssetCode",r.managedString(background));r.put(entry,"songInfo",copy);}
+ catch(...){r.gchandle_free(root);throw;}r.gchandle_free(root);
+}
 void difficultyTransitionLabel(Runtime&r,void*raw){
  P selector=raw;if(!r.alive(selector)||!r.get<bool>(selector,"exit"))return;NSDictionary*chart=difficultyDisplayChart(r);if(!chart)return;
  // Verified serialized level7 fields point to StartInfos/SelectedSong/Level,

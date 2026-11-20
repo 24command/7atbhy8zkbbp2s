@@ -751,6 +751,7 @@ bool onChallengeAdvance(P self,P mi){
   diagf("Free challenge transition: %s",e.what());auto&r=R();pmchallenge::cancelVariable(r);
   try{r.stat(r.type("UnityEngine.SceneManagement","SceneManager"),"LoadScene",{"System.String"},{r.string_new("SongSelector")});}catch(const std::exception&error){diagf("Challenge exit: %s",error.what());}return false;
  }
+ contentBoundary("Challenge intro artwork",[&]{auto&r=R();if(r.get<int>(self,"<>1__state")==0)pmcontent::prepareChallengeArtwork(r);});
  bool yielded = orig<JudgeFn>(h::challengeAdvance)(self,mi);
  if (yielded) contentBoundary("Challenge intro labels", [&]{
   auto &r = R();

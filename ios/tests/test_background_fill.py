@@ -12,8 +12,21 @@ class BackgroundFill(unittest.TestCase):
   self.assertIn('bool background=false',s)
   self.assertIn('background?std::min(actualW/38.4f,actualH/21.6f):lineTexture?100.f*actualW/sourceW:100.f',s)
   self.assertIn('[lower containsString:@"blur"]?@"blur"',s)
-  self.assertIn('obj=image(r,path,chapterBlur||[kind isEqualToString:@"blur"],false,{.5f,.5f},chapterBlur)',s)
+  self.assertIn('bool blurred=[kind isEqualToString:@"chapterBlur"]||[kind isEqualToString:@"blur"]||[kind isEqualToString:@"courseBlur"]',s)
+  self.assertIn('obj=image(r,path,blurred,false,{.5f,.5f},blurred)',s)
   self.assertIn('sprite=image(r,path,false,true,anchor);',s)
+ def test_course_cold_art_is_ready_for_the_native_loader(self):
+  sources=Path(__file__).resolve().parents[1]/'PhiMod/Sources'
+  hook=(sources/'PMHookBackend.mm').read_text('utf8').split('bool onChallengeAdvance(',1)[1].split('void onChallengeResultStart',1)[0]
+  self.assertLess(hook.index('pmchallenge::advance(r)'),hook.index('prepareChallengeArtwork(r)'))
+  self.assertLess(hook.index('prepareChallengeArtwork(r)'),hook.index('orig<JudgeFn>(h::challengeAdvance)'))
+  bind=(sources/'PMDifficultyPager.inc').read_text('utf8').split('void prepareChallengeArtwork(',1)[1].split('void difficultyTransitionLabel(',1)[0]
+  for value in ('challengeEntryChart(r,entry)','/courseImage@','/courseBlur@','"BuildBlurImageId"','r.put(copy,"coverAssetCode"','r.put(copy,"coverBlurAssetCode"'):
+   self.assertIn(value,bind)
+  aset=(sources/'PMContentRuntime.mm').read_text('utf8').split('bool assetConstructor(',1)[1].split('try{std::string cacheKey',1)[0]
+  self.assertIn('selectorAssets[self]',aset)
+  self.assertNotIn('courseImage',aset)
+  self.assertNotIn('courseBlur',aset)
  def test_chapter_blur_uses_the_card_mask_and_active_background(self):
   s=(Path(__file__).resolve().parents[1]/'PhiMod/Sources/PMContentRuntime.mm').read_text(encoding='utf-8')
   assign=s.split('void applyCachedChapterCover(',1)[1].split('void syncChapterCoverFallbacks',1)[0]
