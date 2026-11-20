@@ -77,7 +77,7 @@ static void refresh(Runtime &r,P control,P list){
 static void buildArrows(Runtime &r,P control){
     P end=r.arrayAt(r.get<P>(control,"songCoverPanel"),2), parent=r.call(end,"get_parent");
     P font=r.call(r.at(r.get<P>(control,"difficulty"),0),"get_font");
-    Rect bounds=r.unbox<Rect>(r.call(end,"get_rect"));
+    sceneimpl::Rect bounds=r.unbox<sceneimpl::Rect>(r.call(end,"get_rect"));
     for(int i=0;i<2;++i){
         V2 size{std::max(42.f,bounds.h*.55f),bounds.h*.47f};
         P button=pagerLabel(r,parent,font,i?"→":"←",0,true,size);
@@ -178,7 +178,7 @@ static void frame(Runtime &r,P owner){
         if(!stock||r.count(stock))return;
         P panels=r.get<P>(control,"songCoverPanel");
         if(!panels||r.array_length(panels)<3)return;
-        Rect box=r.unbox<Rect>(r.call(r.arrayAt(panels,2),"get_rect"));
+        sceneimpl::Rect box=r.unbox<sceneimpl::Rect>(r.call(r.arrayAt(panels,2),"get_rect"));
         if(box.w<=0||box.h<=0)return;
         Root list(r,r.object_new(r.object_get_class(stock)));r.call(list.get(),".ctor");
         ownerRoot=r.gchandle_new(owner,false);listRoot=r.gchandle_new(list.get(),false);
