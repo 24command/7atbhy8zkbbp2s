@@ -11,6 +11,7 @@
 #include "PMContentRuntime.hpp"
 #include "PMUnlockRuntime.hpp"
 #include "PMChallengeRun.hpp"
+#include "PMScoreBackup.hpp"
 #include "../Core/PMSettingsTabRoute.hpp"
 #include "../Core/PMUIInteraction.hpp"
 #include "../Core/PMModSettingsLayout.hpp"

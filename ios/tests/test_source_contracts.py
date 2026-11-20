@@ -221,15 +221,15 @@ class SourceContracts(unittest.TestCase):
   manifest=json.loads((ROOT/'tools/gameplay_hook_manifest.json').read_text(encoding='utf-8'))
   values=hook[hook.index('P callbacks[h::Count]'):hook.index('auto slots=',hook.index('P callbacks[h::Count]'))]
   self.assertEqual(values.count('reinterpret_cast<P>'),len(manifest))
-  self.assertIn('PMGameplay-contract-v2-'+str(len(manifest))+'-ios403',hook)
+  self.assertIn('PMGameplay-contract-v2-'+str(len(manifest))+'-ios404',hook)
   package=(ROOT/'tools/package_unsigned_ipa.py').read_text(encoding='utf-8')
-  self.assertIn('PMGameplay-contract-v2-'+str(len(manifest))+'-ios403',package)
+  self.assertIn('PMGameplay-contract-v2-'+str(len(manifest))+'-ios404',package)
  def test_practice_rate_segment_hooks_and_android_style_mode_categories(self):
   practice=(ROOT/'PhiMod/Sources/PMPractice.mm').read_text(encoding='utf-8')
   hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf-8')
   ui=(ROOT/'PhiMod/Sources/PhiModBootstrap.mm').read_text(encoding='utf-8')
   settings=(ROOT/'PhiMod/Sources/PMSettings.mm').read_text(encoding='utf-8')
-  self.assertIn('PMGameplay-contract-v2-74-ios403',hook)
+  self.assertIn('PMGameplay-contract-v2-74-ios404',hook)
   self.assertIn('audioUpdate=55', (ROOT/'PhiMod/Core/PMHookProtocol.hpp').read_text(encoding='utf-8'))
   self.assertIn('lineCreateNote=56', (ROOT/'PhiMod/Core/PMHookProtocol.hpp').read_text(encoding='utf-8'))
   self.assertIn('AddressableAudioSource.Update', (ROOT/'tools/gameplay_hook_manifest.json').read_text(encoding='utf-8'))
@@ -285,7 +285,7 @@ class SourceContracts(unittest.TestCase):
  def test_packager_rejects_old_framework_before_copying_payload(self):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp);(root/'source/Payload').mkdir(parents=True);(root/'PhiMod.framework').mkdir()
-   for marker in (b'PMJudgeHook-v1\0PMGameplay-v2\0PMGameplay-contract-v2-68\0',b'PMGameplay-v1',b'PMGameplay-v2',b'PMGameplay-v2\0PMGameplay-contract-v2-74-ios403'):
+   for marker in (b'PMJudgeHook-v1\0PMGameplay-v2\0PMGameplay-contract-v2-68\0',b'PMGameplay-v1',b'PMGameplay-v2',b'PMGameplay-v2\0PMGameplay-contract-v2-74-ios404'):
     (root/'PhiMod.framework/PhiMod').write_bytes(marker)
     result=subprocess.run([sys.executable,str(ROOT/'tools/package_unsigned_ipa.py'),'--source',str(root/'source'),'--framework',str(root/'PhiMod.framework'),'--output',str(root/'out.ipa')],capture_output=True,text=True,encoding="utf-8",errors="replace")
     self.assertNotEqual(result.returncode,0);self.assertIn('Stale framework',result.stderr);self.assertFalse((root/'out.ipa').exists())

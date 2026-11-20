@@ -33,7 +33,7 @@ using pmbridge::P;
 using pmbridge::Runtime;
 namespace h=phimod::hooks;
 __attribute__((used)) static const char PMGameplayProtocol[16]="PMGameplay-v2";
-__attribute__((used)) static const char PMGameplayBuild[]="PMGameplay-contract-v2-74-ios403";
+__attribute__((used)) static const char PMGameplayBuild[]="PMGameplay-contract-v2-74-ios404";
 struct V3{float x,y,z;};
 struct V2{float x,y;};
 struct Color{float r,g,b,a;};
@@ -787,10 +787,10 @@ void onCheckFlick(P s,int f,P m){onCheck(s,f,m,h::checkFlick);}
      if(c||d){if((c&&seg->initprot!=5)||(d&&seg->initprot!=3))throw std::runtime_error("Expected RX hook/RW state");if(sec->addr<seg->vmaddr||sec->size>seg->vmsize||sec->addr-seg->vmaddr>seg->vmsize-sec->size)throw std::runtime_error("Hook section outside segment");if(c)code=sec;else data=sec;}
     }}cursor+=cmd->cmdsize;
   }
-  if(!code||!data)throw std::runtime_error("UnityFramework has no PhiMod gameplay patches. Repackage from the original iOS 4.0.3 IPA with current tools; replacing PhiMod alone cannot install hooks.");
+  if(!code||!data)throw std::runtime_error("UnityFramework has no PhiMod gameplay patches. Repackage from the original iOS 4.0.4 IPA with current tools; replacing PhiMod alone cannot install hooks.");
   if(code->size!=32+(sizeof(h::Entry)+48)*h::Count||data->size!=sizeof(h::Slot)*h::Count){
    uint64_t installed=code->size>=32?(code->size-32)/(sizeof(h::Entry)+48):0;
-   throw std::runtime_error("UnityFramework/PhiMod hook mismatch: IPA has "+std::to_string(installed)+", framework requires "+std::to_string(h::Count)+". Repackage from original iOS 4.0.3 with current tools; do not replace only PhiMod.");
+   throw std::runtime_error("UnityFramework/PhiMod hook mismatch: IPA has "+std::to_string(installed)+", framework requires "+std::to_string(h::Count)+". Repackage from original iOS 4.0.4 with current tools; do not replace only PhiMod.");
   }
   auto base=reinterpret_cast<const uint8_t*>(r.imageHeader);auto desc=base+code->addr;uint32_t ver,count;uint64_t state;
   memcpy(&ver,desc+16,4);memcpy(&count,desc+20,4);memcpy(&state,desc+24,8);

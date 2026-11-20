@@ -4,6 +4,7 @@
 @property(nonatomic,readonly) NSString*root;
 @property(nonatomic,readonly) NSUInteger revision;
 - (NSDictionary*)snapshot;
+- (void)scoresChanged;
 - (BOOL)saveUnlockRule:(NSDictionary*)rule animationURL:(NSURL*)url identifier:(NSString*)identifier error:(NSError**)error;
 - (BOOL)commit:(NSDictionary*)value error:(NSError**)error;
 - (NSString*)coverFolder:(NSString*)identifier;

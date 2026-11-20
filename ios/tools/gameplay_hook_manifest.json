@@ -2,7 +2,7 @@
   {
     "id": "levelAwake",
     "name": "LevelControl.Awake",
-    "rva": 22550944,
+    "rva": 22551116,
     "args": "",
     "bytes": "ff0303d1",
     "instruction": "sub sp, sp, #0xc0"
@@ -10,7 +10,7 @@
   {
     "id": "levelDestroy",
     "name": "LevelControl.OnDestroy",
-    "rva": 22551744,
+    "rva": 22551916,
     "args": "",
     "bytes": "f44fbea9",
     "instruction": "stp x20, x19, [sp, #-0x20]!"
@@ -18,7 +18,7 @@
   {
     "id": "progressStart",
     "name": "ProgressControl.Start",
-    "rva": 22622616,
+    "rva": 22622788,
     "args": "",
     "bytes": "f657bda9",
     "instruction": "stp x22, x21, [sp, #-0x30]!"
@@ -26,7 +26,7 @@
   {
     "id": "progressUpdate",
     "name": "ProgressControl.Update",
-    "rva": 22623192,
+    "rva": 22623364,
     "args": "",
     "bytes": "e923bc6d",
     "instruction": "stp d9, d8, [sp, #-0x40]!"
@@ -34,7 +34,7 @@
   {
     "id": "miss",
     "name": "ScoreControl.Miss",
-    "rva": 22630408,
+    "rva": 22630580,
     "args": "float noteCode",
     "bytes": "e923bd6d",
     "instruction": "stp d9, d8, [sp, #-0x30]!"
@@ -42,7 +42,7 @@
   {
     "id": "bad",
     "name": "ScoreControl.Bad",
-    "rva": 22630640,
+    "rva": 22630812,
     "args": "float noteCode, float judgeTime",
     "bytes": "e923bd6d",
     "instruction": "stp d9, d8, [sp, #-0x30]!"
@@ -50,7 +50,7 @@
   {
     "id": "good",
     "name": "ScoreControl.Good",
-    "rva": 22630892,
+    "rva": 22631064,
     "args": "float noteCode, float judgeTime, Vector3 judgeTransform, bool isHold",
     "bytes": "ed33ba6d",
     "instruction": "stp d13, d12, [sp, #-0x60]!"
@@ -58,7 +58,7 @@
   {
     "id": "perfect",
     "name": "ScoreControl.Perfect",
-    "rva": 22631400,
+    "rva": 22631572,
     "args": "float noteCode, float judgeTime, Vector3 judgeTransform, bool isHold",
     "bytes": "ed33ba6d",
     "instruction": "stp d13, d12, [sp, #-0x60]!"
@@ -66,7 +66,7 @@
   {
     "id": "scoreUpdate",
     "name": "ScoreControl.Update",
-    "rva": 22631864,
+    "rva": 22632036,
     "args": "",
     "bytes": "ff0301d1",
     "instruction": "sub sp, sp, #0x40"
@@ -74,7 +74,7 @@
   {
     "id": "resultInfo",
     "name": "ScoreControl.GetLevelResultInfo",
-    "rva": 22625536,
+    "rva": 22625708,
     "args": "",
     "bytes": "f657bda9",
     "instruction": "stp x22, x21, [sp, #-0x30]!"
@@ -82,7 +82,7 @@
   {
     "id": "click",
     "name": "ClickControl.Judge",
-    "rva": 22606604,
+    "rva": 22606776,
     "args": "",
     "bytes": "eb2bbc6d",
     "instruction": "stp d11, d10, [sp, #-0x40]!"
@@ -90,7 +90,7 @@
   {
     "id": "drag",
     "name": "DragControl.Judge",
-    "rva": 22608724,
+    "rva": 22608896,
     "args": "",
     "bytes": "e923bd6d",
     "instruction": "stp d9, d8, [sp, #-0x30]!"
@@ -98,7 +98,7 @@
   {
     "id": "hold",
     "name": "HoldControl.Judge",
-    "rva": 22614088,
+    "rva": 22614260,
     "args": "",
     "bytes": "e923bc6d",
     "instruction": "stp d9, d8, [sp, #-0x40]!"
@@ -106,7 +106,7 @@
   {
     "id": "flick",
     "name": "FlickControl.Judge",
-    "rva": 22610608,
+    "rva": 22610780,
     "args": "",
     "bytes": "e923bd6d",
     "instruction": "stp d9, d8, [sp, #-0x30]!"
@@ -138,7 +138,7 @@
   {
     "id": "resultStart",
     "name": "LevelOverControl.Start",
-    "rva": 22570268,
+    "rva": 22570440,
     "args": "",
     "bytes": "f657bda9",
     "instruction": "stp x22, x21, [sp, #-0x30]!"
@@ -146,7 +146,7 @@
   {
     "id": "resultMove",
     "name": "LevelOverControl.<Start>d__43.MoveNext",
-    "rva": 22601784,
+    "rva": 22601956,
     "args": "",
     "bytes": "fa67bba9",
     "instruction": "stp x26, x25, [sp, #-0x50]!"
@@ -154,7 +154,7 @@
   {
     "id": "selector",
     "name": "SongSelector.Update",
-    "rva": 22767712,
+    "rva": 22767884,
     "args": "",
     "bytes": "eb2bb86d",
     "instruction": "stp d11, d10, [sp, #-0x80]!"
@@ -162,7 +162,7 @@
   {
     "id": "selectorOff",
     "name": "SongSelector.OnDisable",
-    "rva": 22751388,
+    "rva": 22751560,
     "args": "",
     "bytes": "f85fbca9",
     "instruction": "stp x24, x23, [sp, #-0x40]!"
@@ -170,7 +170,7 @@
   {
     "id": "setting",
     "name": "Setting.Update",
-    "rva": 22693328,
+    "rva": 22693500,
     "args": "",
     "bytes": "f44fbea9",
     "instruction": "stp x20, x19, [sp, #-0x20]!"
@@ -178,7 +178,7 @@
   {
     "id": "settingTab",
     "name": "Setting.ChangeTab",
-    "rva": 22696288,
+    "rva": 22696460,
     "args": "int index",
     "bytes": "e923bb6d",
     "instruction": "stp d9, d8, [sp, #-0x50]!"
@@ -186,7 +186,7 @@
   {
     "id": "settingBack",
     "name": "Setting.Back",
-    "rva": 22695576,
+    "rva": 22695748,
     "args": "",
     "bytes": "f85fbca9",
     "instruction": "stp x24, x23, [sp, #-0x40]!"
@@ -194,7 +194,7 @@
   {
     "id": "button",
     "name": "Button.Press",
-    "rva": 61115580,
+    "rva": 61115752,
     "args": "",
     "bytes": "f44fbea9",
     "instruction": "stp x20, x19, [sp, #-0x20]!"
@@ -202,7 +202,7 @@
   {
     "id": "checkNote",
     "name": "JudgeControl.CheckNote",
-    "rva": 22532776,
+    "rva": 22532948,
     "args": "int fingerIndex",
     "bytes": "ed33b76d",
     "instruction": "stp d13, d12, [sp, #-0x90]!"
@@ -210,7 +210,7 @@
   {
     "id": "checkFlick",
     "name": "JudgeControl.CheckFlick",
-    "rva": 22534680,
+    "rva": 22534852,
     "args": "int fingerIndex",
     "bytes": "ed33b76d",
     "instruction": "stp d13, d12, [sp, #-0x90]!"
@@ -218,7 +218,7 @@
   {
     "id": "DeleteKey",
     "name": "SaveManagement.DeleteKey",
-    "rva": 21693080,
+    "rva": 21693252,
     "args": "string keyName",
     "bytes": "f657bda9",
     "instruction": "stp x22, x21, [sp, #-0x30]!"
@@ -226,7 +226,7 @@
   {
     "id": "SaveBool",
     "name": "SaveManagement.SaveBool",
-    "rva": 21693284,
+    "rva": 21693456,
     "args": "string keyName, bool value",
     "bytes": "ff0301d1",
     "instruction": "sub sp, sp, #0x40"
@@ -234,7 +234,7 @@
   {
     "id": "SaveInt",
     "name": "SaveManagement.SaveInt",
-    "rva": 21693516,
+    "rva": 21693688,
     "args": "string keyName, int value",
     "bytes": "ff0301d1",
     "instruction": "sub sp, sp, #0x40"
@@ -242,7 +242,7 @@
   {
     "id": "SaveFloat",
     "name": "SaveManagement.SaveFloat",
-    "rva": 21693664,
+    "rva": 21693836,
     "args": "string keyName, float value",
     "bytes": "ff0301d1",
     "instruction": "sub sp, sp, #0x40"
@@ -250,7 +250,7 @@
   {
     "id": "SaveDate",
     "name": "SaveManagement.SaveDate",
-    "rva": 21693908,
+    "rva": 21694080,
     "args": "string keyName, DateTime value",
     "bytes": "ff0301d1",
     "instruction": "sub sp, sp, #0x40"
@@ -258,7 +258,7 @@
   {
     "id": "SaveString",
     "name": "SaveManagement.SaveString",
-    "rva": 21694116,
+    "rva": 21694288,
     "args": "string keyName, string value",
     "bytes": "f657bda9",
     "instruction": "stp x22, x21, [sp, #-0x30]!"
@@ -266,7 +266,7 @@
   {
     "id": "LegacySaveBool",
     "name": "SaveManagement.LegacySaveBool",
-    "rva": 21698456,
+    "rva": 21698628,
     "args": "string keyName, bool value",
     "bytes": "ff0301d1",
     "instruction": "sub sp, sp, #0x40"
@@ -274,7 +274,7 @@
   {
     "id": "LegacySaveInt",
     "name": "SaveManagement.LegacySaveInt",
-    "rva": 21698688,
+    "rva": 21698860,
     "args": "string keyName, int value",
     "bytes": "ff0301d1",
     "instruction": "sub sp, sp, #0x40"
@@ -282,7 +282,7 @@
   {
     "id": "LegacySaveFloat",
     "name": "SaveManagement.LegacySaveFloat",
-    "rva": 21698836,
+    "rva": 21699008,
     "args": "string keyName, float value",
     "bytes": "ff0301d1",
     "instruction": "sub sp, sp, #0x40"
@@ -290,7 +290,7 @@
   {
     "id": "LegacySaveString",
     "name": "SaveManagement.LegacySaveString",
-    "rva": 21698984,
+    "rva": 21699156,
     "args": "string keyName, string value",
     "bytes": "f657bda9",
     "instruction": "stp x22, x21, [sp, #-0x30]!"
@@ -299,7 +299,7 @@
     "id": "buttonClick",
     "name": "Button.OnPointerClick",
     "args": "PointerEventData eventData",
-    "rva": 61115736,
+    "rva": 61115908,
     "bytes": "f44fbea9",
     "instruction": "stp x20, x19, [sp, #-0x20]!"
   },
@@ -307,7 +307,7 @@
     "id": "buttonSubmit",
     "name": "Button.OnSubmit",
     "args": "BaseEventData eventData",
-    "rva": 61115904,
+    "rva": 61116076,
     "bytes": "f657bda9",
     "instruction": "stp x22, x21, [sp, #-0x30]!"
   },
@@ -315,7 +315,7 @@
     "id": "lifeStart",
     "name": "SecretChallengeLifeBar.Start",
     "args": "",
-    "rva": 21861640,
+    "rva": 21861812,
     "bytes": "f657bda9",
     "instruction": "stp x22, x21, [sp, #-0x30]!"
   },
@@ -323,7 +323,7 @@
     "id": "lifeNormalized",
     "name": "SecretChallengeLifeBar.GetNormalizedLife",
     "args": "GameInformation gameInformation",
-    "rva": 21862968,
+    "rva": 21863140,
     "bytes": "f657bda9",
     "instruction": "stp x22, x21, [sp, #-0x30]!"
   },
@@ -331,7 +331,7 @@
     "id": "lifeModStart",
     "name": "SecretChallengeLifeMod.Start",
     "args": "",
-    "rva": 21864916,
+    "rva": 21865088,
     "bytes": "f85fbca9",
     "instruction": "stp x24, x23, [sp, #-0x40]!"
   },
@@ -339,7 +339,7 @@
     "id": "hpBackgroundStart",
     "name": "HPDisplayControl.Start",
     "args": "",
-    "rva": 22503500,
+    "rva": 22503672,
     "bytes": "f657bda9",
     "instruction": "stp x22, x21, [sp, #-0x30]!"
   },
@@ -347,12 +347,12 @@
     "id": "progressLevelOver",
     "name": "ProgressControl.LevelOver",
     "args": "",
-    "rva": 22626120,
+    "rva": 22626292,
     "bytes": "f657bda9",
     "instruction": "stp x22, x21, [sp, #-0x30]!"
   },
   {
-    "rva": 21863612,
+    "rva": 21863784,
     "bytes": "eb2bbb6d",
     "id": "lifeUpdate",
     "name": "SecretChallengeLifeBar.Update",
@@ -362,7 +362,7 @@
   {
     "id": "levelCodes",
     "name": "LevelControl.SetCodeForNote",
-    "rva": 22551864,
+    "rva": 22552036,
     "args": "",
     "bytes": "fc6fbaa9",
     "instruction": "stp x28, x27, [sp, #-0x60]!"
@@ -370,7 +370,7 @@
   {
     "id": "levelInfo",
     "name": "LevelControl.SetInformation",
-    "rva": 22553120,
+    "rva": 22553292,
     "args": "",
     "bytes": "ef3bb66d",
     "instruction": "stp d15, d14, [sp, #-0xa0]!"
@@ -378,7 +378,7 @@
   {
     "id": "noteManager",
     "name": "NoteUpdateManager.Update",
-    "rva": 22616084,
+    "rva": 22616256,
     "args": "",
     "bytes": "eb2bb86d",
     "instruction": "stp d11, d10, [sp, #-0x80]!"
@@ -386,7 +386,7 @@
   {
     "id": "blocking",
     "name": "JudgeControl.TryGetBlockingBlock",
-    "rva": 22537112,
+    "rva": 22537284,
     "args": "UnityEngine.Vector2,PreviewBlockControl&",
     "bytes": "ff8302d1",
     "instruction": "sub sp, sp, #0xa0"
@@ -394,7 +394,7 @@
   {
     "id": "blockLate",
     "name": "BlockRender.LateUpdate",
-    "rva": 22518056,
+    "rva": 22518228,
     "args": "",
     "bytes": "f657bda9",
     "instruction": "stp x22, x21, [sp, #-0x30]!"
@@ -402,7 +402,7 @@
   {
     "id": "holdMove",
     "name": "HoldControl.NoteMove",
-    "rva": 22611792,
+    "rva": 22611964,
     "args": "",
     "bytes": "ed33ba6d",
     "instruction": "stp d13, d12, [sp, #-0x60]!"
@@ -410,7 +410,7 @@
   {
     "id": "clickMove",
     "name": "ClickControl.NoteMove",
-    "rva": 22605864,
+    "rva": 22606036,
     "args": "",
     "bytes": "eb2bbb6d",
     "instruction": "stp d11, d10, [sp, #-0x50]!"
@@ -418,7 +418,7 @@
   {
     "id": "dragMove",
     "name": "DragControl.NoteMove",
-    "rva": 22608040,
+    "rva": 22608212,
     "args": "",
     "bytes": "eb2bbb6d",
     "instruction": "stp d11, d10, [sp, #-0x50]!"
@@ -426,7 +426,7 @@
   {
     "id": "flickMove",
     "name": "FlickControl.NoteMove",
-    "rva": 22609924,
+    "rva": 22610096,
     "args": "",
     "bytes": "eb2bbb6d",
     "instruction": "stp d11, d10, [sp, #-0x50]!"
@@ -434,7 +434,7 @@
   {
     "id": "judgeUpdate",
     "name": "JudgeControl.Update",
-    "rva": 22530128,
+    "rva": 22530300,
     "args": "",
     "bytes": "e923ba6d",
     "instruction": "stp d9, d8, [sp, #-0x60]!"
@@ -442,7 +442,7 @@
   {
     "id": "audioUpdate",
     "name": "AddressableAudioSource.Update",
-    "rva": 22841656,
+    "rva": 22841828,
     "args": "",
     "bytes": "eb2bbb6d",
     "instruction": "stp d11, d10, [sp, #-0x50]!"
@@ -450,7 +450,7 @@
   {
     "id": "lineCreateNote",
     "name": "JudgeLineControl.CreateNote",
-    "rva": 22540744,
+    "rva": 22540916,
     "args": "int,bool",
     "bytes": "eb2bb96d",
     "instruction": "stp d11, d10, [sp, #-0x70]!"
@@ -458,7 +458,7 @@
   {
     "id": "assetCtor",
     "name": "AssetStore.AssetRef<object>..ctor",
-    "rva": 34282468,
+    "rva": 34282640,
     "args": "string key",
     "bytes": "ff8301d1",
     "instruction": "sub sp, sp, #0x60"
@@ -466,7 +466,7 @@
   {
     "id": "assetRelease",
     "name": "AssetStore.AssetRef<object>.Release",
-    "rva": 34282824,
+    "rva": 34282996,
     "args": "",
     "bytes": "f44fbea9",
     "instruction": "stp x20, x19, [sp, #-0x20]!"
@@ -482,7 +482,7 @@
   {
     "id": "itemInfo",
     "name": "SongSelectorItem.GetLevelStartInfo",
-    "rva": 22814844,
+    "rva": 22815016,
     "args": "int level",
     "bytes": "f657bda9",
     "instruction": "stp x22, x21, [sp, #-0x30]!"
@@ -490,7 +490,7 @@
   {
     "id": "assetReleaseResource",
     "name": "AssetStore.AssetRef<object>.ReleaseResource",
-    "rva": 34283368,
+    "rva": 34283540,
     "args": "",
     "bytes": "ffc301d1",
     "instruction": "sub sp, sp, #0x70"
@@ -498,7 +498,7 @@
   {
     "id": "chapterStart",
     "name": "ChapterSelector.Start",
-    "rva": 22396304,
+    "rva": 22396476,
     "args": "",
     "bytes": "ff8302d1",
     "instruction": "sub sp, sp, #0xa0"
@@ -506,7 +506,7 @@
   {
     "id": "normalStart",
     "name": "SongSelector.NormalStart",
-    "rva": 22783836,
+    "rva": 22784008,
     "args": "",
     "bytes": "f44fbea9",
     "instruction": "stp x20, x19, [sp, #-0x20]!"
@@ -522,7 +522,7 @@
   {
     "id": "mainlinePhase1Start",
     "name": "Phigros2.Chapter9.Chapter9Phase1Control.Start",
-    "rva": 21959368,
+    "rva": 21959540,
     "args": "",
     "bytes": "f85fbca9",
     "instruction": "stp x24, x23, [sp, #-0x40]!"
@@ -530,7 +530,7 @@
   {
     "id": "mainlinePhase1ToPhase2",
     "name": "Phigros2.Chapter9.Chapter9Phase1Control.ToPhase2",
-    "rva": 21979316,
+    "rva": 21979488,
     "args": "",
     "bytes": "f657bda9",
     "instruction": "stp x22, x21, [sp, #-0x30]!"
@@ -538,7 +538,7 @@
   {
     "id": "mainlineApplyMapCover",
     "name": "Phigros2.Chapter9.Scripts.Chapter9Phase2Control.ApplyMapCover",
-    "rva": 22108068,
+    "rva": 22108240,
     "args": "",
     "bytes": "f657bda9",
     "instruction": "stp x22, x21, [sp, #-0x30]!"
@@ -546,7 +546,7 @@
   {
     "id": "skinInstantiate",
     "name": "UnityEngine.Object.Instantiate<object>",
-    "rva": 25220480,
+    "rva": 25220652,
     "args": "T",
     "bytes": "f657bda9",
     "instruction": "stp x22, x21, [sp, #-0x30]!"
@@ -554,7 +554,7 @@
   {
     "id": "skinSoundHit",
     "name": "SEPlayer.PlayHit",
-    "rva": 21706920,
+    "rva": 21707092,
     "args": "int",
     "bytes": "ff0301d1",
     "instruction": "sub sp, sp, #0x40"
@@ -562,7 +562,7 @@
   {
     "id": "skinSoundNA",
     "name": "SEPlayer.PlayNA",
-    "rva": 21707272,
+    "rva": 21707444,
     "args": "int",
     "bytes": "ff0301d1",
     "instruction": "sub sp, sp, #0x40"
@@ -570,7 +570,7 @@
   {
     "id": "skinSoundUnity",
     "name": "SEPlayer.PlayUnityFx",
-    "rva": 21707996,
+    "rva": 21708168,
     "args": "int",
     "bytes": "f85fbca9",
     "instruction": "stp x24, x23, [sp, #-0x40]!"
@@ -578,7 +578,7 @@
   {
     "id": "challengeAdvance",
     "name": "ChallengeModeControl.<Start>d__21.MoveNext",
-    "rva": 22154212,
+    "rva": 22154384,
     "args": "",
     "bytes": "ff8301d1",
     "instruction": "sub sp, sp, #0x60"
@@ -586,7 +586,7 @@
   {
     "id": "challengeResultStart",
     "name": "ChallengeModeOverControl.Start",
-    "rva": 22159512,
+    "rva": 22159684,
     "args": "",
     "bytes": "ff0302d1",
     "instruction": "sub sp, sp, #0x80"

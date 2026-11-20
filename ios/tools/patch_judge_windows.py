@@ -15,10 +15,10 @@ import hashlib
 from pathlib import Path
 import struct
 
-UUID=bytes.fromhex('70f666eb6f4e325e9e8a75b568085f26')
+UUID=bytes.fromhex('fbcd9b6ea0283ee6bce2ca4834927296')
 MAGIC=b'PMJudgeHook-v1\0\0' # also retained in the new framework
 STATE_SIZE=40
-SITES=(0x1593578,0x15935ec,0x1593600)
+SITES=(0x1593624,0x1593698,0x15936ac)
 ORIGINAL=(bytes.fromhex('004100fc'),bytes.fromhex('014100fc'),bytes.fromhex('000d00bd'))
 TEXT_NAME=b'__pmjhook'
 DATA_NAME=b'__pmjudge'

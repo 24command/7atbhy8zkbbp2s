@@ -70,7 +70,7 @@ jobs:
           import sys
           from pathlib import Path
           binary = Path(sys.argv[1]).read_bytes()
-          for marker in (b"PMJudgeHook-v1", b"PMGameplay-v2", b"PMGameplay-contract-v2-74-ios403"):
+          for marker in (b"PMJudgeHook-v1", b"PMGameplay-v2", b"PMGameplay-contract-v2-74-ios404"):
               assert marker in binary, f"Missing build marker: {marker!r}"
           assert b"PMGameplay-v1" not in binary, "Stale gameplay protocol"
           print("PASS: framework judge/gameplay protocol v2, 74 hooks")

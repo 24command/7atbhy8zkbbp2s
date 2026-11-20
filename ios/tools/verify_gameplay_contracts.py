@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 HP_NS = 'Phigros2.Level.Mods.SecretChallengeLife.'
 ALIASES = {name: HP_NS + name for name in ('SecretChallengeLifeBar', 'SecretChallengeLifeMod')}
-ALIASES.update(Button='UnityEngine.UI.Button', JsonUtility='UnityEngine.JsonUtility',
+ALIASES.update(ChallengeModeOverControl='Phigros2.ChallengeMode.Scripts.ChallengeModeOverControl', Button='UnityEngine.UI.Button', JsonUtility='UnityEngine.JsonUtility',
                Array='System.Array', Mathf='UnityEngine.Mathf', AudioSource='UnityEngine.AudioSource', Time='UnityEngine.Time', Object='UnityEngine.Object',
                PreviewBlockControl='ProjectEditor.PreviewScripts.PreviewBlockControl',
                PreviewElementUpdateControl='Phigros2.Level.Scripts.PreviewElementUpdateControl')
