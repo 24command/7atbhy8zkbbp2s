@@ -162,7 +162,9 @@ void begin(P p){
  diagf("ProgressControl.Start armed baseline P=%.4f G=%.4f B=%.4f",baseline.perfect,baseline.good,baseline.bad);
 }
 void onAwake(P self,P mi){
- timingHints::clear();timingHints::enabled=PMSettingBool("earlyLateHints");
+ timingHints::clear();
+ timingHints::enabled=PMSettingBool("earlyLateHints");
+ timingHints::showBad=timingHints::enabled && PMSettingBool("earlyLateBad");
  diagf("LevelControl.Awake enter");
  try{pmcontent::levelBegin(R());pmfeatures::levelBegin(R(),self);pmunlock::clear(R());}catch(const std::exception&e){diagf("Content/feature begin: %s",e.what());}
  progressUpdateCalls=judgeUpdateCalls=0;lastProgressHeartbeat=lastJudgeHeartbeat={};diagHaveState=false;
@@ -248,7 +250,9 @@ void onMiss(P self,float code,P mi){
  }
  observe(code,0,phimod::Rating::Miss);pmfeatures::observe(3);if(pmhp::active())diagf("HP Miss original enter code=%.3f hp=%.2f",code,attempt?attempt->hp():-1);orig<void(*)(P,float,P)>(h::miss)(self,code,mi);if(pmhp::active())diagf("HP Miss original returned code=%.3f",code);
 }
-void onBad(P self,float code,float offset,P mi){observe(code,offset,phimod::Rating::Bad);pmfeatures::observe(2);orig<void(*)(P,float,float,P)>(h::bad)(self,code,offset,mi);timingHints::show(code,offset,nullptr);}
+void onBad(P self,float code,float offset,P mi){observe(code,offset,phimod::Rating::Bad);pmfeatures::observe(2);orig<void(*)(P,float,float,P)>(h::bad)(self,code,offset,mi);
+ if(timingHints::showBad)timingHints::show(code,offset,nullptr);
+}
 void onGood(P self,float code,float offset,V3 pos,bool hold,P mi){observe(code,offset,phimod::Rating::Good);pmfeatures::observe(1);orig<PerfectFn>(h::good)(self,code,offset,pos,hold,mi);timingHints::show(code,offset,&pos);}
 void diagnosticTick(Runtime&r,P progressControl,const char *source){
  if(!progressControl)return;

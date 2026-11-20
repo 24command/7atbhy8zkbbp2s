@@ -4,9 +4,11 @@ static UILabel *labels[24];
 static unsigned cursor = 0;
 static std::set<float> shown;
 static bool enabled = false;
+static bool showBad = false;
 
 void clear() {
     enabled = false;
+    showBad = false;
     shown.clear();
     cursor = 0;
     for (auto &label : labels) {
