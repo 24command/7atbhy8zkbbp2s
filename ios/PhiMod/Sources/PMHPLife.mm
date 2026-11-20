@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <chrono>
 #import "PMDiagnostics.h"
+#import <UIKit/UIKit.h>
 namespace pmhp {
 using pmbridge::P;using pmbridge::Runtime;
 namespace {
@@ -19,6 +20,7 @@ std::chrono::steady_clock::time_point nextVisualPoll{};
 bool enabled=false,finished=false,backgroundOwned=false,textOwned=false;
 float life=0,originalOpacity=0,originalGlow=0,hitFlashAt=-1;
 bool hitPending=false;
+UIView *fallbackFlash=nil;
 Color originalMain{},originalCover{},originalText[2]{};
 P target(Runtime&r,uint32_t h){return h?r.gchandle_get_target(h):nullptr;}
 void release(Runtime&r,uint32_t &h){if(h){r.gchandle_free(h);h=0;}}
@@ -26,6 +28,21 @@ void setEnabled(Runtime&r,P p,bool value){if(r.alive(p))r.call(p,"set_enabled",{
 void activeObject(Runtime&r,P p,bool value){if(r.alive(p))r.call(p,"SetActive",{"System.Boolean"},{&value});}
 void destroy(Runtime&r,uint32_t &h){P p=target(r,h);if(r.alive(p))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{p});release(r,h);}
 float time(Runtime&r){return r.unbox<float>(r.stat(r.type("UnityEngine","Time"),"get_time"));}
+void showFallbackFlash(){
+ for(UIScene *scene in UIApplication.sharedApplication.connectedScenes){
+  if(scene.activationState!=UISceneActivationStateForegroundActive||![scene isKindOfClass:UIWindowScene.class])continue;
+  for(UIWindow *window in ((UIWindowScene*)scene).windows){
+   if(window.hidden||window.windowLevel!=UIWindowLevelNormal)continue;
+   [fallbackFlash removeFromSuperview];
+   fallbackFlash=[[UIView alloc] initWithFrame:window.bounds];
+   fallbackFlash.userInteractionEnabled=NO;
+   fallbackFlash.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
+   fallbackFlash.backgroundColor=[UIColor colorWithRed:.75 green:.03 blue:.08 alpha:.65];
+   [window addSubview:fallbackFlash];
+   [UIView animateWithDuration:1.5 animations:^{fallbackFlash.alpha=0;}];return;
+  }
+ }
+}
 }
 bool active(){return enabled;}
 float normalized(){return options.hpMax>0?std::clamp(life/options.hpMax,0.f,1.f):0;}
@@ -227,36 +244,38 @@ void finishChallenge(Runtime&r,P progress){
   r.put(empty,"miss",courseNoteCount(r,entry));
   if(codes){P emptyCodes=r.object_new(r.object_get_class(codes));r.call(emptyCodes,".ctor");r.put(entry,"noteCodes",emptyCodes);}
  }}
- // LevelBreak schedules the change on ProgressControl.Update. Match the normal HP exit ordering.
- r.call(progress,"LevelBreak",{"System.String"},{r.string_new("ChallengeModeOver")});
- r.put(info,"levelOver",true);r.put(info,"canPause",false);
- r.call(r.get<P>(progress,"audioSource"),"Stop");finish(r);
- PMDiagnosticsWrite("HP challenge failure: ChallengeModeOver requested");
+ PMDiagnosticsWrite("HP challenge failure: course results ready");
 }
+template<class F>void cleanup(const char*stage,F fn){try{fn();}catch(const std::exception&e){NSLog(@"[PhiMod] HP %s: %s",stage,e.what());}}
 bool failureReady(Runtime&r,P progress){
+ float now=r.unbox<float>(r.stat(r.type("UnityEngine","Time"),"get_unscaledTime"));
  if(!failure.started()){
+  failure.begin(now);
   PMDiagnosticsWrite("HP failureReady: begin freeze/fade");
-  P info=r.get<P>(progress,"levelInformation");r.put(info,"canPause",false);r.put(info,"canLevelOver",false);
-  r.put(r.get<P>(progress,"judgeControl"),"stopJudge",true);try{r.call(r.get<P>(progress,"scoreControl"),"FreezeScore");}catch(const std::exception&e){PMDiagnosticsWrite(e.what());}
-  failure.begin(r.unbox<float>(r.stat(r.type("UnityEngine","Time"),"get_unscaledTime"))); // Only start the delay after critical operations succeed.
+  cleanup("suspend chart",[&]{P info=r.get<P>(progress,"levelInformation");r.put(info,"canPause",false);r.put(info,"canLevelOver",false);r.put(r.get<P>(progress,"judgeControl"),"stopJudge",true);});
+  cleanup("freeze score",[&]{r.call(r.get<P>(progress,"scoreControl"),"FreezeScore");});
   P mod=target(r,modRoot);
-  if(r.alive(mod)){
+  bool flashed=false;
+  cleanup("death flash",[&]{if(r.alive(mod)){
    r.put(mod,"failed",true);P prefab=r.get<P>(mod,"redFlash");
    if(r.alive(prefab)){
-    P flash=r.stat(r.type("UnityEngine","Object"),"Instantiate",{"UnityEngine.Object"},{prefab});flashRoot=r.gchandle_new(flash,false);activeObject(r,flash,true);
+    P flash=r.stat(r.type("UnityEngine","Object"),"Instantiate",{"UnityEngine.Object"},{prefab});if(r.alive(flash)){flashRoot=r.gchandle_new(flash,false);activeObject(r,flash,true);flashed=true;}
    }
+  }});
+  if(!flashed)showFallbackFlash();
+  cleanup("death audio",[&]{if(r.alive(mod)){
    float seconds=1;P audio=r.get<P>(progress,"audioSource");P fade=r.call(mod,"AudioFadeOut",{"AddressableAudioSource","System.Single"},{audio,&seconds});
    r.call(mod,"StartCoroutine",{"System.Collections.IEnumerator"},{fade});
-  }
+  }else r.call(r.get<P>(progress,"audioSource"),"Stop");});
  }
-  bool readyNow=failure.ready(r.unbox<float>(r.stat(r.type("UnityEngine","Time"),"get_unscaledTime")));
+  bool readyNow=failure.ready(now);
   if(readyNow)PMDiagnosticsWrite("HP failureReady: delay complete");
   return readyNow;
 }
 // Scene destruction may invalidate one native object while others remain alive.
 // Each cleanup stage is best-effort; always release roots and reset ownership.
-template<class F>void cleanup(const char*stage,F fn){try{fn();}catch(const std::exception&e){NSLog(@"[PhiMod] HP cleanup %s: %s",stage,e.what());}}
 void finish(Runtime&r){
+ [fallbackFlash removeFromSuperview];fallbackFlash=nil;
  if(!enabled||finished)return;finished=true;
  PMDiagnosticsWrite("HP finish: hide visuals");
  cleanup("bar",[&]{P bar=target(r,barRoot);if(r.alive(bar)){setEnabled(r,r.get<P>(bar,"target"),false);setEnabled(r,r.get<P>(bar,"lifeCanvas"),false);}});

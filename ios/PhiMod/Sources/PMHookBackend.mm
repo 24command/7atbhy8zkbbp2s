@@ -290,7 +290,7 @@ void diagnosticTick(Runtime&r,P progressControl,const char *source){
  }
 }
 void tickGameplay(Runtime&r,P progressControl,const char *source){
- if(!progressControl)return;
+ if(!progressControl||courseScoreFrozen())return; // ProgressControl owns course failure.
  diagnosticTick(r,progressControl,source);
  float now=r.get<float>(progressControl,"nowTime");
  if(!attempt||!attempt->shouldApplyGameplay())return;
@@ -310,10 +310,6 @@ void tickGameplay(Runtime&r,P progressControl,const char *source){
    if(attempt->options().requiresSaveProtection())guard.store(true);r.call(progressControl,"LevelBreak",{"System.String"},{r.string_new("Level")});
    r.put(info,"levelOver",true);r.put(info,"canPause",false);r.call(r.get<P>(progressControl,"audioSource"),"Stop");attempt->acknowledgeAction(action);diagf("gameplay retry dispatched");
   }else if(action==phimod::Action::TrackLost&&!levelOverStarted&&pmhp::failureReady(r,progressControl)){
-   if(pmchallenge::variable()||pmchallenge::hpVisible(r)){
-    if(pmchallenge::variable())pmchallenge::restoreList(r,pmchallenge::cursor+1);
-    guard.store(true);pmhp::finishChallenge(r,progressControl);pmchallenge::atResult=true;levelOverStarted=true;attempt->acknowledgeAction(action);return;
-   }
    // Abort through the native exit path, never create a completed-chart result.
    diagf("HP failure ready; returning to SongSelector");
    guard.store(true);
@@ -330,6 +326,22 @@ void tickGameplay(Runtime&r,P progressControl,const char *source){
 void onProgressUpdate(P self,P mi){
  uint64_t count=++progressUpdateCalls;bool heartbeat=heartbeatDue(lastProgressHeartbeat,count);
  if(heartbeat)diagf("ProgressControl.Update enter n=%llu",(unsigned long long)count);
+ // Once the lethal judgment has returned, the course owns this frame. Native
+ // leave/levelBreak and practice gates must not suppress or race the death fade.
+ if(courseScoreFrozen() && self==progress()){
+  if(levelOverStarted)return;
+  try{
+   auto&r=R();
+   if(!pmhp::failureReady(r,self))return;
+   if(pmchallenge::variable())pmchallenge::restoreList(r,pmchallenge::cursor+1);
+   guard.store(true);
+   pmhp::finishChallenge(r,self);
+   levelOverStarted=true;pmchallenge::atResult=true;
+   diagf("HP course failure: loading ChallengeModeOver");
+   r.stat(r.type("UnityEngine.SceneManagement","SceneManager"),"LoadScene",{"System.String"},{r.string_new("ChallengeModeOver")});
+  }catch(const std::exception&e){levelOverStarted=false;pmchallenge::atResult=false;if(heartbeat)diagf("HP course failure transition: %s",e.what());}
+  return;
+ }
  try{if(pmpractice::beforeProgress(R(),self)){if(pmpractice::consumeRestart())restartPracticeSession();if(heartbeat)logProgressSnapshot(R(),self,"ProgressControl.Update paused",count);return;}}
  catch(const std::exception&e){diagf("Practice pre-update failed: %s",e.what());}
  // Failure fading must keep advancing when the native judge stops updating.
@@ -344,6 +356,7 @@ void onProgressUpdate(P self,P mi){
  try{diagnosticTick(R(),self,"ProgressControl.Update");}catch(const std::exception&e){diagf("ProgressControl.Update diagnostic failed: %s",e.what());}
 }
 void onJudgeUpdate(P self,P mi){
+ if(courseScoreFrozen())return;
  judgeUpdateSeen=true;
  if(pmpractice::entryLoading(R(),R().get<P>(self,"progressControl"))){if(++judgeUpdateCalls==1)diagf("Practice entry: native judging held until range reset");return;}
  uint64_t count=++judgeUpdateCalls;bool heartbeat=heartbeatDue(lastJudgeHeartbeat,count);

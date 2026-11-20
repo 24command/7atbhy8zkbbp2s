@@ -292,7 +292,21 @@ class SourceContracts(unittest.TestCase):
   self.assertIn('judgeUpdateHook',hook)
   self.assertIn('HP failureReady: begin freeze/fade',hp)
   self.assertIn('HP attempt initialized life=',hp)
-  self.assertIn('ChallengeModeOver',hp)
+  self.assertIn('HP challenge failure: course results ready',hp)
+  self.assertIn('HP course failure: loading ChallengeModeOver',hook)
+ def test_lethal_course_frame_owns_fade_and_result(self):
+  hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf-8')
+  hp=(ROOT/'PhiMod/Sources/PMHPLife.mm').read_text(encoding='utf-8')
+  progress=hook.split('void onProgressUpdate(',1)[1].split('pmpractice::beforeProgress',1)[0]
+  sequence=['courseScoreFrozen()', 'pmhp::failureReady', 'pmhp::finishChallenge', 'levelOverStarted=true', '"LoadScene"']
+  positions=[progress.index(token) for token in sequence]
+  self.assertEqual(positions,sorted(positions))
+  self.assertNotIn('pendingAction',progress)
+  settle=hp.split('void finishChallenge(',1)[1].split('bool failureReady(',1)[0]
+  self.assertNotIn('"LevelBreak"',settle)
+  fade=hp.split('bool failureReady(',1)[1].split('return readyNow;',1)[0]
+  self.assertLess(fade.index('failure.begin(now)'),fade.index('"FreezeScore"'))
+  self.assertIn('if(!flashed)showFallbackFlash();',fade)
  def test_packager_rejects_old_framework_before_copying_payload(self):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp);(root/'source/Payload').mkdir(parents=True);(root/'PhiMod.framework').mkdir()
