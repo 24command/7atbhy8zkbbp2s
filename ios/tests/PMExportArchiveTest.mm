@@ -51,15 +51,15 @@ int main(){@autoreleasepool{
  NSString*target=[root stringByAppendingPathComponent:@"roundtrip"];assert(PMExtractArchive(out,target,&error).count==2);assert([PMFileSHA256([target stringByAppendingPathComponent:@"music.ogg"])isEqualToString:hash]);
  // The coordinated extractor reports verified completion for this URL alone.
  NSURL *selectedURL=[NSURL fileURLWithPath:out];
- __block unsigned long long last=0, expected=0; __block bool started=false, completed=false;
+ __block unsigned long long last=0, expectedBytes=0; __block bool started=false, completed=false;
  id observer=[NSNotificationCenter.defaultCenter addObserverForName:@"PMChartImportBytes" object:selectedURL queue:nil usingBlock:^(NSNotification *note){
   auto done=[note.userInfo[@"done"] unsignedLongLongValue], total=[note.userInfo[@"total"] unsignedLongLongValue];
   assert(total>0 && done<=total && done>=last && !completed);
-  if(!started){assert(done==0);expected=total;started=true;}
-  assert(total==expected);last=done;completed=done==total;
+  if(!started){assert(done==0);expectedBytes=total;started=true;}
+  assert(total==expectedBytes);last=done;completed=done==total;
  }];
  assert(PMExtractArchiveURL(selectedURL,[root stringByAppendingPathComponent:@"progress"],&error).count==2);
- [NSNotificationCenter.defaultCenter removeObserver:observer];assert(started && completed && expected>32ull*1024*1024);
+ [NSNotificationCenter.defaultCenter removeObserver:observer];assert(started && completed && expectedBytes>32ull*1024*1024);
  NSError *limitError=nil; NSString *limited=[root stringByAppendingPathComponent:@"limited"];
  assert(!PMExtractArchiveLimited(out,limited,10,32ull*1024*1024,32ull*1024*1024,&limitError));
  assert(limitError && ![f fileExistsAtPath:limited]);
