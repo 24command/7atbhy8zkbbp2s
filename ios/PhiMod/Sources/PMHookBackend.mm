@@ -400,8 +400,17 @@ bool onHold(P s,P m){
 
   }
  }catch(const std::exception&e){diagf("Short Hold scope setup: %s",e.what());}
+ bool watchHead=false;
+ if(timingHints::enabled)try{watchHead=!r.get<bool>(s,"judged");}catch(const std::exception&){}
  bool result=false;
  try{result=noteJudge(s,m,h::hold,true);}catch(...){if(adjusted)r.put(note,"holdTime",duration);if(safeAdjusted&&r.get<int>(s,"_safeFrame")<=1)r.put(s,"_safeFrame",oldSafe);throw;}
+ if(watchHead && note)try{
+  if(r.get<bool>(s,"judged") && !r.get<bool>(s,"isPerfect") && !r.get<bool>(s,"missed")){
+   float code=r.get<float>(note,"noteCode"), offset=-r.get<float>(s,"_judgeTime");
+   V3 point=r.unbox<V3>(r.call(r.call(s,"get_transform"),"get_position"));
+   timingHints::show(code,offset,&point);
+  }
+ }catch(const std::exception&e){diagf("Hold timing hint: %s",e.what());}
  if(adjusted)r.put(note,"holdTime",duration);
  if(safeAdjusted&&r.get<int>(s,"_safeFrame")<=1)r.put(s,"_safeFrame",oldSafe);
  return result;

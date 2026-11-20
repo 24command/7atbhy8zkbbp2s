@@ -308,7 +308,7 @@ void settingsFrame(Runtime&r,P self){runtime=&r;
  if(nativeAdvanced){projectTab(r);[editor layoutEditor];}
 }
 bool ownsButton(P button){return button&&(challengeSelection::owns(button)||buttons.count(button)||button==tabButton||nativeActions.count(button));}
-bool press(Runtime&r,P button){if(challengeSelection::owns(button)){challengeSelection::add(r);return true;}if(pressNativeSetting(r,button))return true;auto found=buttons.find(button);if(found!=buttons.end()){int i=found->second;P owner=target(r,selectorRoot);if(!r.alive(owner)||r.get<bool>(owner,"exit")||r.get<bool>(owner,"isMoving"))return true;NSString*key=keys[i];NSInteger old=[[[PMSettings shared] value:key] integerValue];NSNumber*value=i==2?@((old+1)%5):i==3?@((old+1)%3):@(!old);NSString*error=nil;[[PMSettings shared] setValue:value forKey:key error:&error];return true;}
+bool press(Runtime&r,P button){if(challengeSelection::owns(button)){challengeSelection::press(r,button);return true;}if(pressNativeSetting(r,button))return true;auto found=buttons.find(button);if(found!=buttons.end()){int i=found->second;P owner=target(r,selectorRoot);if(!r.alive(owner)||r.get<bool>(owner,"exit")||r.get<bool>(owner,"isMoving"))return true;NSString*key=keys[i];NSInteger old=[[[PMSettings shared] value:key] integerValue];NSNumber*value=i==2?@((old+1)%5):i==3?@((old+1)%3):@(!old);NSString*error=nil;[[PMSettings shared] setValue:value forKey:key error:&error];return true;}
  if(button!=tabButton)return false;P self=target(r,settingRoot);if(!r.alive(self))return true;if(modEditorOpen)return true;
  PMDiagnosticsWrite("MOD tab click received; creating native fourth page");
  modEditorOpen=true;

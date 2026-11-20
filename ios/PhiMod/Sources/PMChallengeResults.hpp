@@ -63,55 +63,7 @@ void afterStart(Runtime &r, P self) {
 }
 
 // Create new Text/Button components. These have no serialized rank/retry listeners.
-P add(Runtime &r, P go, const char *ns, const char *name) {
-    return r.call(go, "AddComponent", {"System.Type"}, {r.type_get_object(r.class_get_type(r.type(ns, name)))});
-}
-P pagerLabel(Runtime &r, P parent, P font, const char *name, float x, bool button) {
-    P go = r.object_new(r.type("UnityEngine", "GameObject"));
-    r.call(go, ".ctor", {"System.String"}, {r.string_new(name)});
-    P rect = add(r, go, "UnityEngine", "RectTransform");
-    bool no = false;
-    r.call(rect, "SetParent", {"UnityEngine.Transform", "System.Boolean"}, {parent, &no});
-    int layer = r.unbox<int>(r.call(gameObject(r, parent), "get_layer"));
-    r.call(go, "set_layer", {"System.Int32"}, {&layer});
-    V2 anchor{0.47f, 1}, size{button ? 80.f : 200.f, 80}, pos{x, -62};
-    for (auto method : {"set_anchorMin", "set_anchorMax"}) r.call(rect, method, {"UnityEngine.Vector2"}, {&anchor});
-    r.call(rect, "set_sizeDelta", {"UnityEngine.Vector2"}, {&size});
-    r.call(rect, "set_anchoredPosition", {"UnityEngine.Vector2"}, {&pos});
-    P labelObject = go, polygon = nullptr;
-    if (button) {
-        polygon = add(r, go, "Lean.Gui", "LeanPolygon");
-        float fill = -1, cut = size.y * std::fabs(r.unbox<float>(r.stat(r.type("Phigros.UI","MsgBox"),"get_InverseSlope")));
-        r.call(polygon,"set_Thickness",{"System.Single"},{&fill});
-        P points = r.call(polygon,"get_Points");
-        r.call(points,"Clear");
-        struct Corner {float x,y,u,v;};
-        for (Corner point : {Corner{cut,0,0,1},Corner{0,0,1,1},Corner{-cut,0,1,0},Corner{0,0,0,0}})
-            r.call(points,"Add",{"UnityEngine.Vector4"},{&point});
-        r.call(polygon,"SetVerticesDirty");
-        labelObject = r.object_new(r.type("UnityEngine","GameObject"));
-        r.call(labelObject,".ctor",{"System.String"},{r.string_new("Arrow")});
-        r.call(labelObject,"set_layer",{"System.Int32"},{&layer});
-        P arrowRect=add(r,labelObject,"UnityEngine","RectTransform");
-        r.call(arrowRect,"SetParent",{"UnityEngine.Transform","System.Boolean"},{rect,&no});
-        V2 zero{0,0},full{1,1};
-        r.call(arrowRect,"set_anchorMin",{"UnityEngine.Vector2"},{&zero});
-        r.call(arrowRect,"set_anchorMax",{"UnityEngine.Vector2"},{&full});
-        r.call(arrowRect,"set_offsetMin",{"UnityEngine.Vector2"},{&zero});
-        r.call(arrowRect,"set_offsetMax",{"UnityEngine.Vector2"},{&zero});
-    }
-    P label = add(r, labelObject, "UnityEngine.UI", "Text");
-    r.call(label, "set_font", {"UnityEngine.Font"}, {font});
-    int fontSize = 32, center = 4;
-    r.call(label, "set_fontSize", {"System.Int32"}, {&fontSize});
-    r.call(label, "set_alignment", {"UnityEngine.TextAnchor"}, {&center});
-    r.call(label, "set_raycastTarget", {"System.Boolean"}, {&no});
-    if (!button) return label;
-    r.text(label, name);
-    P control = add(r, go, "UnityEngine.UI", "Button");
-    r.call(control, "set_targetGraphic", {"UnityEngine.UI.Graphic"}, {polygon});
-    return control;
-}
+#include "PMChallengePager.inc"
 
 void showCard(Runtime &r, P card, P item) {
     P selector = item ? r.get<P>(item, "songInfo") : nullptr;
@@ -183,11 +135,31 @@ bool start(Runtime &r, P self) {
         P list = pmchallenge::list(r);
         int count = r.count(list);
         view.pages = count > 0 ? 1 + (count - 1) / 3 : 1;
+        bool fullCombo = count > 0;
         for (int i = 0; i < count; ++i) {
             P entry = r.at(list, i), result = entry ? r.get<P>(entry,"result") : nullptr;
+            fullCombo = fullCombo && result && r.get<int>(result,"<IntScore>k__BackingField")>0 && !r.get<int>(result,"bad") && !r.get<int>(result,"miss");
             if (result) view.total += r.get<int>(result,"<IntScore>k__BackingField");
         }
         r.text(score, std::to_string(view.total).c_str());
+        try {
+            int mean = count ? int(view.total / count) : 0;
+            r.call(self,"SetRatingWithScore",{"System.Int32","System.Boolean"},{&mean,&fullCombo});
+        } catch(const std::exception &e) { diagf("Challenge rating: %s",e.what()); }
+        try {
+            P fallback=r.stat(r.klass("IdBuilder"),"BuildBlurBackgroundImageId",{"System.String"},{r.string_new("MainStoryLegacy")});
+            P key=r.stat(r.klass("SaveManagement"),"LoadString",{"System.String","System.String"},{r.string_new("LastChapterBackgroundCode"),fallback});
+            for(const char *field:{"background","background2"})
+                r.call(r.get<P>(self,field),"set_Code",{"System.String"},{key});
+        } catch(const std::exception &e) { diagf("Challenge background: %s",e.what()); }
+        try {
+            int last=std::clamp(pmchallenge::cursor,0,std::max(0,count-1));
+            int slot=r.get<int>(r.at(list,last),"levelIndex");
+            const char *clips[]={"eZ","hD","iN","aT"};
+            P audio=r.get<P>(self,"audioSource");
+            r.call(audio,"set_Clip",{"System.String"},{r.get<P>(self,clips[std::clamp(slot,0,3)])});
+            r.call(audio,"Play");
+        } catch(const std::exception &e) { diagf("Challenge result music: %s",e.what()); }
         view.caption = pagerLabel(r, root, font, "PhiMod Result Page", 0, false);
         view.previous = pagerLabel(r, root, font, "←", -130, true);
         view.next = pagerLabel(r, root, font, "→", 130, true);

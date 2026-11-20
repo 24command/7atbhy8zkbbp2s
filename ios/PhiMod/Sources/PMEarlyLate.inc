@@ -31,7 +31,7 @@ UIView *gameView() {
 
 void show(float code, float offset, const V3 *hit) {
     if (!enabled || !std::isfinite(code) || !std::isfinite(offset) || offset == 0 || pmpractice::paused() || inResult) return;
-    if (!shown.insert(code).second) return;
+    if (shown.count(code)) return;
     UIView *view = gameView();
     if (!view) return;
     CGRect bounds = view.bounds;
@@ -46,9 +46,10 @@ void show(float code, float offset, const V3 *hit) {
             if (camera) {
                 V3 point = *hit;
                 auto viewport = r.unbox<V3>(r.call(camera,"WorldToViewportPoint",{"UnityEngine.Vector3"},{&point}));
-                if (!std::isfinite(viewport.x) || !std::isfinite(viewport.y) || viewport.z <= 0) return;
+                if (std::isfinite(viewport.x) && std::isfinite(viewport.y) && viewport.z > 0) {
                 x = CGRectGetMinX(bounds) + viewport.x * width;
                 y = CGRectGetMinY(bounds) + (1 - viewport.y) * height - font * 1.6;
+                }
             }
         } catch (const std::exception &) { /* Use HUD position if the camera is unavailable. */ }
     }
@@ -71,6 +72,7 @@ void show(float code, float offset, const V3 *hit) {
     CGFloat halfWidth = CGRectGetWidth(label.bounds)/2, halfHeight = CGRectGetHeight(label.bounds)/2;
     label.center = CGPointMake(std::clamp(x,CGRectGetMinX(bounds)+halfWidth,CGRectGetMaxX(bounds)-halfWidth),
                                std::clamp(y,CGRectGetMinY(bounds)+halfHeight,CGRectGetMaxY(bounds)-halfHeight));
+    shown.insert(code);
     [view addSubview:label];
     label.alpha = 1;
     [UIView animateWithDuration:.20 delay:.45 options:UIViewAnimationOptionCurveLinear animations:^{ label.alpha = 0; } completion:nil];
