@@ -6,6 +6,7 @@
 @end
 @interface PMOfficialButton : UIButton
 @property(nonatomic,assign) BOOL flatStyle;
+@property(nonatomic,assign) CGFloat inverseSlope;
 @end
 @interface PMOfficialToggle : UIControl
 @property(nonatomic,assign,getter=isOn) BOOL on;

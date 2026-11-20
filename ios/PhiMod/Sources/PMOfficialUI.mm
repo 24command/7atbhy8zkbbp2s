@@ -1,13 +1,13 @@
 #import "PMOfficialUI.h"
 #import <QuartzCore/QuartzCore.h>
-static UIBezierPath *PMSlant(CGRect r){
- CGFloat cut=MIN(r.size.height*.267949,r.size.width*.25);
+static UIBezierPath *PMSlantWithCut(CGRect r, CGFloat cut){
  UIBezierPath*p=[UIBezierPath bezierPath];
  [p moveToPoint:CGPointMake(CGRectGetMinX(r)+cut,CGRectGetMinY(r))];
  [p addLineToPoint:CGPointMake(CGRectGetMaxX(r),CGRectGetMinY(r))];
  [p addLineToPoint:CGPointMake(CGRectGetMaxX(r)-cut,CGRectGetMaxY(r))];
  [p addLineToPoint:CGPointMake(CGRectGetMinX(r),CGRectGetMaxY(r))];[p closePath];return p;
 }
+static UIBezierPath *PMSlant(CGRect r){return PMSlantWithCut(r,MIN(r.size.height*.267949,r.size.width*.25));}
 @implementation PMOfficialCard
 - (instancetype)initWithFrame:(CGRect)frame{if((self=[super initWithFrame:frame])){self.backgroundColor=UIColor.clearColor;self.opaque=NO;self.fillColor=[UIColor colorWithRed:.08 green:.10 blue:.14 alpha:.94];}return self;}
 - (void)setFillColor:(UIColor*)color{_fillColor=color;[self setNeedsDisplay];}
@@ -15,9 +15,10 @@ static UIBezierPath *PMSlant(CGRect r){
 @end
 @implementation PMOfficialButton
 - (instancetype)initWithFrame:(CGRect)frame{if((self=[super initWithFrame:frame])){self.backgroundColor=UIColor.clearColor;self.opaque=NO;self.titleLabel.font=[UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];self.titleLabel.adjustsFontSizeToFitWidth=YES;self.titleLabel.minimumScaleFactor=.7;[self setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];[self setTitleColor:UIColor.blackColor forState:UIControlStateSelected];[self.heightAnchor constraintGreaterThanOrEqualToConstant:44].active=YES;}return self;}
+- (void)setEnabled:(BOOL)enabled{[super setEnabled:enabled];[self setNeedsDisplay];}
 - (void)setSelected:(BOOL)selected{[super setSelected:selected];[self setNeedsDisplay];}
 - (void)setHighlighted:(BOOL)highlighted{[super setHighlighted:highlighted];self.alpha=highlighted?.6:1;}
-- (void)drawRect:(CGRect)rect{if(!self.flatStyle){[(self.selected?UIColor.whiteColor:[UIColor colorWithWhite:.04 alpha:.64]) setFill];[PMSlant(self.bounds) fill];}[super drawRect:rect];}
+- (void)drawRect:(CGRect)rect{if(!self.flatStyle){[(self.selected?UIColor.whiteColor:[UIColor colorWithWhite:.04 alpha:.64]) setFill];UIBezierPath *shape=self.inverseSlope>0?PMSlantWithCut(self.bounds,MIN(self.bounds.size.width,self.bounds.size.height*self.inverseSlope)):PMSlant(self.bounds);if(self.inverseSlope>0&&!self.enabled)[[UIColor colorWithWhite:.25 alpha:.85] setFill];[shape fill];}[super drawRect:rect];}
 @end
 @interface PMOfficialToggle ()
 @property(nonatomic,strong) CAShapeLayer *track;

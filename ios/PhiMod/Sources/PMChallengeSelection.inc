@@ -81,7 +81,7 @@ static UIButton *controlButton(UIStackView *bar, NSString *title, Action action)
     return button;
 }
 
-static void buildPanel(UIWindow *w) {
+static void buildPanel(Runtime &r, UIWindow *w) {
     panel=[UIStackView new]; panel.axis=UILayoutConstraintAxisVertical;
     PMOfficialCard *card=[PMOfficialCard new]; card.userInteractionEnabled=NO;
     [panel insertSubview:card atIndex:0]; card.translatesAutoresizingMaskIntoConstraints=NO;
@@ -96,6 +96,9 @@ static void buildPanel(UIWindow *w) {
     append=controlButton(bar,@"加入",Action::Add); undo=controlButton(bar,@"撤销",Action::Undo);
     start=controlButton(bar,@"开始",Action::Start);
     previous=controlButton(bar,@"‹",Action::Previous); next=controlButton(bar,@"›",Action::Next);
+    CGFloat slope=std::fabs(r.unbox<float>(r.stat(r.type("Phigros.UI","MsgBox"),"get_InverseSlope")));
+    ((PMOfficialButton *)previous).inverseSlope=slope;
+    ((PMOfficialButton *)next).inverseSlope=slope;
     previous.accessibilityLabel=@"上一页"; next.accessibilityLabel=@"下一页";
     panel.translatesAutoresizingMaskIntoConstraints=NO; [w addSubview:panel];
     [NSLayoutConstraint activateConstraints:@[[panel.bottomAnchor constraintEqualToAnchor:w.safeAreaLayoutGuide.bottomAnchor constant:-4],
@@ -187,7 +190,7 @@ static void frame(Runtime &r,P owner) {
     UIWindow *w=window(); if(!w) return;
     if(!ownerRoot) {
         Root list(r,r.object_new(r.object_get_class(native))); r.call(list.get(),".ctor");
-        captions=[NSMutableArray new]; buildPanel(w);
+        captions=[NSMutableArray new]; buildPanel(r,w);
         listRoot=r.gchandle_new(list.get(),false); ownerRoot=r.gchandle_new(owner,false);
     }
     selectButton=select;

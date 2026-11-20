@@ -36,6 +36,16 @@ void afterStart(Runtime &r, P self) {
         // maximum can be arbitrary, so draw its actual value at the badge anchor.
         P badge = r.get<P>(self, "lifeImage"), parent = r.call(badge, "get_transform");
         bool disabled = false;
+        P sprites = r.get<P>(self, "lifeSprites");
+        P rules = r.type("Phigros2.ChallengeMode.Scripts", "SecretChallengeLifeRules");
+        for (int tier = 0; sprites && uintptr_t(tier) < r.array_length(sprites); ++tier) {
+            int value = r.unbox<int>(r.stat(rules, "GetLifeForTierIndex", {"System.Int32"}, {&tier}));
+            P sprite = r.arrayAt(sprites, tier);
+            if (sprite && pmchallenge::life == value) {
+                r.call(badge, "set_sprite", {"UnityEngine.Sprite"}, {sprite});
+                return;
+            }
+        }
         r.call(badge, "set_enabled", {"System.Boolean"}, {&disabled});
         P hp = r.stat(r.type("UnityEngine", "Object"), "Instantiate", {"UnityEngine.Object", "UnityEngine.Transform", "System.Boolean"}, {damageText, parent, &disabled});
         P rect = r.call(hp, "get_rectTransform");
@@ -68,16 +78,38 @@ P pagerLabel(Runtime &r, P parent, P font, const char *name, float x, bool butto
     for (auto method : {"set_anchorMin", "set_anchorMax"}) r.call(rect, method, {"UnityEngine.Vector2"}, {&anchor});
     r.call(rect, "set_sizeDelta", {"UnityEngine.Vector2"}, {&size});
     r.call(rect, "set_anchoredPosition", {"UnityEngine.Vector2"}, {&pos});
-    P label = add(r, go, "UnityEngine.UI", "Text");
+    P labelObject = go, polygon = nullptr;
+    if (button) {
+        polygon = add(r, go, "Lean.Gui", "LeanPolygon");
+        float fill = -1, cut = size.y * std::fabs(r.unbox<float>(r.stat(r.type("Phigros.UI","MsgBox"),"get_InverseSlope")));
+        r.call(polygon,"set_Thickness",{"System.Single"},{&fill});
+        P points = r.call(polygon,"get_Points");
+        r.call(points,"Clear");
+        struct Corner {float x,y,u,v;};
+        for (Corner point : {Corner{cut,0,0,1},Corner{0,0,1,1},Corner{-cut,0,1,0},Corner{0,0,0,0}})
+            r.call(points,"Add",{"UnityEngine.Vector4"},{&point});
+        r.call(polygon,"SetVerticesDirty");
+        labelObject = r.object_new(r.type("UnityEngine","GameObject"));
+        r.call(labelObject,".ctor",{"System.String"},{r.string_new("Arrow")});
+        r.call(labelObject,"set_layer",{"System.Int32"},{&layer});
+        P arrowRect=add(r,labelObject,"UnityEngine","RectTransform");
+        r.call(arrowRect,"SetParent",{"UnityEngine.Transform","System.Boolean"},{rect,&no});
+        V2 zero{0,0},full{1,1};
+        r.call(arrowRect,"set_anchorMin",{"UnityEngine.Vector2"},{&zero});
+        r.call(arrowRect,"set_anchorMax",{"UnityEngine.Vector2"},{&full});
+        r.call(arrowRect,"set_offsetMin",{"UnityEngine.Vector2"},{&zero});
+        r.call(arrowRect,"set_offsetMax",{"UnityEngine.Vector2"},{&zero});
+    }
+    P label = add(r, labelObject, "UnityEngine.UI", "Text");
     r.call(label, "set_font", {"UnityEngine.Font"}, {font});
     int fontSize = 32, center = 4;
     r.call(label, "set_fontSize", {"System.Int32"}, {&fontSize});
     r.call(label, "set_alignment", {"UnityEngine.TextAnchor"}, {&center});
-    r.call(label, "set_raycastTarget", {"System.Boolean"}, {&button});
+    r.call(label, "set_raycastTarget", {"System.Boolean"}, {&no});
     if (!button) return label;
     r.text(label, name);
     P control = add(r, go, "UnityEngine.UI", "Button");
-    r.call(control, "set_targetGraphic", {"UnityEngine.UI.Graphic"}, {label});
+    r.call(control, "set_targetGraphic", {"UnityEngine.UI.Graphic"}, {polygon});
     return control;
 }
 
@@ -123,8 +155,13 @@ void show(Runtime &r, P self) {
     snprintf(text, sizeof(text), "%d / %d", view.page + 1, view.pages);
     r.text(view.caption, text);
     bool canPrev = view.page > 0, canNext = view.page + 1 < view.pages;
-    r.call(view.previous,"set_interactable",{"System.Boolean"},{&canPrev});
-    r.call(view.next,"set_interactable",{"System.Boolean"},{&canNext});
+    auto updateArrow = [&](P button,bool enabled) {
+        Color background = enabled ? Color{.08f,.09f,.11f,.95f} : Color{.32f,.32f,.32f,.8f};
+        r.call(r.call(button,"get_targetGraphic"),"set_color",{"UnityEngine.Color"},{&background});
+        r.call(button,"set_interactable",{"System.Boolean"},{&enabled});
+    };
+    updateArrow(view.previous,canPrev);
+    updateArrow(view.next,canNext);
 }
 
 bool start(Runtime &r, P self) {
