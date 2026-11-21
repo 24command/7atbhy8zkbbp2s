@@ -1,4 +1,5 @@
 #import "PMDifficultyMetadata.h"
+#import "PMChapterOS.h"
 #include "../Core/PMBuildInfo.hpp"
 #import "PMHookBackend.h"
 #import "PMSettings.h"
@@ -732,6 +733,7 @@ void onMainlineApplyMapCover(P self,P mi){
 }
 
 void onSelector(P self,P mi){
+ if(PMChapterOSVisible())return;
  if(pmchallenge::atResult || pmchallenge::cursor>=0 || pmchallenge::hpRoot)pmchallenge::cancelVariable(R());
  bool modal=false;if(!contentBoundary("Selector modal",[&]{modal=pmunlock::selectorModalUpdate(R(),self);})||modal)return;
  contentBoundary("Selector row restore",[&]{pmcontent::restoreSelectorRowVisibility(R(),self);});

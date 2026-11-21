@@ -8,6 +8,13 @@ REVISION="${GITHUB_SHA:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo loca
 echo "PhiMod source revision: $REVISION"
 mkdir -p "$OUT/PhiMod.framework"
 bash "$ROOT/tools/build_shader_compiler.sh" "$OUT"
+mkdir -p "$OUT/lua-obj"
+objects=()
+for source in "$ROOT"/PhiMod/Vendor/lua54/*.c "$ROOT"/PhiMod/Core/PMChapterVM.c; do
+  obj="$OUT/lua-obj/$(basename "$source" .c).o"
+  xcrun --sdk iphoneos clang -std=c99 -O2 -arch arm64 -isysroot "$SDK" -miphoneos-version-min=15.0 -fvisibility=hidden -c "$source" -o "$obj"
+  objects+=("$obj")
+done
 echo "PhiMod build: explicit ImageIO + CoreMedia linkage (2026-10-25)"
 xcrun --sdk iphoneos clang++ \
   -arch arm64 -isysroot "$SDK" -miphoneos-version-min=15.0 \
@@ -28,6 +35,7 @@ xcrun --sdk iphoneos clang++ \
   "$ROOT"/PhiMod/Sources/*.mm \
   "$ROOT"/PhiMod/Vendor/PMZipVendor.cpp \
   "$ROOT"/PhiMod/Vendor/PMVorbisVendor.cpp \
+  "${objects[@]}" \
   "$OUT/compiler-lib/libPMShaderCompiler.a" \
   -I"$ROOT/PhiMod/Vendor" \
   -o "$OUT/PhiMod.framework/PhiMod"

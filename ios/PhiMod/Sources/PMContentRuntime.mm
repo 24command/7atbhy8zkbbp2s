@@ -14,6 +14,7 @@
 #include "PMUnlockRuntime.hpp"
 #include "PMRuntimeFeatures.hpp"
 #import "PMContentStore.h"
+#import "PMChapterOS.h"
 #import "PMCoverImage.h"
 #import <ImageIO/ImageIO.h>
 #import "PMChapterEditing.h"
@@ -591,9 +592,21 @@ void completeSelectorAsset(Runtime&r,P asset){
  log([NSString stringWithFormat:@"Content selected %@ request completed in %.1f ms",music?@"audio":@"cover",(selectorNow()-began)*1000]);
 }
 }
+static void beginChapterOS(Runtime&r,P selector){
+ if(pendingSong.length)return;
+ P chapter=r.get<P>(selector,"nowChapterInfo");if(!chapter)return;
+ NSString *key=r.string(r.get<P>(chapter,"chapterCode"));if(![key hasPrefix:@"pm_"])return;
+ P challenge=r.get<P>(selector,"challengeSongSelectorControl");if(r.alive(challenge)){P button=r.get<P>(challenge,"selectButton");if(r.alive(button)&&r.unbox<bool>(r.call(r.call(button,"get_gameObject"),"get_activeInHierarchy")))return;}
+ PMOpenChapterOS(key,^BOOL(NSString *group){try{
+  if(!runtime||target(*runtime,loadingSelector)!=selector||runtime->get<bool>(selector,"exit"))return NO;
+  auto &game=*runtime;P items=game.call(selector,"get_SongItems");for(int i=0,n=game.count(items);i<n;++i){P item=game.at(items,i),song=game.get<P>(item,"songInfo");if(![game.string(game.get<P>(song,"songsId")) isEqual:group])continue;
+   game.put(selector,"nowSong",i);game.put(selector,"targetSong",i);game.put(selector,"nowSongSelectorValue",float(i));game.put(selector,"lastFrameSongSelectorValue",float(i));game.put(selector,"listMoveSpeed",0.f);game.call(selector,"SetPosition");game.call(selector,"SetText");return YES;
+  }
+ }catch(const std::exception&e){log([NSString stringWithFormat:@"Chapter OS song selection: %s",e.what()]);}return NO;});
+}
 void selectorLoadingBegin(Runtime&r,P selector){
  if(playing||r.get<bool>(selector,"exit"))return;
- if(target(r,loadingSelector)!=selector){selectorLoadingEnd(r,false);loadingSelector=r.gchandle_new(selector,false);selectionChangedAt=selectorNow();loadingSong=-1;selectorLibraryRevision=NSUIntegerMax;}
+ if(target(r,loadingSelector)!=selector){selectorLoadingEnd(r,false);loadingSelector=r.gchandle_new(selector,false);selectionChangedAt=selectorNow();loadingSong=-1;selectorLibraryRevision=NSUIntegerMax;beginChapterOS(r,selector);}
  NSUInteger revision=PMContentStore.shared.revision;
  if(selectorLibraryRevision!=revision){selectorSongIDs.clear();for(NSDictionary*song in [PMContentStore.shared snapshot][@"songs"]){for(NSString*field in @[@"id",@"groupId"]){NSString*id=song[field];if(id.length)selectorSongIDs.insert(id.UTF8String);}}selectorLibraryRevision=revision;}
 }
@@ -624,6 +637,7 @@ void clearSparseButtons(Runtime&r){
 }
 #include "PMSelectorRowPresentation.inc"
 void selectorLoadingEnd(Runtime&r,bool finishSelected){
+ PMCloseChapterOS();
  if(finishSelected&&loadingSelector)try{P owner=target(r,loadingSelector);if(r.alive(owner))observeSelector(r,owner);}catch(const std::exception&e){log([NSString stringWithFormat:@"Selector already leaving: %s",e.what()]);}
  deferredDifficultySort.clear();
  clearSelectorRowPresentation(r);
