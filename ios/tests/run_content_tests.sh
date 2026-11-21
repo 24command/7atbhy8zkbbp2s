@@ -29,6 +29,7 @@ clang++ -std=c++17 -fobjc-arc -DPMDOOR_RUN_HOST_TEST -framework Foundation -fram
 python3 "$ROOT/tests/run_chapter_puzzle.py" clang -O2
 python3 "$ROOT/tests/test_story_sequence.py"
 python3 "$ROOT/tests/test_story_native_start.py"
+python3 "$ROOT/tests/test_secret_course_native.py"
 clang++ -std=c++17 -Wall -Wextra -Werror "$ROOT/tests/PMRPECoreTest.cpp" -o "$OUT/core"
 clang++ -std=c++17 -Wall -Wextra -Werror "$ROOT/tests/PMCoverGeometryTest.cpp" -o "$OUT/cover"
 "$OUT/cover"
