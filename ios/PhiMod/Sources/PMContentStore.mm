@@ -2,6 +2,8 @@
 #import "PMDiagnostics.h"
 #import "PMCoverImage.h"
 #import "PMContentStore.h"
+#import "PMAssetLayout.h"
+#import "PMChapterScript.h"
 #import "PMChapterEditing.h"
 #import "PMChapterExportPlan.h"
 #import "PMChartConvert.h"
@@ -46,7 +48,7 @@ NSString*songIDPart(id raw,NSString*fallback,NSUInteger budget){
 NSMutableSet*reservedSongIDs(PMContentStore*store){
  NSMutableSet*used=[NSMutableSet new];NSDictionary*db=[store snapshot];
  for(NSString*key in @[@"songs",@"chapters"])for(NSDictionary*entry in db[key])if([entry[@"id"]isKindOfClass:NSString.class])[used addObject:[entry[@"id"]lowercaseString]];
- for(NSString*name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:[store.root stringByAppendingPathComponent:@"assets"] error:nil])[used addObject:name.lowercaseString];
+ for(NSString *dir in @[@"assets",@"assets/songs",@"assets/chapters"])for(NSString*name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:[store.root stringByAppendingPathComponent:dir] error:nil])[used addObject:name.lowercaseString];
  return used;
 }
 NSString*readableSongID(id title,id charter,id level,NSMutableSet*used){
@@ -63,7 +65,7 @@ void recoverChapterImports(NSString*root,NSDictionary*db){
   if(![name.pathExtension isEqualToString:@"json"])continue;NSString*path=[directory stringByAppendingPathComponent:name];NSData*data=[NSData dataWithContentsOfFile:path];id journal=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]:nil;
   if(![journal isKindOfClass:NSDictionary.class]||![journal[@"ids"] isKindOfClass:NSArray.class])continue;
   BOOL valid=YES;for(id identifier in journal[@"ids"])if(!safeID(identifier)){valid=NO;break;}if(!valid)continue;
-  BOOL cleaned=YES;for(NSString*identifier in journal[@"ids"])if(![live containsObject:identifier]){NSString*asset=[[root stringByAppendingPathComponent:@"assets"] stringByAppendingPathComponent:identifier];if([f fileExistsAtPath:asset]&&![f removeItemAtPath:asset error:nil])cleaned=NO;}
+  BOOL cleaned=YES;for(NSString*identifier in journal[@"ids"])if(![live containsObject:identifier]){NSString *bucket=nil;if([journal[@"version"] integerValue]==2){if(![journal[@"chapters"] isKindOfClass:NSArray.class]){cleaned=NO;break;}bucket=[journal[@"chapters"] containsObject:identifier]?@"chapters":@"songs";}NSString*asset=PMAssetPath(root,bucket,identifier);if([f fileExistsAtPath:asset]&&![f removeItemAtPath:asset error:nil])cleaned=NO;}
   if(cleaned)[f removeItemAtPath:path error:nil];
  }
 }
@@ -334,6 +336,7 @@ BOOL validateManifestInventory(id rawInventory,NSString*root,NSString*stage,NSAr
  if(![actual isEqualToSet:expected]){inventoryFail(error,@"Chapter package contains files outside its manifest");return NO;}return YES;
 }
 BOOL validateChapterImages(NSString*folder,NSError**error){
+ NSString *script=[folder stringByAppendingPathComponent:PMChapterScriptName];if([NSFileManager.defaultManager fileExistsAtPath:script]&&!PMChapterScriptData([NSURL fileURLWithPath:script],error))return NO;
  NSFileManager*f=NSFileManager.defaultManager;
  for(NSString*name in @[@"image.png",@"image-before.png",@"image-after.png",@"image-special.png"]){NSString*path=[folder stringByAppendingPathComponent:name];if(![f fileExistsAtPath:path]){if([name isEqualToString:@"image.png"]){if(error)*error=err(@"Chapter package is missing its default cover");return NO;}continue;}
   CGImageSourceRef source=CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:path],NULL);NSDictionary*p=source?CFBridgingRelease(CGImageSourceCopyPropertiesAtIndex(source,0,NULL)):nil;BOOL valid=[p[(NSString*)kCGImagePropertyPixelWidth] doubleValue]>0&&[p[(NSString*)kCGImagePropertyPixelHeight] doubleValue]>0;if(source)CFRelease(source);if(!valid){if(error)*error=err(@"Invalid chapter cover image");return NO;}
@@ -376,13 +379,26 @@ NSArray*remapSongOrder(NSArray*source,NSDictionary*songMap,NSSet*official,NSErro
 @property(nonatomic,copy,readwrite) NSString*root;
 @property(nonatomic,readwrite) NSUInteger revision;
 @property(nonatomic,strong) NSMutableDictionary*db;
+@property(nonatomic,copy) NSSet *chapterAssetIDs;
+@property(nonatomic,strong) NSMutableSet *legacyAssetIDs;
+@property(nonatomic,strong) NSMutableDictionary *legacyPaths;
 @end
 @implementation PMContentStore
 - (void)scoresChanged { @synchronized(self){ self.revision++; } }
 + (instancetype)shared{static PMContentStore*s;static dispatch_once_t once;dispatch_once(&once,^{s=[PMContentStore new];});return s;}
-- (instancetype)init{if((self=[super init])){self.root=[NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject stringByAppendingPathComponent:@"PhiMod"];NSFileManager*f=NSFileManager.defaultManager;for(NSString*name in @[@"assets",@"imports",@"exports",@"trash"])[f createDirectoryAtPath:[self.root stringByAppendingPathComponent:name] withIntermediateDirectories:YES attributes:nil error:nil];NSData*d=[NSData dataWithContentsOfFile:[self.root stringByAppendingPathComponent:@"library.json"]];self.db=d?[NSJSONSerialization JSONObjectWithData:d options:NSJSONReadingMutableContainers error:nil]:nil;if(!self.db){NSData*backup=[NSData dataWithContentsOfFile:[self.root stringByAppendingPathComponent:@"library.backup.json"]];self.db=backup?[NSJSONSerialization JSONObjectWithData:backup options:NSJSONReadingMutableContainers error:nil]:nil;}if(!self.db)self.db=[@{@"songs":[NSMutableArray new],@"chapters":[@[[ @{@"id":@"pm_local",@"name":@"自制谱收藏",@"subtitle":@"LOCAL CHARTS",@"songs":@[]} mutableCopy]] mutableCopy],@"overrides":[NSMutableDictionary new],@"hiddenChapters":[NSMutableArray new],@"chartSelections":[NSMutableDictionary new]} mutableCopy];// Previous process exports are staging copies, never the user's saved output.
+- (instancetype)init{if((self=[super init])){self.root=[NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject stringByAppendingPathComponent:@"PhiMod"];NSFileManager*f=NSFileManager.defaultManager;for(NSString*name in @[@"assets/songs",@"assets/chapters",@"imports",@"exports",@"trash"])[f createDirectoryAtPath:[self.root stringByAppendingPathComponent:name] withIntermediateDirectories:YES attributes:nil error:nil];NSData*d=[NSData dataWithContentsOfFile:[self.root stringByAppendingPathComponent:@"library.json"]];self.db=d?[NSJSONSerialization JSONObjectWithData:d options:NSJSONReadingMutableContainers error:nil]:nil;if(!self.db){NSData*backup=[NSData dataWithContentsOfFile:[self.root stringByAppendingPathComponent:@"library.backup.json"]];self.db=backup?[NSJSONSerialization JSONObjectWithData:backup options:NSJSONReadingMutableContainers error:nil]:nil;}if(!self.db)self.db=[@{@"songs":[NSMutableArray new],@"chapters":[@[[ @{@"id":@"pm_local",@"name":@"自制谱收藏",@"subtitle":@"LOCAL CHARTS",@"songs":@[]} mutableCopy]] mutableCopy],@"overrides":[NSMutableDictionary new],@"hiddenChapters":[NSMutableArray new],@"chartSelections":[NSMutableDictionary new]} mutableCopy];// Previous process exports are staging copies, never the user's saved output.
  for(NSString*name in [f contentsOfDirectoryAtPath:[self.root stringByAppendingPathComponent:@"exports"] error:nil])if([name.pathExtension.lowercaseString isEqualToString:@"zip"])[self cleanupExports:@[[NSURL fileURLWithPath:[[self.root stringByAppendingPathComponent:@"exports"]stringByAppendingPathComponent:name]]]];
- recoverChapterImports(self.root,self.db);self.revision=1;}return self;}
+ recoverChapterImports(self.root,self.db);
+ self.chapterAssetIDs=PMEntityIDs(self.db[@"chapters"]);NSSet *songs=PMEntityIDs(self.db[@"songs"]);
+ self.legacyAssetIDs=[NSMutableSet setWithArray:[f contentsOfDirectoryAtPath:[self.root stringByAppendingPathComponent:@"assets"] error:nil]?:@[]];
+ self.legacyPaths=[NSMutableDictionary dictionary];
+ for(NSString *key in [self.legacyAssetIDs copy]){
+  if(!safeID(key))continue;
+  BOOL chapter=[self.chapterAssetIDs containsObject:key],song=[songs containsObject:key];
+  if(chapter==song)continue; // Unknown or ambiguous: retain the original directory.
+  [self installedAsset:key bucket:chapter?@"chapters":@"songs"];
+ }
+ self.revision=1;}return self;}
 - (NSDictionary*)snapshot{NSDictionary*published=nil;@synchronized(self){published=self.db;}return clone(published);}
 - (BOOL)saveUnlockRule:(NSDictionary*)rule animationURL:(NSURL*)url identifier:(NSString*)identifier error:(NSError**)error{
  @synchronized(self){
@@ -402,17 +418,48 @@ NSArray*remapSongOrder(NSArray*source,NSDictionary*songMap,NSSet*official,NSErro
   return YES;
  }
 }
+- (BOOL)hasChapterScript:(NSString*)identifier {
+ @synchronized(self){return [self.chapterAssetIDs containsObject:identifier] && [NSFileManager.defaultManager fileExistsAtPath:[[self asset:identifier] stringByAppendingPathComponent:PMChapterScriptName]];}
+}
+- (BOOL)setChapterScript:(NSURL*)url chapter:(NSString*)identifier error:(NSError**)error {
+ NSData *data=nil;
+ if(url){if(![url.pathExtension.lowercaseString isEqual:@"lua"]){if(error)*error=err(@"请选择 .lua 源码文件");return NO;}data=PMChapterScriptData(url,error);if(!data)return NO;}
+ @synchronized(self){
+  if(!safeID(identifier)||![self.chapterAssetIDs containsObject:identifier]){if(error)*error=err(@"自制章节不存在");return NO;}
+  NSFileManager *fm=NSFileManager.defaultManager;NSString *dir=[self asset:identifier],*path=[dir stringByAppendingPathComponent:PMChapterScriptName];
+  if(data){if(![fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:error]||![data writeToFile:path options:NSDataWritingAtomic error:error])return NO;}
+  else if([fm fileExistsAtPath:path]&&![fm removeItemAtPath:path error:error])return NO;
+  self.revision++;return YES;
+ }
+}
 - (NSString*)coverFolder:(NSString*)identifier{
  if(![identifier isKindOfClass:NSString.class]||!identifier.length)return nil;
  if(safeID(identifier))return [self asset:identifier];
- NSDictionary*official=pmcontent::cachedOfficialSnapshot();static NSDictionary*cachedCatalog=nil;static NSSet*knownIDs=nil;
- @synchronized(self){if(cachedCatalog!=official){NSMutableSet*ids=[NSMutableSet setWithArray:PMOfficialSongMap(official).allKeys];for(NSDictionary*c in official[@"chapters"])if(c[@"chapterCode"])[ids addObject:c[@"chapterCode"]];knownIDs=ids;cachedCatalog=official;}if(![knownIDs containsObject:identifier])return nil;}NSData*data=[identifier dataUsingEncoding:NSUTF8StringEncoding];unsigned char hash[CC_SHA256_DIGEST_LENGTH];CC_SHA256(data.bytes,(CC_LONG)data.length,hash);NSMutableString*key=[@"pm_official_" mutableCopy];for(unsigned char b:hash)[key appendFormat:@"%02x",b];return [self asset:key];
+ NSDictionary*official=pmcontent::cachedOfficialSnapshot();static NSDictionary*cachedCatalog=nil;static NSSet*knownIDs=nil,*officialChapters=nil;
+ @synchronized(self){if(cachedCatalog!=official){NSMutableSet*ids=[NSMutableSet setWithArray:PMOfficialSongMap(official).allKeys];NSMutableSet*chapters=[NSMutableSet set];for(NSDictionary*c in official[@"chapters"])if(c[@"chapterCode"]){[ids addObject:c[@"chapterCode"]];[chapters addObject:c[@"chapterCode"]];}officialChapters=chapters;knownIDs=ids;cachedCatalog=official;}if(![knownIDs containsObject:identifier])return nil;}NSData*data=[identifier dataUsingEncoding:NSUTF8StringEncoding];unsigned char hash[CC_SHA256_DIGEST_LENGTH];CC_SHA256(data.bytes,(CC_LONG)data.length,hash);NSMutableString*key=[@"pm_official_" mutableCopy];for(unsigned char b:hash)[key appendFormat:@"%02x",b];@synchronized(self){return [self installedAsset:key bucket:[officialChapters containsObject:identifier]?@"chapters":@"songs"]; }
 }
 - (BOOL)assignSongs:(NSArray<NSString*>*)ids toChapter:(NSString*)chapter move:(BOOL)move error:(NSError**)error{
  @synchronized(self){NSMutableDictionary*db=[[self snapshot]mutableCopy];if(!PMAssignChapterSongs(db,pmcontent::cachedOfficialSnapshot(),ids,chapter,move,error))return NO;return [self commit:db error:error];}
 }
-- (NSString*)asset:(NSString*)identifier{return safeID(identifier)?[[self.root stringByAppendingPathComponent:@"assets"]stringByAppendingPathComponent:identifier]:nil;}
-- (BOOL)commit:(NSDictionary*)value error:(NSError**)error{@synchronized(self){if(![value[@"songs"] isKindOfClass:NSArray.class]||![value[@"chapters"] isKindOfClass:NSArray.class]){if(error)*error=err(@"曲库结构无效");return NO;}NSMutableSet*ids=[NSMutableSet new];for(NSDictionary*s in value[@"songs"]){NSString*i=s[@"id"];if(!safeID(i)||[ids containsObject:i]){if(error)*error=err(@"谱面 ID 重复或不合法");return NO;}[ids addObject:i];}NSMutableSet*chapterIDs=[NSMutableSet new];for(NSDictionary*c in value[@"chapters"]){if(!safeID(c[@"id"])||[chapterIDs containsObject:c[@"id"]]||![c[@"name"] length]){if(error)*error=err(@"章节 ID 或名称无效");return NO;}[chapterIDs addObject:c[@"id"]];}NSString*p=[self.root stringByAppendingPathComponent:@"library.json"];if([NSFileManager.defaultManager fileExistsAtPath:p]&&![[NSData dataWithContentsOfFile:p] writeToFile:[self.root stringByAppendingPathComponent:@"library.backup.json"] options:NSDataWritingAtomic error:error])return NO;if(!writeJSON(value,p,error))return NO;self.db=clone(value);self.revision++;return YES;}}
+- (NSString*)installedAsset:(NSString*)identifier bucket:(NSString*)bucket {
+ @synchronized(self){
+  if(self.legacyPaths[identifier])return self.legacyPaths[identifier];
+  if([self.legacyAssetIDs containsObject:identifier]){
+   NSString *resolved=PMRelocateAsset(self.root,bucket,identifier);
+   [self.legacyAssetIDs removeObject:identifier];self.legacyPaths[identifier]=resolved;return resolved;
+  }
+  return PMAssetPath(self.root,bucket,identifier);
+ }
+}
+- (NSString*)asset:(NSString*)identifier {
+ if(!safeID(identifier))return nil;
+ if([identifier isEqual:@"pm_avatar"])return PMAssetPath(self.root,nil,identifier);
+ @synchronized(self){
+  if([self.legacyAssetIDs containsObject:identifier])return PMAssetPath(self.root,nil,identifier);
+  return [self installedAsset:identifier bucket:[self.chapterAssetIDs containsObject:identifier]?@"chapters":@"songs"];
+ }
+}
+- (BOOL)commit:(NSDictionary*)value error:(NSError**)error{@synchronized(self){if(![value[@"songs"] isKindOfClass:NSArray.class]||![value[@"chapters"] isKindOfClass:NSArray.class]){if(error)*error=err(@"曲库结构无效");return NO;}NSMutableSet*ids=[NSMutableSet new];for(NSDictionary*s in value[@"songs"]){NSString*i=s[@"id"];if(!safeID(i)||[ids containsObject:i]){if(error)*error=err(@"谱面 ID 重复或不合法");return NO;}[ids addObject:i];}NSMutableSet*chapterIDs=[NSMutableSet new];for(NSDictionary*c in value[@"chapters"]){if(!safeID(c[@"id"])||[chapterIDs containsObject:c[@"id"]]||![c[@"name"] length]){if(error)*error=err(@"章节 ID 或名称无效");return NO;}[chapterIDs addObject:c[@"id"]];}NSString*p=[self.root stringByAppendingPathComponent:@"library.json"];if([NSFileManager.defaultManager fileExistsAtPath:p]&&![[NSData dataWithContentsOfFile:p] writeToFile:[self.root stringByAppendingPathComponent:@"library.backup.json"] options:NSDataWritingAtomic error:error])return NO;if(!writeJSON(value,p,error))return NO;self.db=clone(value);self.chapterAssetIDs=chapterIDs;self.revision++;return YES;}}
 - (BOOL)replaceImage:(NSURL*)url identifier:(NSString*)identifier error:(NSError**)error{NSData*data=[NSData dataWithContentsOfURL:url];if(!data){if(error)*error=err(@"Unable to read image data.");return NO;}return [self replaceImageData:data identifier:identifier error:error];}
 - (BOOL)replaceImageData:(NSData*)data identifier:(NSString*)identifier error:(NSError**)error{NSString*folder=[self coverFolder:identifier];if(!folder){if(error)*error=err(@"Invalid asset ID");return NO;}UIImage*image=[UIImage imageWithData:data];if(!image||!image.CGImage){if(error)*error=err(@"Unable to read image");return NO;}CGFloat sourceW=image.size.width*image.scale,sourceH=image.size.height*image.scale;if(sourceW<=0||sourceH<=0){if(error)*error=err(@"Unable to read image");return NO;}CGFloat factor=MIN(1.0,2048.0/MAX(sourceW,sourceH));CGSize size=CGSizeMake(MAX(1,round(sourceW*factor)),MAX(1,round(sourceH*factor)));UIGraphicsImageRendererFormat*format=[UIGraphicsImageRendererFormat defaultFormat];format.scale=1;UIGraphicsImageRenderer*r=[[UIGraphicsImageRenderer alloc]initWithSize:size format:format];NSData*png=UIImagePNGRepresentation([r imageWithActions:^(UIGraphicsImageRendererContext*c){[image drawInRect:CGRectMake(0,0,size.width,size.height)];}]);if(!png){if(error)*error=err(@"Unable to read image");return NO;}[NSFileManager.defaultManager createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:error];BOOL ok=[png writeToFile:[folder stringByAppendingPathComponent:@"image.png"] options:NSDataWritingAtomic error:error];if(ok)@synchronized(self){self.revision++;}return ok;}
 - (BOOL)importURL:(NSURL*)url chapter:(NSString*)chapter error:(NSError**)error{
@@ -453,7 +500,7 @@ NSArray*remapSongOrder(NSArray*source,NSDictionary*songMap,NSSet*official,NSErro
   if(![f createDirectoryAtPath:journalDirectory withIntermediateDirectories:YES attributes:nil error:error])return NO;
   journalPath=[journalDirectory stringByAppendingPathComponent:[NSUUID.UUID.UUIDString stringByAppendingString:@".json"]];
   NSMutableArray*planned=[songMap.allValues mutableCopy];[planned addObjectsFromArray:chapterMap.allValues];
-  if(!writeJSON(@{@"version":@1,@"ids":planned},journalPath,error))return NO;
+  if(!writeJSON(@{@"version":@2,@"ids":planned,@"chapters":chapterMap.allValues},journalPath,error))return NO;
   NSMutableArray*mappedSongs=[NSMutableArray new];
    for(NSDictionary*sourceSong in sourceSongs){NSError*songFailure=nil;BOOL songOK=NO;
     @autoreleasepool{songOK=[&]() -> BOOL {NSString*old=sourceSong[@"id"],*identifier=songMap[old],*folder=[[root stringByAppendingPathComponent:@"songs"]stringByAppendingPathComponent:old];if(![f fileExistsAtPath:folder]){songFailure=err(@"Chapter package song resources are missing");return NO;}
@@ -467,9 +514,9 @@ NSArray*remapSongOrder(NSArray*source,NSDictionary*songMap,NSSet*official,NSErro
     if(!songOK){if(error)*error=songFailure?:err(@"Song conversion failed");return NO;}
    }
   NSMutableArray*mappedChapters=[NSMutableArray new];
-  for(NSDictionary*sourceDep in sourceDependencies){NSString*old=sourceDep[@"id"],*newID=chapterMap[old];NSMutableDictionary*dep=remapUnlockEntity(sourceDep,songMap,chapterMap,ruleMap);NSArray*order=remapSongOrder(sourceDep[@"songs"],songMap,official,error);if(!order)return NO;dep[@"id"]=newID;dep[@"songs"]=order;dep[@"before"]=mainID;[mappedChapters addObject:dep];NSString*from=[root stringByAppendingPathComponent:[NSString stringWithFormat:@"chapters/%@",old]],*to=[self asset:newID];if([f fileExistsAtPath:from]){if([f fileExistsAtPath:to]||![f copyItemAtPath:from toPath:to error:error])return NO;[moved addObject:to];if(!PMNormalizeCoverFolder(to,1.35625,error))return NO;}}
+  for(NSDictionary*sourceDep in sourceDependencies){NSString*old=sourceDep[@"id"],*newID=chapterMap[old];NSMutableDictionary*dep=remapUnlockEntity(sourceDep,songMap,chapterMap,ruleMap);NSArray*order=remapSongOrder(sourceDep[@"songs"],songMap,official,error);if(!order)return NO;dep[@"id"]=newID;dep[@"songs"]=order;dep[@"before"]=mainID;[mappedChapters addObject:dep];NSString*from=[root stringByAppendingPathComponent:[NSString stringWithFormat:@"chapters/%@",old]],*to=[self installedAsset:newID bucket:@"chapters"];if([f fileExistsAtPath:from]){if([f fileExistsAtPath:to]||![f copyItemAtPath:from toPath:to error:error])return NO;[moved addObject:to];if(!PMNormalizeCoverFolder(to,1.35625,error))return NO;}}
   NSMutableDictionary*main=remapUnlockEntity(sourceChapter,songMap,chapterMap,ruleMap);NSArray*mainOrder=remapSongOrder(sourceChapter[@"songs"],songMap,official,error);if(!mainOrder)return NO;if(version<3){NSMutableArray*legacy=[mainOrder mutableCopy];for(NSDictionary*legacySong in sourceSongs){NSString*old=legacySong[@"id"];if(![legacy containsObject:songMap[old]])[legacy addObject:songMap[old]];}for(NSString*officialID in officialOrder)if(![legacy containsObject:officialID]){if(error)*error=err(@"Legacy package omits an official song from chapter order");return NO;}mainOrder=legacy;}main[@"id"]=mainID;main[@"songs"]=mainOrder;main[@"before"]=@"";[db[@"chapters"] addObjectsFromArray:mappedChapters];[db[@"chapters"] addObject:main];for(NSDictionary*song in mappedSongs)[db[@"songs"] addObject:song];
-  NSString*cover=[root stringByAppendingPathComponent:@"chapter"];if([f fileExistsAtPath:cover]){NSString*to=[self asset:mainID];if([f fileExistsAtPath:to]||![f copyItemAtPath:cover toPath:to error:error])return NO;[moved addObject:to];if(!PMNormalizeCoverFolder(to,1.35625,error))return NO;}
+  NSString*cover=[root stringByAppendingPathComponent:@"chapter"];if([f fileExistsAtPath:cover]){NSString*to=[self installedAsset:mainID bucket:@"chapters"];if([f fileExistsAtPath:to]||![f copyItemAtPath:cover toPath:to error:error])return NO;[moved addObject:to];if(!PMNormalizeCoverFolder(to,1.35625,error))return NO;}
   NSMutableDictionary*selections=clone(db[@"chartSelections"]?:@{});NSDictionary*sourceSelections=manifest[@"selections"];
   if(sourceSelections&&![sourceSelections isKindOfClass:NSDictionary.class]){if(error)*error=err(@"Invalid chart selections");return NO;}
   for(NSString*key in sourceSelections){

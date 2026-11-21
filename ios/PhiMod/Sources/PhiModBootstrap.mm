@@ -8,6 +8,7 @@
 #import "PMDiagnostics.h"
 #import "PMPracticeControls.h"
 #import "PMContentUI.h"
+#import "PMContentStore.h"
 #import "PMResourcePackUI.h"
 
 static const NSInteger PMOverlayRootTag = 0x50484D4F;
@@ -433,7 +434,13 @@ static UIColor *PMColor(uint32_t argb) {
 @end
 
 void PhiModInstallOverlay(void) {
-    dispatch_async(dispatch_get_main_queue(), ^{ [[PMOverlayController shared] install]; });
+    dispatch_async(dispatch_get_main_queue(), ^{
+        static dispatch_once_t prepareLibrary;
+        if(UIApplication.sharedApplication.protectedDataAvailable)dispatch_once(&prepareLibrary, ^{
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{ (void)[PMContentStore shared]; });
+        });
+        [[PMOverlayController shared] install];
+    });
 }
 
 __attribute__((constructor)) static void PhiModEntry(void) {

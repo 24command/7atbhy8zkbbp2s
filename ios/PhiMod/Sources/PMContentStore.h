@@ -9,6 +9,8 @@
 - (BOOL)commit:(NSDictionary*)value error:(NSError**)error;
 - (NSString*)coverFolder:(NSString*)identifier;
 - (BOOL)assignSongs:(NSArray<NSString*>*)ids toChapter:(NSString*)chapter move:(BOOL)move error:(NSError**)error;
+- (BOOL)hasChapterScript:(NSString*)identifier;
+- (BOOL)setChapterScript:(NSURL*)url chapter:(NSString*)identifier error:(NSError**)error;
 - (NSString*)asset:(NSString*)identifier;
 - (BOOL)importURL:(NSURL*)url chapter:(NSString*)chapter error:(NSError**)error;
 - (NSURL*)exportSong:(NSString*)identifier error:(NSError**)error;

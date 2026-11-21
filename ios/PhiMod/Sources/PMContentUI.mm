@@ -41,6 +41,8 @@
 @property(nonatomic,strong) NSDictionary*db;
 @property(nonatomic,strong) NSArray<NSURL*>*pendingExports;
 @property(nonatomic,strong) UIDocumentPickerViewController*importPicker;
+@property(nonatomic,strong) UIDocumentPickerViewController*scriptPicker;
+@property(nonatomic,copy) NSString*scriptChapter;
 @property(nonatomic,copy) NSString*pendingImportMessage;
 @property(nonatomic,strong) NSArray*items;
 @property(nonatomic,strong) UISegmentedControl*pages;
@@ -126,6 +128,18 @@
  [a addAction:[UIAlertAction actionWithTitle:@"编辑信息" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){[self edit:x chapter:chapter];}]];
  if(self.pages.selectedSegmentIndex!=2)[a addAction:[UIAlertAction actionWithTitle:@"\u89e3\u9501\u6761\u4ef6" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){PMShowUnlockEditor(self,id);}]];
  {[a addAction:[UIAlertAction actionWithTitle:@"更换封面（系统文件选择）" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){self.imageID=id;self.imageIsChapter=chapter;UIDocumentPickerViewController*p=[[UIDocumentPickerViewController alloc]initForOpeningContentTypes:@[UTTypeImage] asCopy:YES];p.delegate=self;[self presentViewController:p animated:YES completion:nil];}]];if(self.pages.selectedSegmentIndex!=2)[a addAction:[UIAlertAction actionWithTitle:chapter?@"导出章节包":@"导出谱包" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){[self export:id chapter:chapter];}]];}
+ if(chapter&&self.pages.selectedSegmentIndex!=2){
+  BOOL exists=[PMContentStore.shared hasChapterScript:id];
+  [a addAction:[UIAlertAction actionWithTitle:exists?@"替换 OS 脚本…":@"导入 OS 脚本…" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+   UTType *type=[UTType typeWithFilenameExtension:@"lua"];UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[type?:UTTypeData] asCopy:YES];
+   self.scriptPicker=picker;self.scriptChapter=id;picker.delegate=self;[self presentViewController:picker animated:YES completion:nil];
+  }]];
+  if(exists)[a addAction:[UIAlertAction actionWithTitle:@"移除 OS 脚本" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action){
+   UIAlertController *ask=[UIAlertController alertControllerWithTitle:@"移除此章节的 OS 脚本？" message:@"不会删除章节资源或曲目。" preferredStyle:UIAlertControllerStyleAlert];
+   [ask addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+   [ask addAction:[UIAlertAction actionWithTitle:@"移除" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *confirm){NSError *e=nil;if(![PMContentStore.shared setChapterScript:nil chapter:id error:&e])[self message:e.localizedDescription];else [self reload];}]];[self presentViewController:ask animated:YES completion:nil];
+  }]];
+ }
  if(chapter)[a addAction:[UIAlertAction actionWithTitle:@"\u7ba1\u7406\u7ae0\u8282\u66f2\u76ee / \u6dfb\u52a0\u5b98\u8c31" style:UIAlertActionStyleDefault handler:^(UIAlertAction*x){PMShowChapterSongs(self,id);}]];
  if(!chapter){[a addAction:[UIAlertAction actionWithTitle:@"移动到章节" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){[self move:id index:index];}]];[a addAction:[UIAlertAction actionWithTitle:@"分组 / 多难度合并" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){[self group:x];}]];[a addAction:[UIAlertAction actionWithTitle:@"删除谱面（资源移入回收目录）" style:UIAlertActionStyleDestructive handler:^(UIAlertAction*action){NSError*e=nil;if(![PMContentStore.shared removeSong:id error:&e])[self message:e.localizedDescription];[self reload];}]];}else if(self.pages.selectedSegmentIndex==2){[a addAction:[UIAlertAction actionWithTitle:[self.db[@"hiddenChapters"] containsObject:id]?@"恢复章节显示":@"隐藏章节（可在本页恢复）" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){NSMutableDictionary*d=[[PMContentStore.shared snapshot] mutableCopy];NSMutableArray*h=[d[@"hiddenChapters"] mutableCopy];if([h containsObject:id])[h removeObject:id];else[h addObject:id];d[@"hiddenChapters"]=h;[self save:d];}]];}else{[a addAction:[UIAlertAction actionWithTitle:@"导入谱包到此章节" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){self.selectedChapter=id;[self importFiles];}]];[a addAction:[UIAlertAction actionWithTitle:@"排列章节（指定前一位置）" style:UIAlertActionStyleDefault handler:^(UIAlertAction*action){[self orderChapter:id];}]];[a addAction:[UIAlertAction actionWithTitle:@"删除章节（谱面保留）" style:UIAlertActionStyleDestructive handler:^(UIAlertAction*action){NSMutableDictionary*d=[[PMContentStore.shared snapshot]mutableCopy];NSMutableArray*c=[d[@"chapters"]mutableCopy];for(NSInteger i=c.count-1;i>=0;--i)if([c[i][@"id"] isEqualToString:id])[c removeObjectAtIndex:i];for(NSMutableDictionary*s in d[@"songs"])if([s[@"targetChapter"] isEqualToString:id])s[@"targetChapter"]=@"pm_local";if(![id isEqualToString:@"pm_local"]){d[@"chapters"]=c;NSMutableDictionary*moves=[d[@"officialMoves"]mutableCopy]?:[NSMutableDictionary new];for(NSString*song in [moves.allKeys copy])if([moves[song]isEqual:id])[moves removeObjectForKey:song];d[@"officialMoves"]=moves;[self save:d];}else[self message:@"默认收藏章节不能删除"]; }]];}
  [self sheet:a row:index];}
@@ -158,6 +172,7 @@
  self.importPicker=p;p.allowsMultipleSelection=YES;p.delegate=self;[self presentViewController:p animated:YES completion:nil];
 }
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController*)picker {
+ if(picker==self.scriptPicker){self.scriptPicker=nil;self.scriptChapter=nil;}
  if(self.pendingExports){[PMContentStore.shared cleanupExports:self.pendingExports];self.pendingExports=nil;}
  if(picker==self.importPicker){self.importPicker=nil;picker.delegate=nil;}
  PMDiagnosticsWrite("Content picker cancelled");self.imageID=nil;self.imageIsChapter=NO;
@@ -240,6 +255,11 @@
 }
 - (void)documentPicker:(UIDocumentPickerViewController*)picker didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls {
  if(self.pendingExports){[PMContentStore.shared cleanupExports:self.pendingExports];self.pendingExports=nil;[picker dismissViewControllerAnimated:YES completion:nil];return;}
+ if(picker==self.scriptPicker){
+  NSString *chapter=self.scriptChapter;self.scriptPicker=nil;self.scriptChapter=nil;NSURL *url=urls.firstObject;if(!url||self.busy)return;
+  self.busy=YES;dispatch_async(self.worker,^{NSError *e=nil;BOOL access=[url startAccessingSecurityScopedResource];BOOL ok=[PMContentStore.shared setChapterScript:url chapter:chapter error:&e];if(access)[url stopAccessingSecurityScopedResource];
+   dispatch_async(dispatch_get_main_queue(),^{self.busy=NO;[self reload];self.pendingImportMessage=ok?@"章节 OS 脚本已保存":(e.localizedDescription?:@"脚本导入失败");[self showPendingImportMessage];});});return;
+ }
  if(picker==self.importPicker){if(!self.busy)[self importSelectedURLs:urls picker:picker];return;}
  // Other document pickers here are cover selection only; ignore stale import callbacks.
  if(self.busy||!urls.count||!self.imageID)return;
