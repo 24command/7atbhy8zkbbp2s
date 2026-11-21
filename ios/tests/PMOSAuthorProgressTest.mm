@@ -24,7 +24,12 @@ static void checkMerge(NSString *root) {
     PMOSAuthorProgress *same = store(root, @"pm_Cafe\u0301");
     PMOSAuthorProgress *other = store(root, @"pm_caf\u00e9");
     CHECK(get(one, @"flag") == 0);
+    NSDictionary *empty = [one snapshotValues];
+    CHECK(empty && !empty.count);
+    uint64_t revision = PMOSAuthorProgressRevision();
     CHECK([one commitValues:@{@"flag": @(INT32_MIN), @"FLAG": @(INT32_MAX)}]);
+    CHECK(PMOSAuthorProgressRevision() == revision + 1 && !empty.count);
+    CHECK([same commitValues:@{@"FLAG": @(INT32_MAX)}] && PMOSAuthorProgressRevision() == revision + 1);
     CHECK([same commitValues:@{@"story.part-1_seen": @1}]);
     CHECK(get(same, @"flag") == INT32_MIN && get(one, @"FLAG") == INT32_MAX);
     CHECK(get(one, @"story.part-1_seen") == 1 && get(other, @"flag") == 0);

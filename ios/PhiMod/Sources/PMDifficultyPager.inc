@@ -14,7 +14,7 @@ bool hasDifficultyPager(P selector){return runtime&&target(*runtime,difficultyOw
 void restoreDifficultyBar(Runtime&r,P selector);
 void clearDifficultyPager(Runtime&r,bool restoreBar){difficultyTap.reset();difficultyTouchEntry=-1;P previousOwner=target(r,difficultyOwner);for(auto&cell:difficultyCells)if(!cell.root&&r.alive(cell.button))r.call(cell.button,"set_interactable",{"System.Boolean"},{&cell.originalInteractable});P root=target(r,difficultyRoot);if(r.alive(root))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{root});for(auto&cell:difficultyCells){if(cell.root)r.gchandle_free(cell.root);if(cell.buttonRoot)r.gchandle_free(cell.buttonRoot);}difficultyCells.clear();for(uint32_t*handle:{&difficultyOwner,&difficultyItem,&difficultyRoot})if(*handle){r.gchandle_free(*handle);*handle=0;}difficultyEntries.clear();difficultyGroup=nil;difficultyPage=0;difficultyDirty=true;if(restoreBar&&r.alive(previousOwner)&&!r.get<bool>(previousOwner,"exit"))restoreDifficultyBar(r,previousOwner);}
 NSDictionary*selectedDifficulty(NSString*group,int slot){return songFor(group,slot);}
-NSDictionary*difficultyForSong(Runtime&r,void*song,int slot){return frozenDifficulty(r,song)?:songFor(r.string(r.get<P>(song,"songsId")),slot);}
+NSDictionary*difficultyForSong(Runtime&r,void*song,int slot){NSDictionary *bound=pmsecretcourse::binding(r,song);if(bound)return bound.count?bound:nil;return frozenDifficulty(r,song)?:songFor(r.string(r.get<P>(song,"songsId")),slot);}
 void bindTransport(Runtime&r,P selector,P item,NSString*group,NSDictionary*chart){
  auto&members=variants[group.UTF8String];bool changed=!members.count(3)||members[3]!=chart;members[3]=chart;
  P song=r.get<P>(item,"songInfo"),d=r.get<P>(song,"difficulty");float number=std::max(.1,PMDifficultyNumber(chart[@"difficulty"]));r.arrayPutFloat(d,3,number);
@@ -248,6 +248,7 @@ NSDictionary *challengeEntryChart(Runtime &r, P entry) {
  if (!item || r.get<int>(item, "sortIndex") != -2147483000) return nil;
  P song = r.get<P>(item, "songInfo");
  if (!song) return nil;
+ if (NSDictionary *bound = pmsecretcourse::binding(r,song)) return bound.count?bound:nil;
  if (NSDictionary *chart = frozenDifficulty(r, song)) return chart;
  NSString *identifier = r.string(r.get<P>(song, "songsId"));
  for (NSDictionary *chart in [PMContentStore.shared snapshot][@"songs"])

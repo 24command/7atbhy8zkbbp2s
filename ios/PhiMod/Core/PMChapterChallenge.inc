@@ -90,13 +90,39 @@ static int declareChallenge(lua_State *L) {
     lua_pop(L, 1);
     for (int i = 0; i < page->challengeCount; ++i)
         if (!strcmp(c->id, page->challenges[i].id)) return luaL_error(L, "duplicate challenge: %s", c->id);
-    c->song = challengeInteger(L, 1, "song", 1, s->songs);
-    fieldText(L, "difficulty", c->difficulty, sizeof(c->difficulty));
+    c->lifeTier = -1;
+    c->courseCount = presentationArray(L, "secretCourse", 4);
+    if (!lua_isnil(L, -1)) {
+        if (c->courseCount < 3) return luaL_error(L, "secretCourse requires 3 or 4 members");
+        for (int i=0; i<c->courseCount; ++i) {
+            lua_rawgeti(L, -1, i+1);
+            challengeMember(L, &c->course[i], s->songs, "secretCourse");
+            lua_pop(L, 1);
+        }
+        c->song = c->course[0].song;
+        strcpy(c->difficulty, c->course[0].difficulty);
+        const char *incompatible[] = {"song", "difficulty", "tiers", "nextSongs", "cues"};
+        for (size_t i=0; i<sizeof(incompatible)/sizeof(incompatible[0]); ++i) {
+            lua_getfield(L, 1, incompatible[i]);
+            if (!lua_isnil(L, -1)) return luaL_error(L, "secretCourse cannot use %s", incompatible[i]);
+            lua_pop(L, 1);
+        }
+    } else {
+        c->song = challengeInteger(L, 1, "song", 1, s->songs);
+        fieldText(L, "difficulty", c->difficulty, sizeof(c->difficulty));
+    }
+    lua_pop(L, 1);
+    lua_getfield(L, 1, "lifeTier");
+    if (!lua_isnil(L, -1)) {
+        if (!c->courseCount) return luaL_error(L, "lifeTier requires secretCourse");
+        c->lifeTier = challengeInteger(L, 1, "lifeTier", -1, 4);
+    }
+    lua_pop(L, 1);
     lua_getfield(L, 1, "unlocked");
     if (!lua_isnil(L, -1)) luaL_checktype(L, -1, LUA_TBOOLEAN);
     int unlocked = lua_isnil(L, -1) || lua_toboolean(L, -1);
     lua_pop(L, 1);
-    challengeTiers(L, c);
+    if (!c->courseCount) challengeTiers(L, c);
     challengePresentation(L, c, s->songs);
     challengeCues(L, page, c);
 

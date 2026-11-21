@@ -26,6 +26,16 @@ P child(Runtime &r, P parent, const char *name) {
 }
 void afterStart(Runtime &r, P self) {
     try {
+        if(pmsecretcourse::active()){
+            P g=r.mainGame();int tier=r.get<int>(g,"secretChallengeLifeTierIndex");
+            P rules=r.type("Phigros2.ChallengeMode.Scripts","SecretChallengeLifeRules");
+            int maximum=r.unbox<int>(r.stat(rules,"GetLifeForTierIndex",{"System.Int32"},{&tier}));
+            active(r,r.get<P>(self,"secretChallengeResultComponent"),true);
+            r.text(r.get<P>(self,"damageNumText"),std::to_string(maximum-r.get<int>(g,"secretChallengeLife")).c_str());
+            P sprites=r.get<P>(self,"lifeSprites");if(sprites&&tier>=0&&uintptr_t(tier)<r.array_length(sprites))
+                r.call(r.get<P>(self,"lifeImage"),"set_sprite",{"UnityEngine.Sprite"},{r.arrayAt(sprites,tier)});
+            return;
+        }
         if (!pmchallenge::hpVisible(r)) return;
         active(r, r.get<P>(self, "secretChallengeResultComponent"), true);
         char text[96];
@@ -98,8 +108,9 @@ void showCard(Runtime &r, P card, P item) {
 P canvas(Runtime &r, P self) {
     return r.call(r.call(r.get<P>(self,"retryButton"),"get_transform"),"get_parent");
 }
+P displayedList(Runtime &r){return pmsecretcourse::active()?pmsecretcourse::resultList(r):pmchallenge::list(r);}
 void show(Runtime &r, P self) {
-    P list = pmchallenge::list(r), cards = r.get<P>(self, "levelOverComponents"), root = canvas(r,self);
+    P list = displayedList(r), cards = r.get<P>(self, "levelOverComponents"), root = canvas(r,self);
     const char *rows[] = {"SettleAccount", "SettleAccount (1)", "SettleAccount (2)"};
     int count = r.count(list);
     for (int i = 0; i < 3; ++i) {
@@ -122,7 +133,7 @@ void show(Runtime &r, P self) {
 
 bool start(Runtime &r, P self) {
     clear(r);
-    if (!pmchallenge::variable()) return false;
+    if (!pmsecretcourse::active() && !pmchallenge::variable()) return false;
     view.owner = r.gchandle_new(self, false);
     try {
         P root = canvas(r,self), score = r.get<P>(self, "score"), font = r.call(score, "get_font");
@@ -132,7 +143,7 @@ bool start(Runtime &r, P self) {
         active(r, r.get<P>(self, "secretComponent"), false);
         P ratings = r.get<P>(self, "ratings");
         for (uintptr_t i = 0; ratings && i < r.array_length(ratings); ++i) active(r, r.arrayAt(ratings, int(i)), false);
-        P list = pmchallenge::list(r);
+        P list = displayedList(r);
         int count = r.count(list);
         view.pages = count > 0 ? 1 + (count - 1) / 3 : 1;
         bool fullCombo = count > 0;
@@ -153,7 +164,8 @@ bool start(Runtime &r, P self) {
                 r.call(r.get<P>(self,field),"set_Code",{"System.String"},{key});
         } catch(const std::exception &e) { diagf("Challenge background: %s",e.what()); }
         try {
-            int last=std::clamp(pmchallenge::cursor,0,std::max(0,count-1));
+            int cursor=pmsecretcourse::active()?r.get<int>(r.mainGame(),"activeChallengeSongIndex"):pmchallenge::cursor;
+            int last=std::clamp(cursor,0,std::max(0,count-1));
             int slot=r.get<int>(r.at(list,last),"levelIndex");
             const char *clips[]={"eZ","hD","iN","aT"};
             P audio=r.get<P>(self,"audioSource");

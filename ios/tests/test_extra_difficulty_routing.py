@@ -9,7 +9,7 @@ class ExtraDifficultyRouting(unittest.TestCase):
  def test_course_uses_frozen_chart_for_play_and_access(self):
   source=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text('utf8')
   unlock=(ROOT/'PhiMod/Sources/PMUnlockRuntime.mm').read_text('utf8')
-  self.assertIn('custom=frozenDifficulty(r,song)?:songFor(id,slot)',source)
+  self.assertIn('frozenDifficulty(r,song)?:songFor(id,slot)',source)
   self.assertIn('subject=pmcontent::difficultyForSong(r,song,slot)',unlock)
   page=(ROOT/'PhiMod/Sources/PMDifficultyPager.inc').read_text('utf8')
   self.assertIn('queuedSongs.count(target(r,it->root))',page)

@@ -8,6 +8,7 @@ extern NSString *PMDoorRunTestRoot(void);
 #import "PMDiagnostics.h"
 #import "PMOSAuthorProgress.h"
 #include <climits>
+#include "../Core/PMChapterLife.inc"
 
 namespace {
 NSString *progressRoot() {
@@ -50,15 +51,32 @@ BOOL PMDoorBeginTrack(NSString *group,int slot,double *hp,double delta[4]){retur
 BOOL PMDoorActive(){return playing!=nil;}
 void PMDoorAbandon(){pending=nil;playing=nil;pmstorysequence::handoff.take();}
 void PMDoorCancelPending(){pending=nil;}
+static void enqueueOutcome(NSString *chapter, NSString *door, int tier, BOOL clear);
 void PMDoorFinish(BOOL clear){
  NSDictionary *run=playing;playing=nil;if(!run)return;
  // Only the final clear unlocks the door. A failure on any leg is recorded once.
  if(clear && [run[@"nextSongs"] count]){pmstorysequence::handoff.issue(run);return;}
+ enqueueOutcome(run[@"chapter"],run[@"door"],-1,clear);
+}
+void PMDoorRecordCourseOutcome(NSString *chapter,NSString *door,int launchedTier,BOOL clear){
+ if(launchedTier<0||launchedTier>PMChapterLifeMax)return;
+ enqueueOutcome(chapter,door,launchedTier,clear);
+}
+static void enqueueOutcome(NSString *chapter,NSString *door,int tier,BOOL clear){
  dispatch_async(writes(),^{@autoreleasepool{
-  PMOSAuthorProgress *store=[[PMOSAuthorProgress alloc]initWithRoot:progressRoot() chapter:run[@"chapter"]];
-  NSString *key=[NSString stringWithFormat:@"door.%@.%@",run[@"door"],clear?@"clear":@"fail"];
-  int value=0;BOOL ok=[store readKey:key value:&value];
-  if(ok){int next=clear?1:(value>=INT_MAX?INT_MAX:MAX(value,0)+1);ok=[store commitValues:@{key:@(next)}];}
+  PMOSAuthorProgress *store=[[PMOSAuthorProgress alloc]initWithRoot:progressRoot() chapter:chapter];
+  NSString *key=[NSString stringWithFormat:@"door.%@.%@",door,clear?@"clear":@"fail"];
+  BOOL ok=[store updateValues:^NSDictionary *(NSDictionary *current){
+   int value=[current[key] intValue];
+   int next=clear?1:(value>=INT_MAX?INT_MAX:MAX(value,0)+1);
+   if(tier>=0){
+    PMChapterLifeState life=PMChapterLifeRead([current[@PMChapterLifeCeilingKey] intValue],
+                                             [current[@PMChapterLifeChoiceKey] intValue]);
+    if(PMChapterLifeApplyOutcome(&life,tier,clear))
+     return @{key:@(next), @PMChapterLifeCeilingKey:@(life.ceiling), @PMChapterLifeChoiceKey:@(life.selected+1)};
+   }
+   return @{key:@(next)};
+  }];
   if(!ok)PMDiagnosticsWrite("Chapter OS door outcome could not be saved");
  }});
 }

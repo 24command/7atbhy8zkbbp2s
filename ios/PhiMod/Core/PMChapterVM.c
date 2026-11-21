@@ -17,6 +17,8 @@ struct PMOSSession {
     ClickTarget clicks[PMOSMaxNodes];
     int challengeCount;
     struct { char id[PMOSChallengeIdMax + 1]; PMOSChallengeState state; } challenges[PMOSMaxChallenges];
+    char listSwitchKey[PMOSProgressKeyMax+1];
+    int listSwitchHidden, lifeChoice, lifeCeiling;
     PMOSPage *declaring;
     PMOSProgress progress;
     size_t accesses, changeCount;
@@ -123,6 +125,13 @@ static int findScreen(char names[][PMOSScreenNameSize], int count, const char *n
     return -1;
 }
 
+static int listSwitchAfter(lua_State *L) {
+    declarationPage(L);
+    const char *key=progressKey(L,1);
+    strcpy(session(L)->listSwitchKey,key);
+    return 0;
+}
+
 static int home(lua_State *L) {
     PMOSPage *page = declarationPage(L);
     size_t n;
@@ -196,6 +205,9 @@ static int card(lua_State *L) {
 }
 
 #include "PMChapterChallenge.inc"
+#define PM_CHAPTER_LIFE_LUA
+#include "PMChapterLife.inc"
+#undef PM_CHAPTER_LIFE_LUA
 #include "PMChapterPuzzle.inc"
 
 static int resolveChallengeBinding(lua_State *L, const PMOSPage *page, int ref) {
@@ -224,6 +236,15 @@ static void resolveChallengeBindings(lua_State *L, PMOSPage *page) {
     }
 }
 
+static int chapterCover(lua_State *L) {
+    PMOSPage *page = declarationPage(L);
+    if (lua_gettop(L) != 1) return luaL_error(L, "chapterCover expects one local still filename");
+    word(L, 1, page->chapterCover, sizeof(page->chapterCover));
+    if (!cueImageName(page->chapterCover) || !presentationUTF8((const unsigned char *)page->chapterCover))
+        return luaL_error(L, "invalid chapter cover filename");
+    return 0;
+}
+
 typedef struct { const char *source; size_t length; } Script;
 
 static int evaluate(lua_State *L) {
@@ -244,12 +265,25 @@ static int evaluate(lua_State *L) {
     lua_setglobal(L, "challenge");
     lua_pushcfunction(L, challengeProgress);
     lua_setglobal(L, "challengeProgress");
+    lua_pushcfunction(L,listSwitchAfter); lua_setglobal(L,"listSwitchAfter");
     registerLayout(L);
     registerPuzzle(L);
+    lua_pushcfunction(L, chapterLife); lua_setglobal(L, "chapterLife");
+    lua_pushcfunction(L, chapterCover); lua_setglobal(L, "chapterCover");
     if (luaL_loadbufferx(L, script->source, script->length, "@os.lua", "t")) return lua_error(L);
     lua_call(L, 0, 0);
     resolveLinks(L);
     resolveChallengeBindings(L, declarationPage(L));
+    PMOSSession *s=session(L);
+    s->listSwitchHidden = s->listSwitchKey[0] && !readProgress(L,s,s->listSwitchKey);
+    PMOSPage *page = declarationPage(L);
+    page->listSwitchHidden = s->listSwitchHidden;
+    for (int i=0; i<page->challengeCount; ++i) if (page->challenges[i].courseCount && page->challenges[i].lifeTier<0) {
+        s->lifeCeiling=readProgress(L,s,PMChapterLifeCeilingKey);
+        s->lifeChoice=readProgress(L,s,PMChapterLifeChoiceKey);
+        break;
+    }
+    page->selectedLifeTier=PMChapterLifeRead(s->lifeCeiling,s->lifeChoice).selected;
     return 0;
 }
 
@@ -278,6 +312,24 @@ void PMOSStop(PMOSSession *s) {
     if (!s) return;
     if (s->L) lua_close(s->L);
     free(s);
+}
+
+static int discardPreviewWrites(void *ctx, const PMOSProgressChange *changes, size_t count) {
+    (void)ctx; (void)changes; (void)count; return 1;
+}
+
+int PMOSPreviewCover(const char *src, size_t len, int songs, PMOSProgress progress, char name[256]) {
+    if (!name) return 0;
+    name[0] = 0;
+    PMOSPage *page = malloc(sizeof(*page));
+    if (!page) return 0;
+    progress.commit = discardPreviewWrites;
+    PMOSSession *s = PMOSStartWithProgress(src, len, songs, page, progress);
+    int ok = s != NULL;
+    if (ok) strcpy(name, page->chapterCover);
+    PMOSStop(s);
+    free(page);
+    return ok;
 }
 
 PMOSSession *PMOSStart(const char *src, size_t len, int songs, PMOSPage *page) {
@@ -428,6 +480,8 @@ int PMOSClick(PMOSSession *s, int node, PMOSAction *out) {
         snprintf(out->error, sizeof(out->error), "invalid chapter node");
         return 0;
     }
+    out->listSwitchHidden = s->listSwitchHidden;
+    out->selectedLifeTier=PMChapterLifeRead(s->lifeCeiling,s->lifeChoice).selected;
     ClickTarget *target = &s->clicks[node];
     if (!target->ref) {
         out->challenge = target->challenge;
@@ -440,6 +494,13 @@ int PMOSClick(PMOSSession *s, int node, PMOSAction *out) {
     lua_pushlightuserdata(s->L, &parsed);
     lua_pushlightuserdata(s->L, target);
     if (!runProtected(s, 2, out->error, sizeof(out->error))) return 0;
+    PMOSProgressChange *gate = stagedChange(s,s->listSwitchKey);
+    if (gate) s->listSwitchHidden = gate->value == 0;
+    parsed.listSwitchHidden = s->listSwitchHidden;
+    PMOSProgressChange *choice = stagedChange(s,PMChapterLifeChoiceKey), *ceiling = stagedChange(s,PMChapterLifeCeilingKey);
+    if (choice) s->lifeChoice=choice->value;
+    if (ceiling) s->lifeCeiling=ceiling->value;
+    parsed.selectedLifeTier=PMChapterLifeRead(s->lifeCeiling,s->lifeChoice).selected;
     *out = parsed;
     return 1;
 }

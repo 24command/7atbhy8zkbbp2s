@@ -49,11 +49,30 @@ class BackgroundFill(unittest.TestCase):
   self.assertIn('selectorAssets[self]',aset)
   self.assertNotIn('courseImage',aset)
   self.assertNotIn('courseBlur',aset)
+ def test_cover_completion_only_presents_and_does_not_invalidate(self):
+  sources=Path(__file__).resolve().parents[1]/'PhiMod/Sources'
+  reader=(sources/'PMChapterCover.h').read_text('utf8')
+  runtime=(sources/'PMContentRuntime.mm').read_text('utf8')
+  completion=runtime.rsplit('static void presentChapterCover(',1)[1].split('static void observeChapterCoverChanges(',1)[0]
+  self.assertIn('visit!=coverVisit',completion)
+  self.assertIn('applyChapterCoverVariant(',completion)
+  self.assertNotIn('chapterCoverVariant(',completion)
+  self.assertNotIn('bindChapterCover(',completion)
+  for call in ('postNotification','dispatch_group_wait','dispatch_semaphore_wait','waitUntilFinished'):
+   self.assertNotIn(call,reader)
+   self.assertNotIn(call,completion)
  def test_chapter_blur_uses_the_card_mask_and_active_background(self):
   s=(Path(__file__).resolve().parents[1]/'PhiMod/Sources/PMContentRuntime.mm').read_text(encoding='utf-8')
   assign=s.split('void applyCachedChapterCover(',1)[1].split('void syncChapterCoverFallbacks',1)[0]
   self.assertLess(assign.index('fitChapterCardCover(r,loader)'),assign.index('if(!strcmp(loaderField,"cover"))'))
   ready=s.split('void chapterReady(',1)[1].split('void*loadSkinAudio',1)[0]
-  for text in ('/chapterBlur@','"_nowChapterIndex"','"_nowBackgroundIndex"','r.arrayAt(backgrounds,active)','r.get<P>(card,"coverBlurAssetCode")','r.call(loader,"set_Code"'):
-   self.assertIn(text,ready)
+  bind=s.split('static void applyChapterCoverVariant(',1)[1].split('static void syncChapterBackground',1)[0]
+  bg=s.split('static void syncChapterBackground(',1)[1].split('static void observeChapterCoverChanges',1)[0]
+  self.assertIn('bindChapterCover(r,self,card,id,db)',ready)
+  self.assertIn('syncChapterBackground(r,self,cards)',ready)
+  self.assertIn('/chapterBlur@',bind)
+  self.assertIn('SetLowResImage',bind)
+  self.assertIn('SetImageWithTransition',bind)
+  for text in ('"_nowChapterIndex"','"_nowBackgroundIndex"','r.arrayAt(backgrounds,active)','r.get<P>(card,"coverBlurAssetCode")','r.call(loader,"set_Code"'):
+   self.assertIn(text,bg)
 if __name__=='__main__':unittest.main()

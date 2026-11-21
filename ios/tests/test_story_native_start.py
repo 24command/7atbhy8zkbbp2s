@@ -8,7 +8,7 @@ import unittest
 class StoryNativeStart(unittest.TestCase):
     def test_checks_before_exact_arm(self):
         src = Path(__file__).resolve().parents[1] / 'PhiMod/Sources/PMContentRuntime.mm'
-        start = src.read_text('utf8').split('static BOOL startCheckpointSong(Runtime &r,', 1)[1].split('void levelBegin(', 1)[0]
+        start = src.read_text('utf8').split('static BOOL checkedSong(Runtime &r,', 1)[1].split('void levelBegin(', 1)[0]
         arm = start.index('if(!arm(nativeGroup,slot,resolvedChartID))')
         for guard in ('checkpointOfficialOpen(r,song,official,slot)', 'r.get<int>(selector,"nowLevel")!=slot',
                       'r.get<bool>(selector,"onStart")', 'slot>=r.get<int>(item,"<PlayableLevelCount>k__BackingField")',

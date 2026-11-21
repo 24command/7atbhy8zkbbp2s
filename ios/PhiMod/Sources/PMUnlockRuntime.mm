@@ -188,6 +188,10 @@ void enqueueReveals(Runtime&r,bool activateMenu=true){
  if(!menuTimer)menuTimer=[NSTimer scheduledTimerWithTimeInterval:.25 repeats:YES block:^(NSTimer*t){try{pumpAnimations();}catch(const std::exception&e){logf("Unlock queue failed: %s",e.what());}}];
 }
 }
+bool courseMemberOpen(Runtime &r,NSString *group,NSDictionary *chart){
+ // The queue resolves a chart ID, not the selector's current AT binding.
+ return !chapterBlocked(r,group,chart) && (!chart || opened(r,chart[@"id"]));
+}
 bool playChapterStoryMedia(NSString *path, NSString *cover, NSString *title, void (^done)(BOOL)) {
  if (!NSThread.isMainThread) return false;
  return presentMedia(path,cover,title,^(BOOL completed){

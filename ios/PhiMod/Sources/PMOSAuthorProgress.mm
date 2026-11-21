@@ -5,8 +5,25 @@
 #include <cstdio>
 #include <fcntl.h>
 #include <mutex>
+#include <atomic>
 #include <sys/stat.h>
 #include <unistd.h>
+
+NSNotificationName const PMOSAuthorProgressChanged = @"PMOSAuthorProgressChanged";
+
+static std::atomic<uint64_t> authorRevision{0};
+uint64_t PMOSAuthorProgressRevision(void) { return authorRevision.load(); }
+
+static NSMutableDictionary<NSString *, NSNumber *> *chapterRevisions() {
+    static NSMutableDictionary *versions;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ versions = [NSMutableDictionary new]; });
+    return versions;
+}
+uint64_t PMOSChapterProgressRevision(NSString *chapter) {
+    NSDictionary *versions = chapterRevisions();
+    @synchronized (versions) { return [versions[chapter.precomposedStringWithCanonicalMapping] unsignedLongLongValue]; }
+}
 
 namespace {
 constexpr NSUInteger maxKeys = 512;
@@ -107,6 +124,7 @@ bool replaceValues(int directory, NSString *name, NSDictionary *values) {
 } // namespace
 
 @implementation PMOSAuthorProgress {
+    NSString *_chapter;
     NSString *_directory;
     NSString *_name;
     NSString *_lockName;
@@ -116,17 +134,23 @@ bool replaceValues(int directory, NSString *name, NSDictionary *values) {
     if (!(self = [super init])) return nil;
     NSString *stem = chapterStem(chapter);
     if (![root isKindOfClass:NSString.class] || !root.isAbsolutePath || !stem) return nil;
+    _chapter = [chapter copy];
     _directory = [root stringByAppendingPathComponent:@"author-progress"];
     _name = [stem stringByAppendingPathExtension:@"plist"];
     _lockName = [stem stringByAppendingPathExtension:@"lock"];
     return self;
 }
 
-- (BOOL)readKey:(NSString *)key value:(int *)value {
-    if (NSThread.isMainThread || !value || !validKey(key)) return NO;
+- (NSDictionary<NSString *, NSNumber *> *)snapshotValues {
+    if (NSThread.isMainThread) return nil;
     File directory(open(_directory.fileSystemRepresentation, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
-    if (directory.fd < 0 && errno != ENOENT) return NO;
-    NSDictionary *values = directory.fd < 0 ? @{} : readValues(directory.fd, _name);
+    if (directory.fd < 0) return errno == ENOENT ? @{} : nil;
+    return readValues(directory.fd, _name);
+}
+
+- (BOOL)readKey:(NSString *)key value:(int *)value {
+    if (!value || !validKey(key)) return NO;
+    NSDictionary *values = [self snapshotValues];
     if (!values) return NO;
     *value = [values[key] intValue];
     return YES;
@@ -134,6 +158,11 @@ bool replaceValues(int directory, NSString *name, NSDictionary *values) {
 
 - (BOOL)commitValues:(NSDictionary<NSString *, NSNumber *> *)values {
     if (NSThread.isMainThread || !validValues(values)) return NO;
+    return [self updateValues:^NSDictionary *(NSDictionary *unused){ return values; }];
+}
+
+- (BOOL)updateValues:(NSDictionary *(^)(NSDictionary *))update {
+    if (NSThread.isMainThread || !update) return NO;
     // Separate instances share this mutex. Acquire it before directory setup
     // and hold it through replacement, with the per-chapter file lock inside.
     static std::mutex commitMutex;
@@ -157,9 +186,19 @@ bool replaceValues(int directory, NSString *name, NSDictionary *values) {
     if (lock.fd < 0) return NO;
     NSDictionary *previous = readValues(directory.fd, _name);
     if (!previous) return NO;
+    NSDictionary *values = update(previous);
+    if (!values || !validValues(values)) return NO;
     if (!values.count) return YES;
     NSMutableDictionary *merged = [previous mutableCopy];
     [merged addEntriesFromDictionary:values];
-    return merged.count <= maxKeys && replaceValues(directory.fd, _name, merged);
+    if ([previous isEqualToDictionary:merged]) return YES;
+    if (merged.count > maxKeys || !replaceValues(directory.fd, _name, merged)) return NO;
+    NSMutableDictionary *versions = chapterRevisions();
+    @synchronized (versions) { versions[_chapter.precomposedStringWithCanonicalMapping] = @(++authorRevision); }
+    NSString *chapter = _chapter;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [NSNotificationCenter.defaultCenter postNotificationName:PMOSAuthorProgressChanged object:chapter];
+    });
+    return YES;
 }
 @end

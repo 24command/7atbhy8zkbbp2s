@@ -56,8 +56,8 @@ static void challengeIntroName(lua_State *L, char *name, size_t cap) {
     if (strcmp(ext, "gif") && strcmp(ext, "mp4")) luaL_error(L, "intro expects a GIF or MP4 basename");
 }
 
-static void challengeNextSong(lua_State *L, PMOSChallengeSong *song, int songs) {
-    if (!lua_istable(L, -1)) luaL_error(L, "nextSongs entries must be tables");
+static void challengeMember(lua_State *L, PMOSChallengeSong *song, int songs, const char *field) {
+    if (!lua_istable(L, -1)) luaL_error(L, "%s entries must be tables", field);
     song->song = challengeInteger(L, -1, "song", 1, songs);
     lua_pushnil(L);
     while (lua_next(L, -2)) {
@@ -66,9 +66,9 @@ static void challengeNextSong(lua_State *L, PMOSChallengeSong *song, int songs) 
         if (!strcmp(key, "difficulty")) {
             word(L, -1, song->difficulty, sizeof(song->difficulty));
             if (!presentationUTF8((const unsigned char *)song->difficulty))
-                luaL_error(L, "invalid UTF-8 in nextSongs difficulty");
+                luaL_error(L, "invalid UTF-8 in %s difficulty", field);
         } else if (strcmp(key, "song")) {
-            luaL_error(L, "unknown nextSongs field: %s", key);
+            luaL_error(L, "unknown %s field: %s", field, key);
         }
         lua_pop(L, 1);
     }
@@ -91,7 +91,7 @@ static void challengePresentation(lua_State *L, PMOSChallenge *c, int songs) {
     c->nextSongCount = presentationArray(L, "nextSongs", PMOSMaxChallengeNextSongs);
     for (int i = 0; i < c->nextSongCount; ++i) {
         lua_rawgeti(L, -1, i + 1);
-        challengeNextSong(L, &c->nextSongs[i], songs);
+        challengeMember(L, &c->nextSongs[i], songs, "nextSongs");
         lua_pop(L, 1);
     }
     lua_pop(L, 1);

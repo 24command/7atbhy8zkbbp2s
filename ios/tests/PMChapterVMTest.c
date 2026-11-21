@@ -276,6 +276,33 @@ static void testChallengeBindings(void) {
     assert(!run(CHALLENGE_FIXTURE "challenge(d); card(1,nil,nil,{challenge='gate',open=1})"));
 }
 
+static void testCoverPreview(void) {
+    TestStore store = {0};
+    PMOSProgress cb = {&store, storeRead, storeCommit};
+    const char *src = "progress.set('scratch',progress.get('scratch')+1);"
+        "if progress.get('scratch')==1 then chapterCover('base.png') end;"
+        "if progress.get('piece')==1 then chapterCover('piece.JPEG') end;"
+        "if challengeProgress('gate').cleared then chapterCover('clear.webp') end";
+    char cover[256];
+    assert(PMOSPreviewCover(src,strlen(src),1,cb,cover) && !strcmp(cover,"base.png"));
+    assert(store.commits==0 && !store.count);
+    PMOSProgressChange flags[]={{"piece",1},{"door.gate.clear",1}};
+    assert(storeCommit(&store,flags,1));
+    assert(PMOSPreviewCover(src,strlen(src),1,cb,cover) && !strcmp(cover,"piece.JPEG"));
+    assert(storeCommit(&store,flags+1,1));
+    assert(PMOSPreviewCover(src,strlen(src),1,cb,cover) && !strcmp(cover,"clear.webp"));
+    assert(store.commits==2 && store.count==2);
+    const char *bad[]={"chapterCover('../x.png')","chapterCover('x.mp4')","chapterCover('x.gif')",
+        "chapterCover('x.png','y.png')","chapterCover('a\\0.jpg')","chapterCover('x.png');oops()"};
+    for(size_t i=0;i<sizeof(bad)/sizeof(*bad);++i)
+        assert(!PMOSPreviewCover(bad[i],strlen(bad[i]),1,cb,cover) && !cover[0]);
+    assert(PMOSPreviewCover("return",6,1,cb,cover) && !cover[0]);
+    store.failRead=1;
+    assert(!PMOSPreviewCover(src,strlen(src),1,cb,cover) && !cover[0] && store.commits==2);
+    store.failRead=0; PMOSSession *live=startProgress(src,&store);
+    assert(live && store.commits==3 && !strcmp(p.chapterCover,"clear.webp")); PMOSStop(live);
+}
+
 static void testChallengeProgress(void) {
     TestStore store = {0};
     store.entries[0] = (PMOSProgressChange){"door.gate.clear", 1};
@@ -447,6 +474,29 @@ static void testChallengeValidation(void) {
     assert(!startProgress(source, &store) && strstr(p.error,"progress access limit"));
 }
 
+static void testSwitchAndCourse(void) {
+    TestStore store={0}; PMOSAction a;
+    const char *script="home('list'); listSwitchAfter('story.done');"
+        "hotspot{onClick=function() progress.set('story.done',1) end};"
+        "hotspot{onClick=function() progress.set('story.done',0); return {open=99} end}";
+    PMOSSession *s=startProgress(script,&store);
+    assert(s && p.listFirst && p.listSwitchHidden);
+    store.failCommit=1; assert(!PMOSClick(s,0,&a) && a.listSwitchHidden);
+    store.failCommit=0; assert(PMOSClick(s,0,&a) && !a.listSwitchHidden);
+    assert(!PMOSClick(s,1,&a) && !a.listSwitchHidden);
+    PMOSStop(s); s=startProgress(script,&store); assert(s && !p.listSwitchHidden); PMOSStop(s);
+    assert(run("home('list')") && p.listFirst && !p.listSwitchHidden);
+    assert(!run("listSwitchAfter('')"));
+    s=startProgress("challenge{id='c',secretCourse={{song=1},{song=2},{song=3}}};hotspot{onClick=function() chapterLife(0);return {challenge='c'} end}",&store);
+    assert(s && p.selectedLifeTier==1 && PMOSClick(s,0,&a) && a.selectedLifeTier==0 && a.challenge==1); PMOSStop(s);
+    assert(run("challenge{id='course',secretCourse={{song=2,difficulty='SP'},{song=1},{song=3}}}"));
+    PMOSChallenge *c=&p.challenges[0]; assert(c->courseCount==3 && c->lifeTier==-1 && c->song==2 && !strcmp(c->difficulty,"SP"));
+    assert(run("challenge{id='course',lifeTier=0,showDetail=false,secretCourse={{song=1},{song=2},{song=3},{song=1,difficulty='HD'}}}"));
+    assert(c->courseCount==4 && c->lifeTier==0 && !c->showDetail && !strcmp(c->course[3].difficulty,"HD"));
+    const char *bad[]={"secretCourse={}","secretCourse={{song=1},{song=1}}", "secretCourse={{song=1},{song=4},{song=2}}", "secretCourse={{song=1},{song=2},{song=1}},tiers={}","secretCourse={{song=1},{song=2},{song=1}},nextSongs={}", "secretCourse={{song=1},{song=2},{song=1}},lifeTier=-2", "song=1,lifeTier=1"};
+    for(size_t i=0;i<sizeof(bad)/sizeof(*bad);++i){char src[256];snprintf(src,sizeof(src),"challenge{id='bad',%s}",bad[i]);assert(!run(src));}
+}
+
 static void testProgressTransactions(void) {
     TestStore store = {0};
     PMOSSession *s = startProgress("card(progress.get('missing')+1);"
@@ -611,5 +661,5 @@ static void testReveal(void) {
     }
 }
 
-int main(void){testReveal();testPuzzleChallengeSequence();testChallengeCues();testChallengeBindings();testChallengeProgress();testChallengeActions();testChallengeValidation();testLayout();testPersistentClicks();testHandlerFailures();testCheckpoints();testProgressTransactions();testProgressValidation();testProgressBudget();testNodeTiming();testVisibility();testClickBudgets();assert(run("return {}")&&!p.listFirst&&!p.count);assert(run("home('list'); for i=1,song_count do card(i,'Title','Body') end"));assert(p.listFirst&&p.count==3&&p.cards[2].song==3&&!strcmp(p.cards[1].caption,"Body"));
+int main(void){testSwitchAndCourse();testCoverPreview();testReveal();testPuzzleChallengeSequence();testChallengeCues();testChallengeBindings();testChallengeProgress();testChallengeActions();testChallengeValidation();testLayout();testPersistentClicks();testHandlerFailures();testCheckpoints();testProgressTransactions();testProgressValidation();testProgressBudget();testNodeTiming();testVisibility();testClickBudgets();assert(run("return {}")&&!p.listFirst&&!p.count);assert(run("home('list'); for i=1,song_count do card(i,'Title','Body') end"));assert(p.listFirst&&p.count==3&&p.cards[2].song==3&&!strcmp(p.cards[1].caption,"Body"));
  assert(!run("card(4)")&&strstr(p.error,"os.lua:1:"));assert(!run("home('bad')"));assert(!run("while true do end")&&strstr(p.error,"limit"));assert(!run("local t='a';for i=1,30 do t=t..t end"));assert(!run("require('os')"));assert(!run("for i=1,129 do card(1) end"));assert(!run("card("));assert(!run("\033Lua"));assert(run("card(2)")&&p.count==1);puts("chapter OS Lua tests passed");return 0;}

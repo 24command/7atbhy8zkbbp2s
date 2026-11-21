@@ -13,6 +13,7 @@
 #include "PMIL2CPP.hpp"
 #include "PMOptions.hpp"
 #include "PMChallengeRun.hpp"
+#include "PMSecretCourseRuntime.hpp"
 #include "PMSceneUI.hpp"
 #include "PMHPLife.hpp"
 #include "PMChartModes.hpp"
@@ -239,7 +240,8 @@ void onAwake(P self,P mi){
   try{release(progressRoot);release(scoreRoot);attempt.reset();resetChartRegistration();judgeUpdateSeen=false;pmscene::settingsLeave(R(),"level-start");pmscene::clearRecovery(R());pmhp::clear(R());pmmodes::clear(R());pmpractice::clear(R());}catch(const std::exception&e){fault(e);}
    inResult=false;resultPresented=false;levelOverStarted=false;loadingMaskCleared=false;
  try{frozenOptions=PMReadOptions([[PMSettings shared] snapshot]);
-  if(!broken)prepareDoor(R(),self,frozenOptions);
+  if(pmsecretcourse::active())frozenOptions=phimod::Options{};
+  else if(!broken)prepareDoor(R(),self,frozenOptions);
   diagf("LevelControl.Awake options assisted=%d hp=%d hpMax=%.1f hpD=[%.1f,%.1f,%.1f,%.1f]",frozenOptions.assisted(),frozenOptions.hpEnabled,frozenOptions.hpMax,frozenOptions.hpDelta[0],frozenOptions.hpDelta[1],frozenOptions.hpDelta[2],frozenOptions.hpDelta[3]);if(!broken){pmhp::prepare(R(),self,frozenOptions);diagf("HP prepare ok active=%d normalized=%.3f",pmhp::active(),pmhp::normalized());pmmodes::prepare(R(),self,frozenOptions);pmpractice::prepare(R(),frozenOptions);diagf("Chart modes and practice prepare ok");}}catch(const std::exception&e){diagf("LevelControl.Awake prepare failed: %s",e.what());fault(e);}
  if(broken){pmstory::cancelLaunch();PMDoorCancelPending();}
  diagf("LevelControl.Awake calling original hpActive=%d",pmhp::active());
@@ -268,6 +270,7 @@ void onProgressStart(P self,P mi){
  diagf("ProgressControl.Start enter");
  try{pmpractice::begin(R(),self);diagf("Practice clock/pitch armed before ProgressControl.Start");}catch(const std::exception&e){diagf("Practice pre-start setup failed; original audio path retained: %s",e.what());try{pmpractice::clear(R());}catch(...){}}
  orig<VoidFn>(h::progressStart)(self,mi);
+ if(pmsecretcourse::active())try{pmsecretcourse::level(R(),self);}catch(const std::exception&e){diagf("Secret course entry: %s",e.what());pmsecretcourse::menu(R());}
  diagf("ProgressControl.Start original returned");
  try{begin(self);pmcontent::difficultyGameplayLabel(R(),self);}catch(const std::exception&e){fault(e);}
 }
@@ -438,6 +441,7 @@ void onProgressUpdate(P self,P mi){
  if(attempt && attempt->trackLost() && !levelOverStarted && self==progress())
   tickGameplay(R(),self,"HP failure progress");
  {StoryPauseScope pause(R(),self,false,pmstory::blocksPause);orig<VoidFn>(h::progressUpdate)(self,mi);}
+ if(pmsecretcourse::active())try{pmsecretcourse::progressFrame(R(),self);}catch(const std::exception&e){diagf("Secret course end flags: %s",e.what());}
  updateStoryPresentation(self);
  if(heartbeat)diagf("ProgressControl.Update original returned n=%llu",(unsigned long long)count);
  try{pmhp::loadVisuals(R(),self);}catch(const std::exception&e){diagf("HP visual poll failed: %s",e.what());}
@@ -568,15 +572,15 @@ P onResultInfo(P self,P mi){
  if(attempt&&attempt->options().noComboScore&&(applying()||inResult))try{float accuracy=0;int total=0;if(readAccuracy(self,accuracy,total)){float value=accuracy*10000.f;R().call(result,"set_Score",{"System.Single"},{&value});}}catch(const std::exception&e){lastError=std::string("No-combo result score: ")+e.what();}
  return result;
 }
-void onRecord(P self,P result,P mi){if(!guard.load())orig<void(*)(P,P,P)>(h::record)(self,result,mi);}
-void onSetRecord(P self,P id,P level,P record,P mi){if(!guard.load())orig<void(*)(P,P,P,P,P)>(h::setRecord)(self,id,level,record,mi);}
-void onRanking(P self,P mi){if(guard.load())return;try{pmcontent::ranking(R(),self,mi,orig<VoidFn>(h::ranking));}catch(const std::exception&e){diagf("Content ranking isolation: %s",e.what());}}
-void onDelete(P key,P mi){if(!guard.load())orig<VoidFn>(h::DeleteKey)(key,mi);}
-template<h::Index I>void saveInt(P key,int value,P mi){if(!guard.load())orig<void(*)(P,int,P)>(I)(key,value,mi);}
-template<h::Index I>void saveBool(P key,bool value,P mi){if(!guard.load())orig<void(*)(P,bool,P)>(I)(key,value,mi);}
-template<h::Index I>void saveFloat(P key,float value,P mi){if(!guard.load())orig<void(*)(P,float,P)>(I)(key,value,mi);}
-template<h::Index I>void saveString(P key,P value,P mi){if(!guard.load())orig<void(*)(P,P,P)>(I)(key,value,mi);}
-void onSaveDate(P key,uint64_t value,P mi){if(!guard.load())orig<void(*)(P,uint64_t,P)>(h::SaveDate)(key,value,mi);}
+void onRecord(P self,P result,P mi){if(!pmsecretcourse::active()&&!guard.load())orig<void(*)(P,P,P)>(h::record)(self,result,mi);}
+void onSetRecord(P self,P id,P level,P record,P mi){if(!pmsecretcourse::active()&&!guard.load())orig<void(*)(P,P,P,P,P)>(h::setRecord)(self,id,level,record,mi);}
+void onRanking(P self,P mi){if(pmsecretcourse::active()||guard.load())return;try{pmcontent::ranking(R(),self,mi,orig<VoidFn>(h::ranking));}catch(const std::exception&e){diagf("Content ranking isolation: %s",e.what());}}
+void onDelete(P key,P mi){if(!pmsecretcourse::active()&&!guard.load())orig<VoidFn>(h::DeleteKey)(key,mi);}
+template<h::Index I>void saveInt(P key,int value,P mi){if(!pmsecretcourse::active()&&!guard.load())orig<void(*)(P,int,P)>(I)(key,value,mi);}
+template<h::Index I>void saveBool(P key,bool value,P mi){if(!pmsecretcourse::active()&&!guard.load())orig<void(*)(P,bool,P)>(I)(key,value,mi);}
+template<h::Index I>void saveFloat(P key,float value,P mi){if(!pmsecretcourse::active()&&!guard.load())orig<void(*)(P,float,P)>(I)(key,value,mi);}
+template<h::Index I>void saveString(P key,P value,P mi){if(!pmsecretcourse::active()&&!guard.load())orig<void(*)(P,P,P)>(I)(key,value,mi);}
+void onSaveDate(P key,uint64_t value,P mi){if(!pmsecretcourse::active()&&!guard.load())orig<void(*)(P,uint64_t,P)>(h::SaveDate)(key,value,mi);}
 void renderPracticeResult(P self){
  auto &r=R();P gi=r.mainGame(),info=r.get<P>(gi,"levelStartInfo"),result=r.get<P>(gi,"levelResultInfo");
  if(!info||!result)throw std::runtime_error("Result data missing after LevelOver");
@@ -707,6 +711,7 @@ template<class F>bool contentBoundary(const char*stage,F&&work){
  return false;
 }
 void onChapterStart(P self,P mi){
+ if(pmsecretcourse::active())contentBoundary("Secret course return",[&]{pmsecretcourse::menu(R());});
  clearDoorPresentation();
  watchingDoorLaunch=false;
  pmstory::cancelLaunch();
@@ -842,6 +847,7 @@ void onMainlineApplyMapCover(P self,P mi){
 }
 
 void onSelector(P self,P mi){
+ if(pmsecretcourse::active())contentBoundary("Secret course selector return",[&]{pmsecretcourse::menu(R());});
  clearDoorPresentation();
  if(cancelIdleDoorLaunch(self))pmstory::cancelLaunch();
  if(PMChapterOSVisible())return;
@@ -881,7 +887,8 @@ bool onChallengeAdvance(P self,P mi){
 }
 void onChallengeResultStart(P self,P mi){
  clearDoorPresentation();
- auto&r=R();if(pmchallengeresults::start(r,self))return;
+ auto&r=R();if(pmsecretcourse::active())contentBoundary("Secret course result",[&]{pmsecretcourse::result(r);});
+ if(pmchallengeresults::start(r,self))return;
  orig<VoidFn>(h::challengeResultStart)(self,mi);pmchallengeresults::afterStart(r,self);
 }
 bool dispatchModButton(P self){
@@ -933,6 +940,7 @@ void onCheck(P self,int finger,P mi,h::Index i){
 void onCheckNote(P s,int f,P m){onCheck(s,f,m,h::checkNote);}
 void onCheckFlick(P s,int f,P m){onCheck(s,f,m,h::checkFlick);}
 }
+bool pmsecretcourse::backendReady(){return ready&&!broken;}
 @implementation PMHookBackend
 + (NSDictionary *)install {
  if(ready)return [self status];
@@ -1114,6 +1122,7 @@ void onCheckFlick(P s,int f,P m){onCheck(s,f,m,h::checkFlick);}
  return YES;
 }
 + (NSDictionary *)practiceCommand:(NSInteger)action {
+ if(pmsecretcourse::active())return @{@"ok":@NO,@"message":@"Native LIFE course owns this attempt"};
  if(!ready||broken||!rt)return @{ @"ok":@NO,@"message":@"Gameplay backend unavailable" };
  try{auto&r=R();auto options=PMReadOptions([[PMSettings shared] snapshot]);float position=[[[PMSettings shared] value:@"practicePosition"] floatValue];
   bool ok=action==6?pmpractice::updateRange(r,options):pmpractice::command(r,(int)action,options.playbackRate,position);

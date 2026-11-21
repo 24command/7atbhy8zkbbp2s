@@ -37,20 +37,24 @@ typedef struct {
     int song, failures, tierCount;
     PMOSChallengeState state;
     PMOSChallengeTier tiers[PMOSMaxChallengeTiers]; /* Increasing after, starting at zero. */
+    int courseCount, lifeTier; /* 3 visible songs, optional fourth; -1 follows the current chapter-local tier. */
+    PMOSChallengeSong course[4];
     int cueStart, cueCount;
     int introCount, showDetail, nextSongCount; /* showDetail defaults to 1. Zero starts play after intro. */
     char intro[PMOSMaxChallengeIntro][256]; /* Local GIF/MP4 basenames in playback order. */
     PMOSChallengeSong nextSongs[PMOSMaxChallengeNextSongs]; /* After each clear, in order. */
 } PMOSChallenge;
-typedef struct {int nodes,screens;double aspect;char names[PMOSMaxScreens][PMOSScreenNameSize];PMOSNode elements[PMOSMaxNodes];int listFirst,count; PMOSCard cards[128];char error[384];
+typedef struct {int nodes,screens;double aspect;char names[PMOSMaxScreens][PMOSScreenNameSize];PMOSNode elements[PMOSMaxNodes];int listFirst,count,listSwitchHidden,selectedLifeTier; PMOSCard cards[128];char error[384];
     int cueCount; PMOSChallengeCue cues[PMOSMaxChallengeCues];
     int challengeCount; PMOSChallenge challenges[PMOSMaxChallenges];
+    char chapterCover[256]; /* Last chapterCover(stillBasename) during declaration; empty = configured art. */
 } PMOSPage;
 typedef struct PMOSSession PMOSSession;
 typedef struct {int song, dest, element, visible; char error[384]; int checkpoint; char difficulty[96]; int challenge;
     /* A nonempty revealTitle tags a focus/popup. element is its resolved local
        target and song is the optional one-based native song (0 to resume only). */
     char revealTitle[256], revealText[1024];
+    int listSwitchHidden,selectedLifeTier;
 } PMOSAction;
 
 typedef struct { char key[PMOSProgressKeyMax + 1]; int value; } PMOSProgressChange;
@@ -70,6 +74,9 @@ typedef struct {
    Only stored progress is transactional. Lua closure state survives failed clicks.
    Callbacks are synchronous. Their key/batch arguments are borrowed for the call.
    Keep context valid until stop and do not reenter the session from callbacks. */
+/* Evaluate a declaration in isolation. Reads see staged writes, but the caller's
+   commit callback is never invoked. An absent/invalid cover yields an empty name. */
+int PMOSPreviewCover(const char *source, size_t len, int songs, PMOSProgress progress, char name[256]);
 PMOSSession *PMOSStartWithProgress(const char *source, size_t len, int songs,
                                   PMOSPage *page, PMOSProgress callbacks);
 

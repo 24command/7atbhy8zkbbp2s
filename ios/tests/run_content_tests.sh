@@ -12,8 +12,20 @@ done
 clang++ -std=c++17 -fobjc-arc -DPMDOOR_RUN_HOST_TEST -framework Foundation -framework CoreFoundation \
   "$ROOT/tests/PMDoorRunTest.mm" "$ROOT/PhiMod/Sources/PMDoorRun.mm" "$ROOT/PhiMod/Sources/PMOSAuthorProgress.mm" -o "$OUT/doorrun"
 "$OUT/doorrun"
-clang -std=c99 -O2 "$ROOT"/PhiMod/Vendor/lua54/*.c "$ROOT/PhiMod/Core/PMChapterVM.c" "$ROOT/tests/PMChapterVMTest.c" -o "$OUT/chaptervm"
-"$OUT/chaptervm"
+# Compile the C VM once for both the portable and Foundation host suites.
+(
+  cd "$OUT"
+  trap 'rm -f ./*.o ./chaptercover ./chapterlife' EXIT
+  clang -std=c99 -O2 -c "$ROOT"/PhiMod/Vendor/lua54/*.c "$ROOT/PhiMod/Core/PMChapterVM.c"
+  clang -std=c99 -O2 "$ROOT/tests/PMChapterVMTest.c" ./*.o -o chaptervm
+  ./chaptervm
+  clang -std=c99 -O2 "$ROOT/tests/PMChapterLifeTest.c" ./*.o -o chapterlife
+  ./chapterlife
+  clang++ -std=c++17 -fobjc-arc -DPMDOOR_RUN_HOST_TEST -framework Foundation -framework CoreFoundation \
+    "$ROOT/tests/PMChapterCoverTest.mm" "$ROOT/PhiMod/Sources/PMDoorRun.mm" \
+    "$ROOT/PhiMod/Sources/PMOSAuthorProgress.mm" ./*.o -o chaptercover
+  ./chaptercover
+)
 python3 "$ROOT/tests/run_chapter_puzzle.py" clang -O2
 python3 "$ROOT/tests/test_story_sequence.py"
 python3 "$ROOT/tests/test_story_native_start.py"

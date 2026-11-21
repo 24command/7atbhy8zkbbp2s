@@ -1,5 +1,6 @@
 #import "PMChapterOS.h"
 #import "PMDoorRun.h"
+#import "PMChapterSecretCourse.h"
 #import "PMStoryCueRun.h"
 #import "PMStorySequence.h"
 #import "PMStockIntroResolver.hpp"
@@ -50,7 +51,9 @@ static UIImage *thumb(NSString *path,NSInteger pixels){CGImageSourceRef src=CGIm
 @property(nonatomic,strong) UIImageView *art;
 @property(nonatomic,strong) NSDictionary *detail;
 @property(nonatomic,copy) NSString *chapterName;
-@property(nonatomic) BOOL opened;
+@property(nonatomic) BOOL opened, listSwitchHidden;
+@property(nonatomic,copy) BOOL (^leaveChapter)(void);
+@property(nonatomic,copy) PMStoryStartSong startListedSong;
 @property(nonatomic) BOOL ownsIntro;
 @property(nonatomic,strong) PMChapterCanvas *canvas;
 @property(nonatomic) CGFloat aspect;
@@ -123,9 +126,12 @@ static UIButton *control(NSString *title,id target,SEL action){UIButton *b=[UIBu
 }
 - (void)refresh{BOOL detail=self.detail!=nil;self.backgroundColor=self.opened?[UIColor colorWithWhite:.075 alpha:1]:UIColor.clearColor;
  self.canvas.hidden=!self.opened||detail;self.table.hidden=!self.opened||detail||self.canvas!=nil;self.heading.hidden=!self.opened||(!detail&&self.canvas!=nil);self.back.hidden=self.caption.hidden=self.art.hidden=self.choose.hidden=!self.opened||!detail;
- [self.choose setTitle:self.detail[@"challengeID"]?@"开始挑战":@"在普通选曲中选择" forState:UIControlStateNormal];self.heading.text=detail?self.detail[@"title"]:self.chapterName;self.caption.text=self.detail[@"caption"];self.caption.hidden=self.caption.hidden||self.speech!=nil;self.speech.hidden=!self.opened||!detail;[self.toggle setTitle:self.opened?@"普通选曲":@"OS" forState:UIControlStateNormal];[self setNeedsLayout];}
-- (void)toggleOS{[self.speech removeFromSuperview];self.speech=nil;self.opened=!self.opened;self.detail=nil;self.art.image=nil;[self refresh];}
-- (void)closeDetail{[self.speech removeFromSuperview];self.speech=nil;self.detail=nil;self.art.image=nil;[self refresh];}
+ self.toggle.hidden=self.listSwitchHidden;
+ self.back.hidden=!self.opened||(!detail&&!self.listSwitchHidden);
+ self.back.accessibilityLabel=detail?@"返回章节 OS":@"返回章节选择";
+ [self.choose setTitle:self.detail[@"challengeID"]?@"开始挑战":(self.listSwitchHidden?@"开始游玩":@"在普通选曲中选择") forState:UIControlStateNormal];self.heading.text=detail?self.detail[@"title"]:self.chapterName;self.caption.text=self.detail[@"caption"];self.caption.hidden=self.caption.hidden||self.speech!=nil;self.speech.hidden=!self.opened||!detail;[self.toggle setTitle:self.opened?@"普通选曲":@"OS" forState:UIControlStateNormal];[self setNeedsLayout];}
+- (void)toggleOS{if(self.listSwitchHidden)return;[self.speech removeFromSuperview];self.speech=nil;self.opened=!self.opened;self.detail=nil;self.art.image=nil;[self refresh];}
+- (void)closeDetail{if(!self.detail&&self.listSwitchHidden){if(self.leaveChapter&&self.leaveChapter())PMCloseChapterOS();return;}[self.speech removeFromSuperview];self.speech=nil;self.detail=nil;self.art.image=nil;[self refresh];}
 - (void)interruptForCheckpoint:(NSDictionary*)record relaunch:(BOOL)relaunch resume:(BOOL (^)(void))resume {
  NSError *error=nil;
  if(relaunch&&!PMOSSaveCheckpoint(record,&error)){PMDiagnosticsWrite(error.localizedDescription.UTF8String?:"Chapter OS checkpoint write failed");return;}
@@ -133,16 +139,16 @@ static UIButton *control(NSString *title,id target,SEL action){UIButton *b=[UIBu
  self.canvas.hidden=YES;[self addSubview:panel];
  UILabel *message=[UILabel new];message.textColor=UIColor.whiteColor;message.numberOfLines=0;message.textAlignment=NSTextAlignmentCenter;
  message.text=relaunch?@"章节连接已中断。重新打开游戏可继续。":@"章节连接已中断。";
- UIButton *button=[UIButton buttonWithType:UIButtonTypeSystem];[button setTitle:relaunch?@"暂时返回普通选曲":@"重新连接" forState:UIControlStateNormal];button.tintColor=UIColor.whiteColor;
+ UIButton *button=[UIButton buttonWithType:UIButtonTypeSystem];[button setTitle:relaunch?(self.listSwitchHidden?@"返回章节选择":@"暂时返回普通选曲"):@"重新连接" forState:UIControlStateNormal];button.tintColor=UIColor.whiteColor;
  UIStackView *stack=[[UIStackView alloc]initWithArrangedSubviews:@[message,button]];stack.axis=UILayoutConstraintAxisVertical;stack.spacing=16;stack.translatesAutoresizingMaskIntoConstraints=NO;[panel addSubview:stack];
  [NSLayoutConstraint activateConstraints:@[[stack.centerXAnchor constraintEqualToAnchor:panel.centerXAnchor],[stack.centerYAnchor constraintEqualToAnchor:panel.centerYAnchor],[stack.widthAnchor constraintLessThanOrEqualToAnchor:panel.widthAnchor multiplier:.9]]];
  __weak UIView *weakPanel=panel;__weak PMOSView *weakOwner=self;
  [button addAction:[UIAction actionWithHandler:^(UIAction *action){PMOSView *owner=weakOwner;if(!owner||owner!=active)return;
-  [weakPanel removeFromSuperview];[owner refresh];if(relaunch){[owner toggleOS];return;}
+  [weakPanel removeFromSuperview];[owner refresh];if(relaunch){if(owner.listSwitchHidden){if(owner.leaveChapter&&owner.leaveChapter())PMCloseChapterOS();}else [owner toggleOS];return;}
   if(!resume()&&owner.opened){PMDiagnosticsWrite("Chapter OS session checkpoint target unavailable");[owner toggleOS];}
  }] forControlEvents:UIControlEventTouchUpInside];
 }
-- (void)chooseSong{if(self.detail[@"challengeID"]){if(!self.startChallenge(self.detail)){[self.choose setTitle:@"当前无法挑战" forState:UIControlStateNormal];}return;}if(self.selectSong&&self.selectSong(self.detail[@"group"]))[self toggleOS];else self.caption.text=@"当前选曲列表中没有此曲目。";}
+- (void)chooseSong{if(self.detail[@"challengeID"]){if(!self.startChallenge(self.detail)){[self.choose setTitle:@"当前无法挑战" forState:UIControlStateNormal];}return;}if(self.listSwitchHidden){if(!self.startListedSong(self.detail[@"installedID"],nil,nil))[self.choose setTitle:@"当前无法游玩" forState:UIControlStateNormal];return;}if(self.selectSong&&self.selectSong(self.detail[@"group"]))[self toggleOS];else self.caption.text=@"当前选曲列表中没有此曲目。";}
 - (NSInteger)collectionView:(UICollectionView*)v numberOfItemsInSection:(NSInteger)s{return self.cards.count;}
 - (CGSize)collectionView:(UICollectionView*)v layout:(UICollectionViewLayout*)layout sizeForItemAtIndexPath:(NSIndexPath*)p{CGFloat w=MIN(v.bounds.size.width*.62,MIN(420.,v.bounds.size.height*1.7));return CGSizeMake(MAX(1,w),MAX(1,w/1.7));}
 - (UICollectionViewCell*)collectionView:(UICollectionView*)v cellForItemAtIndexPath:(NSIndexPath*)p{PMOSCell *cell=[v dequeueReusableCellWithReuseIdentifier:@"os" forIndexPath:p];NSDictionary *row=self.cards[p.item];BOOL locked=[row[@"lockedChallenge"] boolValue];cell.contentView.alpha=locked?.55:1;cell.accessibilityTraits=UIAccessibilityTraitButton|(locked?UIAccessibilityTraitNotEnabled:0);cell.name.text=row[@"title"];cell.accessibilityLabel=cell.name.text;NSString *path=row[@"art"];cell.path=path;cell.image.image=path?[self.thumbs objectForKey:path]:nil;
@@ -175,7 +181,7 @@ static UIButton *control(NSString *title,id target,SEL action){UIButton *b=[UIBu
 @end
 BOOL PMChapterOSVisible(){return active.opened;}
 void PMCloseChapterOS(){++generation;PMOSView *previous=active;active=nil;if(previous)[coverQueue() cancelAllOperations];if(previous.ownsIntro)PMCancelUnlockMedia();[previous removeFromSuperview];}
-void PMOpenChapterOS(NSString *chapter,BOOL (^selectSong)(NSString *),BOOL (^startSong)(NSString *,NSString *,BOOL (^)(NSString *,int,NSString *))){
+void PMOpenChapterOS(NSString *chapter,BOOL (^selectSong)(NSString *),BOOL (^leaveChapter)(void),BOOL (^startSong)(NSString *,NSString *,BOOL (^)(NSString *,int,NSString *))){
  if(PMStorySequenceSelectorReady(chapter,startSong))return;
  NSDictionary *resume=[bootTarget[@"chapter"] isEqual:chapter]?bootTarget:nil;
  bootTarget=nil;
@@ -195,7 +201,7 @@ void PMOpenChapterOS(NSString *chapter,BOOL (^selectSong)(NSString *),BOOL (^sta
  NSMutableDictionary *songs=[NSMutableDictionary dictionary];for(NSDictionary *song in db[@"songs"])songs[song[@"id"]]=song;
  NSString *name=chapter;for(NSDictionary *c in db[@"chapters"])if([c[@"id"] isEqual:chapter]){name=c[@"name"];break;}
  NSMutableDictionary *bySong=[NSMutableDictionary dictionary];
- for(NSString *sid in order){NSDictionary *song=songs[sid];NSMutableDictionary *row=[@{@"title":song[@"title"]?:sid,@"group":[song[@"groupId"] length]?song[@"groupId"]:sid,@"caption":song[@"composer"]?:@""} mutableCopy];if(song&&![song[@"unlock"][@"enabled"] boolValue])row[@"art"]=[[store asset:sid] stringByAppendingPathComponent:@"image.png"];bySong[sid]=row;}
+ for(NSString *sid in order){NSDictionary *song=songs[sid];NSMutableDictionary *row=[@{@"installedID":sid,@"title":song[@"title"]?:sid,@"group":[song[@"groupId"] length]?song[@"groupId"]:sid,@"caption":song[@"composer"]?:@""} mutableCopy];if(song&&![song[@"unlock"][@"enabled"] boolValue])row[@"art"]=[[store asset:sid] stringByAppendingPathComponent:@"image.png"];bySong[sid]=row;}
  NSMutableArray *cards=[NSMutableArray array];NSMutableSet *overridden=[NSMutableSet set];
  for(NSUInteger i=0,n=plan->count?(NSUInteger)plan->count:order.count;i<n;i++){
   const PMOSCard *c=plan->count?&plan->cards[i]:nullptr;NSString *sid=order[c?c->song-1:i];NSMutableDictionary *row=[bySong[sid] mutableCopy];
@@ -207,8 +213,19 @@ void PMOpenChapterOS(NSString *chapter,BOOL (^selectSong)(NSString *),BOOL (^sta
   const PMOSChallenge &challenge=plan->challenges[i];const PMOSChallengeTier *tier=&challenge.tiers[0];
   for(int j=1;j<challenge.tierCount && challenge.tiers[j].after<=challenge.failures;++j)tier=&challenge.tiers[j];
   NSString *sid=order[challenge.song-1];NSMutableDictionary *row=[bySong[sid] mutableCopy];
-  row[@"challengeID"]=[NSString stringWithUTF8String:challenge.id];row[@"sid"]=sid;row[@"hp"]=@(tier->hp);
-  row[@"delta"]=@[@(tier->perfect),@(tier->good),@(tier->bad),@(tier->miss)];
+  row[@"challengeID"]=[NSString stringWithUTF8String:challenge.id];row[@"sid"]=sid;
+  if(challenge.courseCount){
+   NSMutableArray *members=[NSMutableArray arrayWithCapacity:challenge.courseCount];
+   for(int j=0;j<challenge.courseCount;++j){
+    const auto &member=challenge.course[j];
+    NSMutableDictionary *m=[@{@"songID":order[member.song-1]} mutableCopy];
+    if(member.difficulty[0])m[@"difficulty"]=[NSString stringWithUTF8String:member.difficulty];
+    [members addObject:m];
+   }
+   row[@"secretCourse"]=members;row[@"lifeTier"]=@(challenge.lifeTier);
+  }else{
+   row[@"hp"]=@(tier->hp);row[@"delta"]=@[@(tier->perfect),@(tier->good),@(tier->bad),@(tier->miss)];
+  }
   if(challenge.difficulty[0])row[@"difficulty"]=[NSString stringWithUTF8String:challenge.difficulty];
   row[@"showDetail"]=@(challenge.showDetail!=0);
   NSMutableArray *intro=[NSMutableArray array];
@@ -264,9 +281,12 @@ void PMOpenChapterOS(NSString *chapter,BOOL (^selectSong)(NSString *),BOOL (^sta
   if(n.src[0]){NSString *path=PMOSArtPath(chapterDir,[NSString stringWithUTF8String:n.src]);if(!path||![[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil][NSFileType] isEqual:NSFileTypeRegular]){if(resume)PMOSClearCheckpoint(resume[@"token"]);PMDiagnosticsWrite([[NSString stringWithFormat:@"Chapter OS %@: missing or invalid image %s",chapter,n.src] UTF8String]);return;}model[@"path"]=path;}
   [nodes addObject:model];
  }
- CGFloat aspect=plan->aspect;BOOL opened=!plan->listFirst;dispatch_async(dispatch_get_main_queue(),^{if(token!=generation)return;UIView *host=hostView();if(!host)return;
- active=[[PMOSView alloc]initWithFrame:host.bounds];active.cards=cards;active.chapterName=name;active.selectSong=selectSong;
- active.startChallenge=^BOOL(NSDictionary *row){return startSong(row[@"sid"],row[@"difficulty"],^BOOL(NSString *group,int slot,NSString *chart){
+ __block NSInteger selectedLifeTier=plan->selectedLifeTier;
+ CGFloat aspect=plan->aspect;BOOL switchHidden=plan->listSwitchHidden!=0;BOOL opened=switchHidden||!plan->listFirst;dispatch_async(dispatch_get_main_queue(),^{if(token!=generation)return;UIView *host=hostView();if(!host)return;
+ active=[[PMOSView alloc]initWithFrame:host.bounds];active.cards=cards;active.chapterName=name;active.selectSong=selectSong;active.leaveChapter=leaveChapter;active.startListedSong=startSong;active.listSwitchHidden=switchHidden;
+ active.startChallenge=^BOOL(NSDictionary *row){
+  if(row[@"secretCourse"]){NSInteger tier=[row[@"lifeTier"] integerValue];return PMChapterStartSecretCourse(chapter,row[@"challengeID"],row[@"secretCourse"],tier<0?selectedLifeTier:tier);}
+  return startSong(row[@"sid"],row[@"difficulty"],^BOOL(NSString *group,int slot,NSString *chart){
   if(!PMDoorArm(chapter,row[@"challengeID"],group,slot,chart,[row[@"hp"] doubleValue],row[@"delta"]))return NO;
   if(!PMStorySequenceArm(chapter,row[@"nextSongs"])){PMDoorCancelPending();return NO;}
   PMStoryCueArm(row[@"cues"]);
@@ -274,12 +294,14 @@ void PMOpenChapterOS(NSString *chapter,BOOL (^selectSong)(NSString *),BOOL (^sta
  });};active.opened=opened;if(nodes.count){active.aspect=aspect;PMChapterCanvas *canvas=[PMChapterCanvas new];canvas.clipsToBounds=YES;canvas.nodes=nodes;__weak PMOSView *owner=active;canvas.openSong=^(NSDictionary *song){[owner showSong:song];};__weak PMChapterCanvas *weakCanvas=canvas;
   dispatch_queue_t events=dispatch_queue_create("PhiMod.ChapterOS.events",DISPATCH_QUEUE_SERIAL);
   canvas.runHandler=^(NSInteger index){PMChapterCanvas *v=weakCanvas;if(!v||v.pending)return;v.pending=YES;NSUInteger visit=v.visit, revealEpoch=v.revealEpoch;
-   dispatch_async(events,^{PMOSAction result={};BOOL ok=PMOSClick(session.get(),(int)index,&result);NSString *why=ok?nil:[NSString stringWithUTF8String:result.error];NSInteger song=result.song,page=result.dest,element=result.element;BOOL visible=result.visible;int checkpoint=result.checkpoint,challengeIndex=result.challenge;
+   dispatch_async(events,^{PMOSAction result={};BOOL ok=PMOSClick(session.get(),(int)index,&result);NSString *why=ok?nil:[NSString stringWithUTF8String:result.error];NSInteger song=result.song,page=result.dest,element=result.element;BOOL visible=result.visible;int checkpoint=result.checkpoint,challengeIndex=result.challenge;BOOL hideSwitch=result.listSwitchHidden!=0;NSInteger nextLifeTier=result.selectedLifeTier;
     NSString *revealTitle = result.revealTitle[0] ? [NSString stringWithUTF8String:result.revealTitle] : nil;
     NSString *revealText = revealTitle ? [NSString stringWithUTF8String:result.revealText] : nil;
     NSString *difficulty=result.difficulty[0]?[NSString stringWithUTF8String:result.difficulty]:nil;
     dispatch_async(dispatch_get_main_queue(),^{PMChapterCanvas *view=weakCanvas;if(!view||active!=owner||generation!=token||view.visit!=visit)return;view.pending=NO;
-     if(!ok){PMDiagnosticsWrite([[NSString stringWithFormat:@"Chapter OS click %@: %@",chapter,why] UTF8String]);PMCloseChapterOS();return;}
+     if(!ok){PMDiagnosticsWrite([[NSString stringWithFormat:@"Chapter OS click %@: %@",chapter,why] UTF8String]);if(!owner.listSwitchHidden)PMCloseChapterOS();return;}
+     selectedLifeTier=nextLifeTier;
+     if(owner.listSwitchHidden!=hideSwitch){owner.listSwitchHidden=hideSwitch;[owner refresh];}
      if (revealTitle) {
       PMOSView *host = owner;
       if (!host || !view.window || view.hidden || view.reveal || view.revealEpoch != revealEpoch ||

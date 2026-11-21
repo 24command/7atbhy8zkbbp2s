@@ -80,6 +80,31 @@ int main() {
             PMDoorFinish(NO);
         }
         expectProgress(1 + replays, 1);
+        // An ordinary door never owns the chapter LIFE ladder. Verify course
+        // outcomes change a single revision even when all three keys change.
+        uint64_t revision=PMOSAuthorProgressRevision();
+        PMDoorRecordCourseOutcome(@"chapter",@"course",1,NO);
+        PMDoorProgressBarrier();CHECK(PMOSAuthorProgressRevision()==revision+1);
+        std::thread([&]{ @autoreleasepool {
+            auto store=[[PMOSAuthorProgress alloc]initWithRoot:testRoot chapter:@"chapter"];
+            NSDictionary *v=[store snapshotValues];
+            CHECK([v[@"life.ceiling"] intValue]==2 && [v[@"life.choice"] intValue]==3);
+            CHECK([v[@"door.course.fail"] intValue]==1 && !v[@"door.course.clear"]);
+            // User changed the selection since launch. A result on tier 2
+            // must use that launch tier, while preserving a valid lower choice.
+            CHECK([store commitValues:@{@"life.choice":@1}]);
+        }}).join();
+        revision=PMOSAuthorProgressRevision();
+        PMDoorRecordCourseOutcome(@"chapter",@"course",2,YES);
+        PMDoorProgressBarrier();CHECK(PMOSAuthorProgressRevision()==revision+1);
+        std::thread([&]{ @autoreleasepool {
+            auto store=[[PMOSAuthorProgress alloc]initWithRoot:testRoot chapter:@"chapter"];
+            NSDictionary *v=[store snapshotValues];
+            CHECK([v[@"life.ceiling"] intValue]==1 && [v[@"life.choice"] intValue]==1);
+            CHECK([v[@"door.course.clear"] intValue]==1 && [v[@"door.course.fail"] intValue]==1);
+            auto other=[[PMOSAuthorProgress alloc]initWithRoot:testRoot chapter:@"other"];
+            CHECK([other snapshotValues].count==0);
+        }}).join();
         CHECK([NSFileManager.defaultManager removeItemAtPath:testRoot error:nullptr]);
     }
     std::puts("door run lifecycle tests passed");

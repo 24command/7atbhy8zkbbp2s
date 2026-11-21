@@ -17,8 +17,12 @@
 #import "PMContentStore.h"
 #import "PMChapterOS.h"
 #import "PMDoorRun.h"
+#import "PMChapterSecretCourse.h"
+#include "PMSecretCourseRuntime.hpp"
+#include "PMChallengeRun.hpp"
 #import "PMStorySequence.h"
 #import "PMCoverImage.h"
+#import "PMChapterCover.h"
 #import <ImageIO/ImageIO.h>
 #import "PMChapterEditing.h"
 #import "PMChartConvert.h"
@@ -295,10 +299,24 @@ void applyCachedChapterCover(Runtime&r,P card,const char*codeField,const char*lo
 }
 void syncChapterCoverFallbacks(Runtime&r){P selector=chapterSelectorRoot?r.gchandle_get_target(chapterSelectorRoot):nullptr;if(!r.alive(selector))return;P cards=r.get<P>(selector,"_chapterInfos");for(uintptr_t i=0;cards&&i<r.array_length(cards);++i){P card=r.arrayAt(cards,(int)i);if(r.alive(card)){applyCachedChapterCover(r,card,"coverAssetCode","cover");applyCachedChapterCover(r,card,"coverBlurAssetCode","coverBlur");}}}
 }
+// A completion only presents a resolved name. It never invokes the preview reader.
+static NSUInteger coverVisit;
+static void presentChapterCover(NSString *chapter, NSString *name, NSUInteger visit, NSUInteger revision);
+static NSString *chapterCoverVariant(Runtime &r, NSString *id, NSDictionary *db) {
+ PMContentStore *store=PMContentStore.shared;
+ NSUInteger revision=store.revision, visit=coverVisit;
+ NSString *name=nil;
+ if([id hasPrefix:@"pm_"]) {
+  name=pmchaptercover::preview(store.root,[store asset:id],id,(int)PMChapterSongIDs(db,nil,id).count,revision,^(NSString *resolved){
+   if(resolved) presentChapterCover(id,resolved,visit,revision);
+  });
+ }
+ return pmchaptercover::variant(name ?: pmunlock::coverPath(r,id).lastPathComponent, name != nil);
+}
 // Match Android prepareChapterCards: clone before hiding the active template,
 // then publish the ordered ChapterInfo array before native Start wires buttons.
 static void releaseSelectorLoading(Runtime &r, bool finishSelected);
-void chapterPrepare(Runtime&r,P self){releaseSelectorLoading(r,false);for(auto&entry:chapterCoverFits)r.gchandle_free(entry.second.image);chapterCoverFits.clear();
+void chapterPrepare(Runtime&r,P self){++coverVisit;releaseSelectorLoading(r,false);for(auto&entry:chapterCoverFits)r.gchandle_free(entry.second.image);chapterCoverFits.clear();
  if(playing)throw std::runtime_error("Chapter prepare during gameplay");
  capture(r);if(!baseline)throw std::runtime_error("Chapter library is not ready");hiddenChapterCards=0;
  if(applied!=PMContentStore.shared.revision||appliedMainline!=PMSettingBool("mainlineUnlock"))apply(r);
@@ -323,8 +341,9 @@ void chapterPrepare(Runtime&r,P self){releaseSelectorLoading(r,false);for(auto&e
    r.put(card,"songInfo",info);r.put(card,"unlockInfo",r.get<P>(nativeChapter,"unlockInfo"));
    r.text(r.get<P>(card,"title"),r.string(r.get<P>(info,"title")).UTF8String);
    r.text(r.get<P>(card,"subTitle"),r.string(r.get<P>(info,"subTitle")).UTF8String);
-   NSString*imageKey=[NSString stringWithFormat:@"PM/%@/image@%lu",id,(unsigned long)applied];
-   NSString*blurKey=[NSString stringWithFormat:@"PM/%@/chapterBlur@%lu",id,(unsigned long)applied];
+   NSString *variant=chapterCoverVariant(r,id,db);
+   NSString*imageKey=[NSString stringWithFormat:@"PM/%@/image@%lu%@",id,(unsigned long)applied,variant];
+   NSString*blurKey=[NSString stringWithFormat:@"PM/%@/chapterBlur@%lu%@",id,(unsigned long)applied,variant];
    r.put(card,"coverAssetCode",r.managedString(imageKey));r.put(card,"coverBlurAssetCode",r.managedString(blurKey));
    bool yes=true;r.call(clone,"SetActive",{"System.Boolean"},{&yes});
    P cover=r.get<P>(card,"cover"),blur=r.get<P>(card,"coverBlur");
@@ -409,23 +428,77 @@ static void correctChapterRecordCounts(Runtime &r, P selector, P cards) {
   adjust("clearSongNum",total.clear); adjust("fullComboSongNum",total.fc); adjust("phiSongNum",total.phi);
  }
 }
-void chapterReady(Runtime&r,P self){
- P cards=r.get<P>(self,"_chapterInfos");
- for(uintptr_t i=0;cards&&i<r.array_length(cards);++i){P card=r.arrayAt(cards,(int)i);NSString*id=r.string(r.get<P>(card,"chapterCode"));if(![id hasPrefix:@"pm_"]&&![NSFileManager.defaultManager fileExistsAtPath:[[PMContentStore.shared coverFolder:id]stringByAppendingPathComponent:@"image.png"]])continue;
-  P chapter=r.call(r.mainGame(),"GetChapterWithCode",{"System.String"},{r.managedString(id)});if(!chapter)continue;
-  P info=r.get<P>(chapter,"songInfo");NSString*variant=pmunlock::coverPath(r,id).lastPathComponent;NSString*imageKey=[NSString stringWithFormat:@"PM/%@/image@%lu_%@",id,(unsigned long)applied,variant];NSString*blurKey=[NSString stringWithFormat:@"PM/%@/chapterBlur@%lu_%@",id,(unsigned long)applied,variant];
+static void applyChapterCoverVariant(Runtime &r,P self,P card,NSString *id,NSString *variant) {
+  NSString*imageKey=[NSString stringWithFormat:@"PM/%@/image@%lu%@",id,(unsigned long)applied,variant];NSString*blurKey=[NSString stringWithFormat:@"PM/%@/chapterBlur@%lu%@",id,(unsigned long)applied,variant];
   P cover=r.get<P>(card,"cover"),blur=r.get<P>(card,"coverBlur");
   r.put(card,"coverAssetCode",r.managedString(imageKey));r.put(card,"coverBlurAssetCode",r.managedString(blurKey));
   if(r.alive(cover)){
    NSString*current=r.string(r.call(cover,"get_Code"));
    if(![current isEqualToString:imageKey]){
     r.call(cover,"CheckInitialized");
+    r.call(cover,"SetLowResImage",{"System.String"},{r.managedString(blurKey)});
     if(r.get<bool>(cover,"loadedImage")){float duration=std::clamp(r.get<float>(self,"animationTime"),.15f,.6f);r.call(cover,"SetImageWithTransition",{"System.String","System.Single"},{r.managedString(imageKey),&duration});}
-    else{r.call(cover,"SetLowResImage",{"System.String"},{r.managedString(blurKey)});r.call(cover,"set_Code",{"System.String"},{r.managedString(imageKey)});}
+    else{r.call(cover,"set_Code",{"System.String"},{r.managedString(imageKey)});}
     log([NSString stringWithFormat:@"Content chapter cover requested: %@ lowres=%@ full=%@",id,blurKey,imageKey]);
    }
   }
   if(r.alive(blur)&&![r.string(r.call(blur,"get_Code"))isEqualToString:blurKey])r.call(blur,"set_Code",{"System.String"},{r.managedString(blurKey)});
+}
+static void bindChapterCover(Runtime &r,P self,P card,NSString *id,NSDictionary *db) {
+ applyChapterCoverVariant(r,self,card,id,chapterCoverVariant(r,id,db));
+}
+static void syncChapterBackground(Runtime &r,P self,P cards) {
+ // Native Start can select a background before the replacement keys are installed.
+ int selected=r.get<int>(self,"_nowChapterIndex"),active=r.get<int>(self,"_nowBackgroundIndex");
+ P backgrounds=r.get<P>(self,"background");
+ if(cards&&selected>=0&&(uintptr_t)selected<r.array_length(cards)&&backgrounds&&active>=0&&(uintptr_t)active<r.array_length(backgrounds)){
+  P card=r.arrayAt(cards,selected),loader=r.arrayAt(backgrounds,active);
+  NSString*key=r.string(r.get<P>(card,"coverBlurAssetCode"));
+  if([key hasPrefix:@"PM/"]&&r.alive(loader)&&![r.string(r.call(loader,"get_Code"))isEqualToString:key])
+   r.call(loader,"set_Code",{"System.String"},{r.managedString(key)});
+ }
+}
+static void presentChapterCover(NSString *chapter, NSString *name, NSUInteger visit, NSUInteger revision) {
+ if(visit!=coverVisit || PMContentStore.shared.revision!=revision || !runtime || playing || !chapterSelectorRoot) return;
+ try {
+  Runtime &r=*runtime; P self=target(r,chapterSelectorRoot); if(!r.alive(self))return;
+  P cards=r.get<P>(self,"_chapterInfos");
+  for(uintptr_t i=0;cards && i<r.array_length(cards);++i){
+   P card=r.arrayAt(cards,(int)i); if(!r.alive(card) || ![r.string(r.get<P>(card,"chapterCode")) isEqual:chapter])continue;
+   applyChapterCoverVariant(r,self,card,chapter,pmchaptercover::variant(name,true));
+   syncChapterBackground(r,self,cards);
+   applyCachedChapterCover(r,card,"coverAssetCode","cover");
+   applyCachedChapterCover(r,card,"coverBlurAssetCode","coverBlur");
+   break;
+  }
+ } catch(const std::exception &e){log([NSString stringWithFormat:@"Chapter cover presentation failed: %s",e.what()]);}
+}
+static void observeChapterCoverChanges() {
+ static dispatch_once_t once;
+ dispatch_once(&once, ^{
+  [NSNotificationCenter.defaultCenter addObserverForName:PMOSAuthorProgressChanged object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note){
+   if (!runtime || playing || !chapterSelectorRoot) return;
+   try {
+    Runtime &r=*runtime; P self=target(r,chapterSelectorRoot); if (!r.alive(self)) return;
+    P cards=r.get<P>(self,"_chapterInfos");
+    for(uintptr_t i=0;cards && i<r.array_length(cards);++i){
+     P card=r.arrayAt(cards,(int)i); if(!r.alive(card))continue;
+     NSString *id=r.string(r.get<P>(card,"chapterCode")); if(![id isEqual:note.object])continue;
+     bindChapterCover(r,self,card,id,[PMContentStore.shared snapshot]);
+     syncChapterBackground(r,self,cards); syncChapterCoverFallbacks(r); break;
+    }
+   } catch(const std::exception &e){log([NSString stringWithFormat:@"Chapter cover refresh failed: %s",e.what()]);}
+  }];
+ });
+}
+void chapterReady(Runtime&r,P self){
+ observeChapterCoverChanges();
+ NSDictionary *db=[PMContentStore.shared snapshot];
+ P cards=r.get<P>(self,"_chapterInfos");
+ for(uintptr_t i=0;cards&&i<r.array_length(cards);++i){P card=r.arrayAt(cards,(int)i);NSString*id=r.string(r.get<P>(card,"chapterCode"));if(![id hasPrefix:@"pm_"]&&![NSFileManager.defaultManager fileExistsAtPath:[[PMContentStore.shared coverFolder:id]stringByAppendingPathComponent:@"image.png"]])continue;
+  P chapter=r.call(r.mainGame(),"GetChapterWithCode",{"System.String"},{r.managedString(id)});if(!chapter)continue;
+  P info=r.get<P>(chapter,"songInfo");
+  bindChapterCover(r,self,card,id,db);
   if([id hasPrefix:@"pm_"]){bool no=false;r.call(r.get<P>(card,"locked"),"SetActive",{"System.Boolean"},{&no});}
   if([id hasPrefix:@"pm_"]){bool hasSongs=r.count(r.get<P>(info,"songs"))>0;r.call(r.get<P>(card,"play"),"set_interactable",{"System.Boolean"},{&hasSongs});}
   log([NSString stringWithFormat:@"Content custom chapter cover primed: %@ key=%@",id,imageKey]);
@@ -439,15 +512,7 @@ void chapterReady(Runtime&r,P self){
   }
   if(!gaps.empty()){std::sort(gaps.begin(),gaps.end());float step=gaps[gaps.size()/2];V2 size=r.unbox<V2>(r.call(panel,"get_sizeDelta"));size.x=std::max(step,size.x-hiddenChapterCards*step);r.call(panel,"set_sizeDelta",{"UnityEngine.Vector2"},{&size});}
  }
- // Native Start can select a background before the replacement keys are installed.
- int selected=r.get<int>(self,"_nowChapterIndex"),active=r.get<int>(self,"_nowBackgroundIndex");
- P backgrounds=r.get<P>(self,"background");
- if(cards&&selected>=0&&(uintptr_t)selected<r.array_length(cards)&&backgrounds&&active>=0&&(uintptr_t)active<r.array_length(backgrounds)){
-  P card=r.arrayAt(cards,selected),loader=r.arrayAt(backgrounds,active);
-  NSString*key=r.string(r.get<P>(card,"coverBlurAssetCode"));
-  if([key hasPrefix:@"PM/"]&&r.alive(loader)&&![r.string(r.call(loader,"get_Code"))isEqualToString:key])
-   r.call(loader,"set_Code",{"System.String"},{r.managedString(key)});
- }
+ syncChapterBackground(r,self,cards);
  correctChapterRecordCounts(r,self,cards);
  syncChapterCoverFallbacks(r);
  log(@"Content ChapterSelector.Start completed");
@@ -610,7 +675,12 @@ static void beginChapterOS(Runtime&r,P selector){
   auto &game=*runtime;P items=game.call(selector,"get_SongItems");for(int i=0,n=game.count(items);i<n;++i){P item=game.at(items,i),song=game.get<P>(item,"songInfo");if(![game.string(game.get<P>(song,"songsId")) isEqual:group])continue;
    game.put(selector,"nowSong",i);game.put(selector,"targetSong",i);game.put(selector,"nowSongSelectorValue",float(i));game.put(selector,"lastFrameSongSelectorValue",float(i));game.put(selector,"listMoveSpeed",0.f);game.call(selector,"SetPosition");game.call(selector,"SetText");return YES;
   }
- }catch(const std::exception&e){log([NSString stringWithFormat:@"Chapter OS song selection: %s",e.what()]);}return NO;},^BOOL(NSString *installedID,NSString *difficulty,PMChapterDoorArm arm){
+ }catch(const std::exception&e){log([NSString stringWithFormat:@"Chapter OS song selection: %s",e.what()]);}return NO;},^BOOL{
+  try{
+   if(!runtime||target(*runtime,loadingSelector)!=selector||runtime->get<bool>(selector,"exit"))return NO;
+   runtime->call(selector,"Back");return YES;
+  }catch(const std::exception &e){log([NSString stringWithFormat:@"Chapter OS Back: %s",e.what()]);return NO;}
+ },^BOOL(NSString *installedID,NSString *difficulty,PMChapterDoorArm arm){
   try{
    if(!NSThread.isMainThread||!runtime||target(*runtime,loadingSelector)!=selector)return NO;
    return startCheckpointSong(*runtime,selector,key,installedID,difficulty,arm);
@@ -836,7 +906,8 @@ static bool checkpointOfficialOpen(Runtime &r,P song,NSDictionary *official,int 
  return false;
 }
 
-static BOOL startCheckpointSong(Runtime &r,P selector,NSString *chapter,NSString *installedID,NSString *difficulty,PMChapterDoorArm arm){
+using CheckedCourseMember = BOOL (^)(P, P, int, NSDictionary *, NSString *);
+static BOOL checkedSong(Runtime &r,P selector,NSString *chapter,NSString *installedID,NSString *difficulty,PMChapterDoorArm arm,CheckedCourseMember collect){
  if(!installedID.length||playing||pendingSong.length||PMUnlockMediaBusy()||!r.alive(selector)||
     r.get<bool>(selector,"exit")||r.get<bool>(selector,"isMoving"))return NO;
  P currentChapter=r.get<P>(selector,"nowChapterInfo");
@@ -857,7 +928,8 @@ static BOOL startCheckpointSong(Runtime &r,P selector,NSString *chapter,NSString
  if(!authored&&!official)return NO;
  NSString *label=[difficulty stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
  if(difficulty.length&&!label.length)return NO;
- if(label.length&&(!authored||!checkpointLevelMatches(authored,label))){
+ if(collect&&authored&&label.length&&!checkpointLevelMatches(authored,label))return NO;
+ if(!collect&&label.length&&(!authored||!checkpointLevelMatches(authored,label))){
   // Chapter membership is by installed chart ID, while native rows are grouped.
   // Count all chapter siblings, including inactive stock variants.
   NSDictionary *sibling=nil;
@@ -901,6 +973,13 @@ static BOOL startCheckpointSong(Runtime &r,P selector,NSString *chapter,NSString
  // Start can be hidden for the previous row. Check its native state after SetText.
  if(!r.alive(start)||pmunlock::selectorButtonBlocked(r,start))return NO;
 
+ if(collect){
+  // Checking a course is read-only: do not select rows, rebind the AT slot,
+  // paint lock UI, start an intro or mutate any previously collected member.
+  if(!authored&&!official)return NO;
+  if(!pmunlock::courseMemberOpen(r,group,authored))return NO;
+  return collect(item,song,slot,authored,group);
+ }
  r.put(selector,"nowSong",index);r.put(selector,"targetSong",index);
  r.put(selector,"nowSongSelectorValue",float(index));r.put(selector,"lastFrameSongSelectorValue",float(index));
  r.put(selector,"listMoveSpeed",0.f);r.call(selector,"SetPosition");
@@ -963,6 +1042,7 @@ static BOOL startCheckpointSong(Runtime &r,P selector,NSString *chapter,NSString
     (r.alive(locked)&&r.unbox<bool>(r.call(locked,"get_activeInHierarchy")))||!r.alive(start)||
     !r.unbox<bool>(r.call(start,"IsActive"))||!r.unbox<bool>(r.call(start,"IsInteractable"))||
     pmunlock::selectorButtonBlocked(r,start)||PMUnlockMediaBusy())return NO;
+
  if(arm&&PMDoorActive())return NO;
  BOOL accepted=NO;
  @try{
@@ -983,6 +1063,11 @@ static BOOL startCheckpointSong(Runtime &r,P selector,NSString *chapter,NSString
 }
 
 
+static BOOL startCheckpointSong(Runtime &r,P selector,NSString *chapter,NSString *installedID,NSString *difficulty,PMChapterDoorArm arm){
+ return checkedSong(r,selector,chapter,installedID,difficulty,arm,nil);
+}
+#include "PMSecretCourseSelection.inc"
+
 void levelBegin(Runtime&r){
  // Native Retry also enters here for levels that never qualify for door binding.
  PMStorySequenceDiscardHandoff();
@@ -997,7 +1082,11 @@ bool assetConstructor(Runtime&r,P self,P key){NSString*kind=nil,*identifier=keyI
   }
  }
  try{std::string cacheKey=r.string(key).UTF8String;P obj=nullptr;auto found=assets.find(cacheKey);if(found!=assets.end())obj=target(r,found->second);if(!r.alive(obj)){NSString*folder=[PMContentStore.shared asset:identifier];if([kind isEqualToString:@"chart"]){NSString*json=[NSString stringWithContentsOfFile:[folder stringByAppendingPathComponent:@"chart-native.json"] encoding:NSUTF8StringEncoding error:nil];if(!json)throw std::runtime_error("Custom chart not found");log([NSString stringWithFormat:@"Content chart text ready: chars=%lu",(unsigned long)json.length]);obj=r.object_new(r.type("UnityEngine","TextAsset"));uint32_t h=r.gchandle_new(obj,false);try{r.call(obj,".ctor",{"System.String"},{r.managedString(json)});}catch(...){r.gchandle_free(h);throw;}r.gchandle_free(h);}else if([kind isEqualToString:@"music"]||[kind isEqualToString:@"playMusic"]){NSString*m4a=[folder stringByAppendingPathComponent:@"music.m4a"];NSString*caf=[folder stringByAppendingPathComponent:@"music.caf"];obj=audio(r,[NSFileManager.defaultManager fileExistsAtPath:m4a]?m4a:caf);}else{
-   NSString*path=[identifier isEqualToString:@"pm_avatar"]?[folder stringByAppendingPathComponent:@"image.png"]:pmunlock::coverPath(r,identifier);
+   NSString *nativeKey=r.string(key), *path=nil;
+   if(([kind isEqual:@"image"] || [kind isEqual:@"chapterBlur"]) && [nativeKey containsString:@"~"]){
+    path=pmchaptercover::pathForKey(nativeKey,[PMContentStore.shared coverFolder:identifier]);
+    if(!path)throw std::runtime_error("Invalid chapter cover key");
+   }else path=[identifier isEqualToString:@"pm_avatar"]?[folder stringByAppendingPathComponent:@"image.png"]:pmunlock::coverPath(r,identifier);
    bool blurred=[kind isEqualToString:@"chapterBlur"]||[kind isEqualToString:@"blur"]||[kind isEqualToString:@"courseBlur"];
    if([kind isEqualToString:@"thumb"])obj=image(r,path,false,false,{.5f,.5f},false,true);
    else obj=image(r,path,blurred,false,{.5f,.5f},blurred);
@@ -1020,7 +1109,7 @@ bool assetRelease(Runtime&r,P self,bool force){
  if(contents&&r.unbox<bool>(r.call(contents,"ContainsKey",{"System.String"},{key}))&&r.call(contents,"get_Item",{"System.String"},{key})==self)r.call(contents,"Remove",{"System.String"},{key});
  log([NSString stringWithFormat:@"Content custom release (%@): %@",force?@"ReleaseResource":@"Release",r.string(key)]);return true;
 }
-void levelInfo(Runtime&r,P song,int slot,P info){NSString*id=r.string(r.get<P>(song,"songsId"));NSDictionary*custom=frozenDifficulty(r,song)?:songFor(id,slot);if(!info)return;if(!custom){NSString*cover=[[PMContentStore.shared coverFolder:id]stringByAppendingPathComponent:@"image.png"];if(cover&&[NSFileManager.defaultManager fileExistsAtPath:cover]){NSString*key=[NSString stringWithFormat:@"PM/%@/image@%lu",id,(unsigned long)PMContentStore.shared.revision];r.put(info,"illustrationKey",r.managedString(key));}return;}NSString*identifier=custom[@"id"];for(const auto&entry:std::vector<std::pair<const char*,NSString*>>{{"songsId",identifier},{"songsName",custom[@"title"] ?: @""},{"composer",custom[@"composer"] ?: @""},{"charter",custom[@"charter"] ?: @""},{"illustrator",custom[@"illustrator"] ?: @""},{"songsDifficulty",[@(PMDifficultyNumber(custom[@"difficulty"])) description]}})r.put(info,entry.first,r.managedString(entry.second));for(auto pair:std::vector<std::pair<const char*,const char*>>{{"musicAddressableKey","playMusic"},{"chartAddressableKey","chart"},{"illustrationKey","courseImage"}}){NSString*k=[NSString stringWithFormat:@"PM/%@/%s@%lu",identifier,pair.second,(unsigned long)PMContentStore.shared.revision];r.put(info,pair.first,r.managedString(k));}}
+void levelInfo(Runtime&r,P song,int slot,P info){NSString*id=r.string(r.get<P>(song,"songsId"));NSDictionary*bound=pmsecretcourse::binding(r,song);NSDictionary*custom=bound?(bound.count?bound:nil):(frozenDifficulty(r,song)?:songFor(id,slot));if(!info)return;if(!custom){NSString*cover=[[PMContentStore.shared coverFolder:id]stringByAppendingPathComponent:@"image.png"];if(cover&&[NSFileManager.defaultManager fileExistsAtPath:cover]){NSString*key=[NSString stringWithFormat:@"PM/%@/image@%lu",id,(unsigned long)PMContentStore.shared.revision];r.put(info,"illustrationKey",r.managedString(key));}return;}NSString*identifier=custom[@"id"];for(const auto&entry:std::vector<std::pair<const char*,NSString*>>{{"songsId",identifier},{"songsName",custom[@"title"] ?: @""},{"composer",custom[@"composer"] ?: @""},{"charter",custom[@"charter"] ?: @""},{"illustrator",custom[@"illustrator"] ?: @""},{"songsDifficulty",[@(PMDifficultyNumber(custom[@"difficulty"])) description]}})r.put(info,entry.first,r.managedString(entry.second));for(auto pair:std::vector<std::pair<const char*,const char*>>{{"musicAddressableKey","playMusic"},{"chartAddressableKey","chart"},{"illustrationKey","courseImage"}}){NSString*k=[NSString stringWithFormat:@"PM/%@/%s@%lu",identifier,pair.second,(unsigned long)PMContentStore.shared.revision];r.put(info,pair.first,r.managedString(k));}}
 void ensureVisualChart(Runtime&r){NSString*actual=gameplayChartID(r);if(actual&&[actual isEqualToString:levelID]&&currentChart)return;levelID=actual;lastCustom=actual.length>0;currentChart=nil;if(!actual)return;NSString*path=[[PMContentStore.shared asset:levelID]stringByAppendingPathComponent:@"chart.json"];NSData*d=[NSData dataWithContentsOfFile:path];currentChart=d?[NSJSONSerialization JSONObjectWithData:d options:0 error:nil]:nil;if(!currentChart)throw std::runtime_error("Custom visual chart missing");resourceSubdir=@"";for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"]isEqualToString:levelID])resourceSubdir=s[@"resourceRoot"] ?: @"";}
 void beforeChart(Runtime&r,P level){beforeInformation(r,level);}
 void afterChart(Runtime&r,P level){clearHud(r);if(!currentChart)return;hudLevel=r.gchandle_new(level,false);
@@ -1875,4 +1964,11 @@ void validate(Runtime&r){
  }
  validatePcmCopy(r);
 }
+}
+
+BOOL PMChapterStartSecretCourse(NSString *chapter,NSString *door,NSArray<NSDictionary *> *members,NSInteger tier){
+ if(!NSThread.isMainThread)return NO;
+ @try{try{return pmcontent::startSecretCourse(chapter,door,members,tier);}
+ catch(const std::exception &e){PMDiagnosticsWrite(e.what());return NO;}}
+ @catch(NSException *e){PMDiagnosticsWrite(e.reason.UTF8String);return NO;}
 }
