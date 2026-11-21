@@ -1,6 +1,28 @@
 import unittest
 from pathlib import Path
 class BackgroundFill(unittest.TestCase):
+ def test_browsing_and_course_cells_use_sharp_bounded_art(self):
+  sources=Path(__file__).resolve().parents[1]/'PhiMod/Sources'
+  runtime=(sources/'PMContentRuntime.mm').read_text('utf8')
+  observer=runtime.split('void observeSelector(',1)[1].split('struct VariantCoverState',1)[0]
+  self.assertIn('selectorThumbnailKey(id)',observer)
+  self.assertNotIn('coverBlurAssetCode',observer)
+  self.assertIn('if(thumbnail)maxSide=384;',runtime)
+  self.assertIn('image(r,path,false,false,{.5f,.5f},false,true)',runtime)
+  for source in ('PMChallengeSelection.inc','PMDifficultyPager.inc'):
+   self.assertIn('selectorThumbnailKey(chart[@"id"])',(sources/source).read_text('utf8'))
+ def test_quick_start_uses_gameplay_assets_not_pending_preview(self):
+  sources=Path(__file__).resolve().parents[1]/'PhiMod/Sources'
+  runtime=(sources/'PMContentRuntime.mm').read_text('utf8')
+  bind=runtime.split('void levelInfo(',1)[1].split('void ensureVisualChart(',1)[0]
+  self.assertIn('{"musicAddressableKey","playMusic"}',bind)
+  self.assertIn('{"illustrationKey","courseImage"}',bind)
+  deferred=runtime.split('bool assetConstructor(',1)[1].split('try{std::string cacheKey',1)[0]
+  for key in ('thumb','playMusic','courseImage'):self.assertNotIn('@"'+key+'"',deferred)
+  lookup=runtime.split('NSString*gameplayChartID(',1)[1].split('\n}',1)[0]
+  self.assertLess(lookup.index('chartAddressableKey'),lookup.index('songsId'))
+  self.assertIn('ensureVisualChart(r);',runtime.split('void beforeInformation(',1)[1])
+  self.assertEqual((sources/'PMRuntimeFeatures.mm').read_text('utf8').count('pmcontent::gameplayChartID(r)'),2)
  def test_cover_dimensions_preserve_aspect(self):
   for w,h in ((1920,1080),(1280,720),(512,512),(1080,1920),(2048,512),(4096,2304)):
    ppu=min(w/38.4,h/21.6)

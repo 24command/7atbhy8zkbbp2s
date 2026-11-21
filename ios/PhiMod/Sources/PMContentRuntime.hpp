@@ -11,6 +11,8 @@ bool assetConstructor(pmbridge::Runtime&,void*self,void*key);bool assetRelease(p
 void levelInfo(pmbridge::Runtime&,void*song,int slot,void*info);
 void selectorLoadingBegin(pmbridge::Runtime&,void*selector);
 void selectorLoadingFrame(pmbridge::Runtime&,void*selector);
+NSString*selectorThumbnailKey(NSString*identifier);
+NSString*gameplayChartID(pmbridge::Runtime&);
 void selectorLoadingEnd(pmbridge::Runtime&,bool finishSelected);
 void prepareSelectorItems(pmbridge::Runtime&,void*selector);
 void selectorFrame(pmbridge::Runtime&,void*selector);

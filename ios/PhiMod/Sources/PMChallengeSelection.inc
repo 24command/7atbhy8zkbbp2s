@@ -79,7 +79,7 @@ static void refresh(Runtime &r,P control,P list){
         int slot=r.get<int>(entry,"levelIndex");
         NSDictionary *chart=pmcontent::challengeEntryChart(r,entry);
         P key=r.get<P>(item,"coverBlurAssetCode");
-        if(chart)key=r.managedString([NSString stringWithFormat:@"PM/%@/blur@%lu",chart[@"id"],(unsigned long)PMContentStore.shared.revision]);
+        if(chart)key=r.managedString(pmcontent::selectorThumbnailKey(chart[@"id"]));
         r.call(image,"set_Code",{"System.String"},{key});
         NSString *number=chart?PMDifficultyText(chart):[@(int(r.unbox<float>(r.arrayAt(r.get<P>(song,"difficulty"),slot)))) stringValue];
         r.call(r.at(labels,i),"set_text",{"System.String"},{r.managedString(number)});

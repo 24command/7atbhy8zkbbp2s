@@ -169,7 +169,9 @@ void onAwake(P self,P mi){
  timingHints::enabled=PMSettingBool("earlyLateHints");
  timingHints::showBad=timingHints::enabled && PMSettingBool("earlyLateBad");
  diagf("LevelControl.Awake enter");
- try{pmcontent::levelBegin(R());pmfeatures::levelBegin(R(),self);pmunlock::clear(R());}catch(const std::exception&e){diagf("Content/feature begin: %s",e.what());}
+ try{pmcontent::levelBegin(R());}catch(const std::exception&e){diagf("Content begin: %s",e.what());}
+ try{pmfeatures::levelBegin(R(),self);}catch(const std::exception&e){diagf("Feature begin: %s",e.what());}
+ try{pmunlock::clear(R());}catch(const std::exception&e){diagf("Unlock cleanup: %s",e.what());}
  progressUpdateCalls=judgeUpdateCalls=0;lastProgressHeartbeat=lastJudgeHeartbeat={};diagHaveState=false;
  // A latch survives OnDestroy, disabled switches and the entire result screen.
  // Alternate assisted result never launches the reward/save coroutine.
@@ -595,7 +597,12 @@ void onLevelInformation(P self,P mi){
  orig<VoidFn>(h::levelInfo)(self,mi);
  try{pmhp::rememberChartCount(R(),self);}catch(const std::exception&e){diagf("Chart count cache: %s",e.what());}
  diagf("LevelControl.SetInformation original returned n=%llu",(unsigned long long)count);
- if(!broken)try{pmmodes::afterInformation(R(),self);pmcontent::afterChart(R(),self);pmfeatures::afterChart(R(),self);pmcontent::difficultyIntro(R(),self);}catch(const std::exception&e){fault(e);}
+ if(!broken){
+  try{pmmodes::afterInformation(R(),self);}catch(const std::exception&e){fault(e);}
+  try{pmcontent::afterChart(R(),self);}catch(const std::exception&e){diagf("Storyboard setup: %s",e.what());}
+  try{pmfeatures::afterChart(R(),self);}catch(const std::exception&e){diagf("Feature setup: %s",e.what());}
+  try{pmcontent::difficultyIntro(R(),self);}catch(const std::exception&e){diagf("Difficulty intro: %s",e.what());}
+ }
  diagf("LevelControl.SetInformation finished n=%llu",(unsigned long long)count);
 }
 void onAssetCtor(P self,P key,P mi){try{if(pmcontent::assetConstructor(R(),self,key))return;}catch(const std::exception&e){diagf("Content ctor: %s",e.what());}orig<void(*)(P,P,P)>(h::assetCtor)(self,key,mi);}

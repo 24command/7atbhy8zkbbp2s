@@ -152,7 +152,7 @@ void applyImpl(Runtime&r){capture(r);if(!baseline||playing)return;NSDictionary*d
  for(NSDictionary*c in db[@"chapters"]){NSString*before=c[@"before"];if(!before.length)continue;NSUInteger from=NSNotFound,to=NSNotFound;for(NSUInteger i=0;i<chapters.count;++i){if([chapters[i][@"chapterCode"] isEqualToString:c[@"id"]])from=i;if([chapters[i][@"chapterCode"] isEqualToString:before])to=i;}if(from!=NSNotFound&&to!=NSNotFound&&from!=to){id v=chapters[from];[chapters removeObjectAtIndex:from];if(from<to)--to;[chapters insertObject:v atIndex:to];}}
  P gi=r.mainGame(),newBase=decode(r,songBase,"SongBase");uint32_t baseHandle=r.gchandle_new(newBase,false);P arr=r.array_new(r.klass("Chapter"),chapters.count);uint32_t arrHandle=r.gchandle_new(arr,false);try{for(NSUInteger i=0;i<chapters.count;++i){P c=decode(r,chapters[i],"Chapter");uint32_t h=r.gchandle_new(c,false);P info=r.get<P>(c,"songInfo");r.put(info,"<songsBypassLimited>k__BackingField",r.get<P>(info,"songs"));int index=(int)i;r.invokeOn(r.resolve(r.type("System","Array"),"SetValue",{"System.Object","System.Int32"}),arr,{c,&index});r.gchandle_free(h);}r.call(newBase,"MarkDirty");r.put(gi,"song",newBase);r.put(gi,"chapters",arr);}catch(...){r.gchandle_free(arrHandle);r.gchandle_free(baseHandle);throw;}r.gchandle_free(arrHandle);r.gchandle_free(baseHandle);variants.swap(nextVariants);applied=PMContentStore.shared.revision;appliedMainline=PMSettingBool("mainlineUnlock");log([NSString stringWithFormat:@"Content applied: %lu groups, %lu chapters",(unsigned long)variants.size(),(unsigned long)chapters.count]);}
 void apply(Runtime&r){@try{applyImpl(r);}@catch(NSException*e){log([NSString stringWithFormat:@"Content apply exception: %@ %@",e.name,e.reason]);throw std::runtime_error(e.reason.UTF8String?:"Objective-C content apply exception");}}
-P image(Runtime&r,NSString*path,bool background=false,bool lineTexture=false,V2 anchor={.5f,.5f},bool chapterBlur=false){
+P image(Runtime&r,NSString*path,bool background=false,bool lineTexture=false,V2 anchor={.5f,.5f},bool chapterBlur=false,bool thumbnail=false){
  if(![NSFileManager.defaultManager fileExistsAtPath:path]){
   NSString*chapterID=path.stringByDeletingLastPathComponent.lastPathComponent;
   for(NSDictionary*song in [PMContentStore.shared snapshot][@"songs"])if([song[@"targetChapter"]isEqualToString:chapterID]){NSString*fallback=[[PMContentStore.shared asset:song[@"id"]]stringByAppendingPathComponent:@"image.png"];if([NSFileManager.defaultManager fileExistsAtPath:fallback]){path=fallback;break;}}
@@ -165,6 +165,7 @@ P image(Runtime&r,NSString*path,bool background=false,bool lineTexture=false,V2 
  CGFloat maxSide=PMSettingBool("dynamicLargeTextures")?4096.0:2048.0;
  CGFloat maxEncoded=PMSettingBool("dynamicLargeTextures")?64.0:32.0;
  if(chapterBlur)maxSide=MIN(maxSide,1024);
+ if(thumbnail)maxSide=384;
  NSDictionary*attributes=[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
  if(!attributes)throw std::runtime_error("Cover image is missing");
  NSString*cacheKey=[NSString stringWithFormat:@"%@|%@|%@|%.0f|%lu|%d",path,attributes[NSFileSize],attributes[NSFileModificationDate],maxSide,(unsigned long)PMContentStore.shared.revision,chapterBlur];
@@ -460,6 +461,13 @@ bool shortSourceHold(Runtime&r,P note){
  return std::isfinite(duration)&&duration>0&&duration<.22f;
 }
 bool customLevel(){return levelID.length>0||lastCustom;}
+NSString*selectorThumbnailKey(NSString*identifier){return [NSString stringWithFormat:@"PM/%@/thumb@%lu",identifier,(unsigned long)PMContentStore.shared.revision];}
+NSString*gameplayChartID(Runtime&r){
+ P info=r.get<P>(r.mainGame(),"levelStartInfo");if(!info)return nil;
+ NSString*key=r.string(r.get<P>(info,"chartAddressableKey")),*kind=nil;
+ if([key hasPrefix:@"PM/"]){NSString*identifier=keyID(key,&kind);if([kind isEqualToString:@"chart"]&&[PMContentStore.shared asset:identifier])return identifier;}
+ NSString*identifier=r.string(r.get<P>(info,"songsId"));return [PMContentStore.shared asset:identifier]?identifier:nil;
+}
 void avatarPulse(Runtime&r){
  struct Saved{uint32_t loader;NSString*code;bool preserveAspect;};static std::vector<Saved>saved;
  static double next=0;double now=NSDate.timeIntervalSinceReferenceDate;if(now<next)return;next=now+1;
@@ -532,11 +540,17 @@ void observeSelector(Runtime&r,P selector){
  selectorDragging=moving;loadingPosition=position;loadingSong=index;loadingSlot=slot;
  selectedAssetIDs.clear();P items=r.call(selector,"get_SongItems");if(index<0||index>=r.count(items))return;
  P item=r.at(items,index),song=r.get<P>(item,"songInfo");NSString*group=r.string(r.get<P>(song,"songsId"));
- try{if(changed&&selectorSongIDs.count(group.UTF8String?:"")){P cover=r.get<P>(item,"cover");NSString*blur=r.string(r.get<P>(item,"coverBlurAssetCode"));
-  if(blur.length&&r.alive(cover)&&!r.get<bool>(cover,"loadedImage")&&!r.get<bool>(cover,"loadedLowResImage")){
-   r.call(cover,"CheckInitialized");r.call(cover,"SetLowResImage",{"System.String"},{r.managedString(blur)});
+ try{if(changed){int n=r.count(items);for(int i=std::max(0,index-2);i<std::min(n,index+3);++i){
+  P row=i==index?item:r.at(items,i),rowSong=r.get<P>(row,"songInfo");NSString*gid=r.string(r.get<P>(rowSong,"songsId"));
+  if(!selectorSongIDs.count(gid.UTF8String?:""))continue;
+  NSDictionary*chart=songFor(gid,slot);NSString*id=chart?chart[@"id"]:gid;
+  if(![id hasPrefix:@"pm_"]||[chart[@"pmOfficial"]boolValue])continue;
+  P cover=r.get<P>(row,"cover");if(!r.alive(cover)||r.get<bool>(cover,"loadedImage"))continue;
+  NSString*thumb=selectorThumbnailKey(id);
+  if(![thumb isEqualToString:r.string(r.get<P>(cover,"lowResImageCode"))]){
+   r.call(cover,"CheckInitialized");r.call(cover,"SetLowResImage",{"System.String"},{r.managedString(thumb)});
   }
- }}catch(const std::exception&e){log([NSString stringWithFormat:@"Selector low-res preview failed (full cover continues): %s",e.what()]);}
+ }}}catch(const std::exception&e){log([NSString stringWithFormat:@"Selector low-res preview failed (full cover continues): %s",e.what()]);}
  if(group.length)selectedAssetIDs.insert(group.UTF8String);
  auto found=variants.find(group.UTF8String?:"");if(found!=variants.end()){auto member=found->second.find(slot);if(member!=found->second.end()){NSString*id=member->second[@"id"];if(id.length)selectedAssetIDs.insert(id.UTF8String);}}
  for(const char*field:{"coverAssetCode"}){NSString*kind=nil,*id=keyID(r.string(r.get<P>(item,field)),&kind);if(id.length)selectedAssetIDs.insert(id.UTF8String);}
@@ -610,13 +624,13 @@ void clearSparseButtons(Runtime&r){
 }
 #include "PMSelectorRowPresentation.inc"
 void selectorLoadingEnd(Runtime&r,bool finishSelected){
+ if(finishSelected&&loadingSelector)try{P owner=target(r,loadingSelector);if(r.alive(owner))observeSelector(r,owner);}catch(const std::exception&e){log([NSString stringWithFormat:@"Selector already leaving: %s",e.what()]);}
  deferredDifficultySort.clear();
  clearSelectorRowPresentation(r);
  clearVariantCovers(r);
  clearSparseButtons(r);
  initializedSelector=initializedItems=nullptr;initializedCount=initializedSlot=initializedVersion=-1;initializedRevision=NSUIntegerMax;
  recordSelector=recordItem=nullptr;recordSlot=-1;recordRevision=NSUIntegerMax;
- if(finishSelected&&r.alive(target(r,loadingSelector)))observeSelector(r,target(r,loadingSelector));
  if(loadingSelector)r.gchandle_free(loadingSelector);loadingSelector=0;
  std::vector<P>remaining;for(auto&entry:selectorAssets)remaining.push_back(entry.first);
  for(P asset:remaining){auto found=selectorAssets.find(asset);if(found==selectorAssets.end())continue;
@@ -752,7 +766,7 @@ void selectorFrame(Runtime&r,P selector){
 
 #include "PMDifficultyPager.inc"
 
-void levelBegin(Runtime&r){difficultyLabeledID=nil;selectorLoadingEnd(r,true);playing=true;if(chapterSelectorRoot){r.gchandle_free(chapterSelectorRoot);chapterSelectorRoot=0;}P info=r.get<P>(r.mainGame(),"levelStartInfo");NSString*id=info?r.string(r.get<P>(info,"songsId")):@"";levelID=[PMContentStore.shared asset:id]?id:nil;lastCustom=levelID.length>0;}
+void levelBegin(Runtime&r){difficultyLabeledID=nil;playing=true;levelID=gameplayChartID(r);lastCustom=levelID.length>0;if(chapterSelectorRoot){r.gchandle_free(chapterSelectorRoot);chapterSelectorRoot=0;}selectorLoadingEnd(r,true);}
 void levelEnd(Runtime&r){clearDifficultyPager(r);playing=false;levelID=nil;lastCustom=false;pendingSong=nil;if(chapterSelectorRoot){r.gchandle_free(chapterSelectorRoot);chapterSelectorRoot=0;}clearVisuals(r);}
 bool assetConstructor(Runtime&r,P self,P key){NSString*kind=nil,*identifier=keyID(r.string(key),&kind);if(!identifier)return false;r.put(self,"key",key);r.put(self,"refCount",1);
  if(loadingSelector&&!completingSelectorAsset&&!playing&&selectorSongIDs.count(identifier.UTF8String)&&([kind isEqualToString:@"image"]||[kind isEqualToString:@"music"])){
@@ -762,10 +776,11 @@ bool assetConstructor(Runtime&r,P self,P key){NSString*kind=nil,*identifier=keyI
    selectorAssets[self]={r.gchandle_new(self,false),identifier.UTF8String,[kind isEqualToString:@"music"]!=NO};return true;
   }
  }
- try{std::string cacheKey=r.string(key).UTF8String;P obj=nullptr;auto found=assets.find(cacheKey);if(found!=assets.end())obj=target(r,found->second);if(!r.alive(obj)){NSString*folder=[PMContentStore.shared asset:identifier];if([kind isEqualToString:@"chart"]){NSString*json=[NSString stringWithContentsOfFile:[folder stringByAppendingPathComponent:@"chart-native.json"] encoding:NSUTF8StringEncoding error:nil];if(!json)throw std::runtime_error("Custom chart not found");log([NSString stringWithFormat:@"Content chart text ready: chars=%lu",(unsigned long)json.length]);obj=r.object_new(r.type("UnityEngine","TextAsset"));uint32_t h=r.gchandle_new(obj,false);try{r.call(obj,".ctor",{"System.String"},{r.managedString(json)});}catch(...){r.gchandle_free(h);throw;}r.gchandle_free(h);}else if([kind isEqualToString:@"music"]){NSString*m4a=[folder stringByAppendingPathComponent:@"music.m4a"];NSString*caf=[folder stringByAppendingPathComponent:@"music.caf"];obj=audio(r,[NSFileManager.defaultManager fileExistsAtPath:m4a]?m4a:caf);}else{
+ try{std::string cacheKey=r.string(key).UTF8String;P obj=nullptr;auto found=assets.find(cacheKey);if(found!=assets.end())obj=target(r,found->second);if(!r.alive(obj)){NSString*folder=[PMContentStore.shared asset:identifier];if([kind isEqualToString:@"chart"]){NSString*json=[NSString stringWithContentsOfFile:[folder stringByAppendingPathComponent:@"chart-native.json"] encoding:NSUTF8StringEncoding error:nil];if(!json)throw std::runtime_error("Custom chart not found");log([NSString stringWithFormat:@"Content chart text ready: chars=%lu",(unsigned long)json.length]);obj=r.object_new(r.type("UnityEngine","TextAsset"));uint32_t h=r.gchandle_new(obj,false);try{r.call(obj,".ctor",{"System.String"},{r.managedString(json)});}catch(...){r.gchandle_free(h);throw;}r.gchandle_free(h);}else if([kind isEqualToString:@"music"]||[kind isEqualToString:@"playMusic"]){NSString*m4a=[folder stringByAppendingPathComponent:@"music.m4a"];NSString*caf=[folder stringByAppendingPathComponent:@"music.caf"];obj=audio(r,[NSFileManager.defaultManager fileExistsAtPath:m4a]?m4a:caf);}else{
    NSString*path=[identifier isEqualToString:@"pm_avatar"]?[folder stringByAppendingPathComponent:@"image.png"]:pmunlock::coverPath(r,identifier);
    bool blurred=[kind isEqualToString:@"chapterBlur"]||[kind isEqualToString:@"blur"]||[kind isEqualToString:@"courseBlur"];
-   obj=image(r,path,blurred,false,{.5f,.5f},blurred);
+   if([kind isEqualToString:@"thumb"])obj=image(r,path,false,false,{.5f,.5f},false,true);
+   else obj=image(r,path,blurred,false,{.5f,.5f},blurred);
   }assets[cacheKey]=r.gchandle_new(obj,false);}refs[self]=cacheKey;users[cacheKey]++;r.put(self,"obj",obj);r.put(self,"<IsDone>k__BackingField",true);r.put(self,"<IsFailed>k__BackingField",false);if([kind isEqualToString:@"image"]||[kind isEqualToString:@"chapterBlur"])try{syncChapterCoverFallbacks(r);}catch(const std::exception&e){log([NSString stringWithFormat:@"Content chapter cover fallback failed: %s",e.what()]);}log([@"Content asset loaded: " stringByAppendingString:r.string(key)]);}catch(const std::exception&e){r.put<P>(self,"obj",nullptr);r.put(self,"<IsDone>k__BackingField",true);r.put(self,"<IsFailed>k__BackingField",true);log([NSString stringWithFormat:@"Content asset failed: %@ (%s)",r.string(key),e.what()]);}return true;}
 bool assetRelease(Runtime&r,P self,bool force){
  NSString*kind=nil;P key=r.get<P>(self,"key");if(!keyID(r.string(key),&kind))return false;
@@ -785,8 +800,9 @@ bool assetRelease(Runtime&r,P self,bool force){
  if(contents&&r.unbox<bool>(r.call(contents,"ContainsKey",{"System.String"},{key}))&&r.call(contents,"get_Item",{"System.String"},{key})==self)r.call(contents,"Remove",{"System.String"},{key});
  log([NSString stringWithFormat:@"Content custom release (%@): %@",force?@"ReleaseResource":@"Release",r.string(key)]);return true;
 }
-void levelInfo(Runtime&r,P song,int slot,P info){NSString*id=r.string(r.get<P>(song,"songsId"));NSDictionary*custom=frozenDifficulty(r,song)?:songFor(id,slot);if(!info)return;if(!custom){NSString*cover=[[PMContentStore.shared coverFolder:id]stringByAppendingPathComponent:@"image.png"];if(cover&&[NSFileManager.defaultManager fileExistsAtPath:cover]){NSString*key=[NSString stringWithFormat:@"PM/%@/image@%lu",id,(unsigned long)PMContentStore.shared.revision];r.put(info,"illustrationKey",r.managedString(key));}return;}NSString*identifier=custom[@"id"];for(const auto&entry:std::vector<std::pair<const char*,NSString*>>{{"songsId",identifier},{"songsName",custom[@"title"] ?: @""},{"composer",custom[@"composer"] ?: @""},{"charter",custom[@"charter"] ?: @""},{"illustrator",custom[@"illustrator"] ?: @""},{"songsDifficulty",[@(PMDifficultyNumber(custom[@"difficulty"])) description]}})r.put(info,entry.first,r.managedString(entry.second));for(auto pair:std::vector<std::pair<const char*,const char*>>{{"musicAddressableKey","music"},{"chartAddressableKey","chart"},{"illustrationKey","image"}}){NSString*k=[NSString stringWithFormat:@"PM/%@/%s@%lu",identifier,pair.second,(unsigned long)PMContentStore.shared.revision];r.put(info,pair.first,r.managedString(k));}}
-void beforeChart(Runtime&r,P level){if(!levelID.length)return;NSString*path=[[PMContentStore.shared asset:levelID]stringByAppendingPathComponent:@"chart.json"];NSData*d=[NSData dataWithContentsOfFile:path];currentChart=d?[NSJSONSerialization JSONObjectWithData:d options:0 error:nil]:nil;if(!currentChart)throw std::runtime_error("Custom visual chart missing");resourceSubdir=@"";for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"]isEqualToString:levelID])resourceSubdir=s[@"resourceRoot"] ?: @"";beforeInformation(r,level);}
+void levelInfo(Runtime&r,P song,int slot,P info){NSString*id=r.string(r.get<P>(song,"songsId"));NSDictionary*custom=frozenDifficulty(r,song)?:songFor(id,slot);if(!info)return;if(!custom){NSString*cover=[[PMContentStore.shared coverFolder:id]stringByAppendingPathComponent:@"image.png"];if(cover&&[NSFileManager.defaultManager fileExistsAtPath:cover]){NSString*key=[NSString stringWithFormat:@"PM/%@/image@%lu",id,(unsigned long)PMContentStore.shared.revision];r.put(info,"illustrationKey",r.managedString(key));}return;}NSString*identifier=custom[@"id"];for(const auto&entry:std::vector<std::pair<const char*,NSString*>>{{"songsId",identifier},{"songsName",custom[@"title"] ?: @""},{"composer",custom[@"composer"] ?: @""},{"charter",custom[@"charter"] ?: @""},{"illustrator",custom[@"illustrator"] ?: @""},{"songsDifficulty",[@(PMDifficultyNumber(custom[@"difficulty"])) description]}})r.put(info,entry.first,r.managedString(entry.second));for(auto pair:std::vector<std::pair<const char*,const char*>>{{"musicAddressableKey","playMusic"},{"chartAddressableKey","chart"},{"illustrationKey","courseImage"}}){NSString*k=[NSString stringWithFormat:@"PM/%@/%s@%lu",identifier,pair.second,(unsigned long)PMContentStore.shared.revision];r.put(info,pair.first,r.managedString(k));}}
+void ensureVisualChart(Runtime&r){NSString*actual=gameplayChartID(r);if(actual&&[actual isEqualToString:levelID]&&currentChart)return;levelID=actual;lastCustom=actual.length>0;currentChart=nil;if(!actual)return;NSString*path=[[PMContentStore.shared asset:levelID]stringByAppendingPathComponent:@"chart.json"];NSData*d=[NSData dataWithContentsOfFile:path];currentChart=d?[NSJSONSerialization JSONObjectWithData:d options:0 error:nil]:nil;if(!currentChart)throw std::runtime_error("Custom visual chart missing");resourceSubdir=@"";for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"]isEqualToString:levelID])resourceSubdir=s[@"resourceRoot"] ?: @"";}
+void beforeChart(Runtime&r,P level){beforeInformation(r,level);}
 void afterChart(Runtime&r,P level){clearHud(r);if(!currentChart)return;hudLevel=r.gchandle_new(level,false);
  // Match Android's zOrder/index ranking instead of treating zOrder as a
  // native sortingOrder offset (negative values otherwise fall behind BG).
@@ -831,6 +847,7 @@ for(const auto&entry:extras){P note=entry.first;NSDictionary*source=entry.second
 }
 }
 void beforeInformation(Runtime&r,P level){
+ ensureVisualChart(r);
  if(!currentChart){extras.clear();extrasBoundChart=nullptr;return;}
  P chart=r.get<P>(level,"chart");if(chart==extrasBoundChart)return;
  P lines=r.get<P>(chart,"judgeLineList");NSArray*data=currentChart[@"judgeLineList"];

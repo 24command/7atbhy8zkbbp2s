@@ -215,8 +215,7 @@ void prepareVideos(Runtime&r,P level){
  P current=videoLevel?target(r,videoLevel):nullptr;
  if(videoLevel&&current!=level){r.gchandle_free(videoLevel);videoLevel=0;}
  if(!videoLevel&&level)videoLevel=r.gchandle_new(level,false);
- P info=r.get<P>(r.mainGame(),"levelStartInfo");
- NSString*identifier=info?r.string(r.get<P>(info,"songsId")):nil;
+ NSString*identifier=pmcontent::gameplayChartID(r);
  if(!identifier.length)return;
  NSString*folder=resourceFolder(identifier);
  if(!folder.length)return;
@@ -435,7 +434,7 @@ void styleLine(Runtime&r,void*renderer){
 }
 void levelBegin(Runtime&r,void*level){PMMetalShadersClear();clearVideos(r);if(videoLevel){r.gchandle_free(videoLevel);videoLevel=0;}releaseRoots(r);if(PMSettingBool("skinEnabled"))logf("Skin load deferred until chart information is ready");if(level)videoLevel=r.gchandle_new(level,false);prepareLegacy(r);}
 void levelEnd(Runtime&r){PMMetalShadersClear();clearVideos(r);if(videoLevel){r.gchandle_free(videoLevel);videoLevel=0;}clearLegacy();releaseRoots(r);}
-void afterChart(Runtime&r,void*level){try{loadSkin(r);}catch(const std::exception&e){logf("Skin runtime setup failed: %s",e.what());releaseRoots(r);}try{prepareVideos(r,level);}catch(const std::exception&e){logf("RPE video load failed: %s",e.what());}try{P info=r.get<P>(r.mainGame(),"levelStartInfo");NSString*identifier=info?r.string(r.get<P>(info,"songsId")):nil;NSString*folder=resourceFolder(identifier);PMMetalShadersLoad(folder);}catch(const std::exception&e){logf("RPE shader metadata scan failed: %s",e.what());}}
+void afterChart(Runtime&r,void*level){try{loadSkin(r);}catch(const std::exception&e){logf("Skin runtime setup failed: %s",e.what());releaseRoots(r);}try{prepareVideos(r,level);}catch(const std::exception&e){logf("RPE video load failed: %s",e.what());}try{NSString*identifier=pmcontent::gameplayChartID(r);NSString*folder=resourceFolder(identifier);PMMetalShadersLoad(folder);}catch(const std::exception&e){logf("RPE shader metadata scan failed: %s",e.what());}}
 void observe(int rating){if(legacyActive)legacyJudge=rating==0?2:rating==1?1:0;}
 void flushHitEffects(Runtime&r){try{finishPackEffects(r);}catch(const std::exception&e){if(skinErrors.insert(e.what()).second)logf("Hit effect placement failed: %s",e.what());}}
 void noteMoved(Runtime&r,void*control,bool hold){flushHitEffects(r);if(!skinReady||!control)return;try{P c=control;
