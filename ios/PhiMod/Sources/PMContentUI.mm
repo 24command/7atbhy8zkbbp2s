@@ -43,6 +43,8 @@
 @property(nonatomic,strong) UIDocumentPickerViewController*importPicker;
 @property(nonatomic,strong) UIDocumentPickerViewController*scriptPicker;
 @property(nonatomic,copy) NSString*scriptChapter;
+@property(nonatomic,strong) UIDocumentPickerViewController *artPicker;
+@property(nonatomic,copy) NSString *artChapter;
 @property(nonatomic,copy) NSString*pendingImportMessage;
 @property(nonatomic,strong) NSArray*items;
 @property(nonatomic,strong) UISegmentedControl*pages;
@@ -134,6 +136,9 @@
    UTType *type=[UTType typeWithFilenameExtension:@"lua"];UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[type?:UTTypeData] asCopy:YES];
    self.scriptPicker=picker;self.scriptChapter=id;picker.delegate=self;[self presentViewController:picker animated:YES completion:nil];
   }]];
+  [a addAction:[UIAlertAction actionWithTitle:@"导入 OS 素材…" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+   UIDocumentPickerViewController *p=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypePNG,UTTypeJPEG,UTTypeGIF,UTTypeMPEG4Movie,[UTType typeWithFilenameExtension:@"webp"]?:UTTypeImage] asCopy:YES];p.allowsMultipleSelection=YES;p.delegate=self;self.artPicker=p;self.artChapter=id;[self presentViewController:p animated:YES completion:nil];
+  }]];
   if(exists)[a addAction:[UIAlertAction actionWithTitle:@"移除 OS 脚本" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action){
    UIAlertController *ask=[UIAlertController alertControllerWithTitle:@"移除此章节的 OS 脚本？" message:@"不会删除章节资源或曲目。" preferredStyle:UIAlertControllerStyleAlert];
    [ask addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
@@ -172,6 +177,7 @@
  self.importPicker=p;p.allowsMultipleSelection=YES;p.delegate=self;[self presentViewController:p animated:YES completion:nil];
 }
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController*)picker {
+ if(picker==self.artPicker){self.artPicker=nil;self.artChapter=nil;}
  if(picker==self.scriptPicker){self.scriptPicker=nil;self.scriptChapter=nil;}
  if(self.pendingExports){[PMContentStore.shared cleanupExports:self.pendingExports];self.pendingExports=nil;}
  if(picker==self.importPicker){self.importPicker=nil;picker.delegate=nil;}
@@ -255,6 +261,11 @@
 }
 - (void)documentPicker:(UIDocumentPickerViewController*)picker didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls {
  if(self.pendingExports){[PMContentStore.shared cleanupExports:self.pendingExports];self.pendingExports=nil;[picker dismissViewControllerAnimated:YES completion:nil];return;}
+ if(picker==self.artPicker){NSString *chapter=self.artChapter;self.artPicker=nil;self.artChapter=nil;if(!urls.count||self.busy)return;
+  self.busy=YES;NSArray *files=[urls copy];dispatch_async(self.worker,^{NSUInteger count=0;NSString *failure=nil;
+   for(NSURL *url in files){@autoreleasepool{BOOL access=[url startAccessingSecurityScopedResource];NSError *e=nil;if([PMContentStore.shared importChapterArt:url chapter:chapter error:&e])++count;else if(!failure)failure=[NSString stringWithFormat:@"%@：%@",url.lastPathComponent,e.localizedDescription];if(access)[url stopAccessingSecurityScopedResource];}}
+   dispatch_async(dispatch_get_main_queue(),^{self.busy=NO;[self reload];self.pendingImportMessage=[NSString stringWithFormat:@"OS 贴图已导入 %lu/%lu%@%@",(unsigned long)count,(unsigned long)files.count,failure?@"\n":@"",failure?:@""];[self showPendingImportMessage];});});return;
+ }
  if(picker==self.scriptPicker){
   NSString *chapter=self.scriptChapter;self.scriptPicker=nil;self.scriptChapter=nil;NSURL *url=urls.firstObject;if(!url||self.busy)return;
   self.busy=YES;dispatch_async(self.worker,^{NSError *e=nil;BOOL access=[url startAccessingSecurityScopedResource];BOOL ok=[PMContentStore.shared setChapterScript:url chapter:chapter error:&e];if(access)[url stopAccessingSecurityScopedResource];

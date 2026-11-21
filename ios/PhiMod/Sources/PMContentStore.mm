@@ -4,6 +4,7 @@
 #import "PMContentStore.h"
 #import "PMAssetLayout.h"
 #import "PMChapterScript.h"
+#import "PMChapterArt.h"
 #import "PMChapterEditing.h"
 #import "PMChapterExportPlan.h"
 #import "PMChartConvert.h"
@@ -420,6 +421,19 @@ NSArray*remapSongOrder(NSArray*source,NSDictionary*songMap,NSSet*official,NSErro
 }
 - (BOOL)hasChapterScript:(NSString*)identifier {
  @synchronized(self){return [self.chapterAssetIDs containsObject:identifier] && [NSFileManager.defaultManager fileExistsAtPath:[[self asset:identifier] stringByAppendingPathComponent:PMChapterScriptName]];}
+}
+- (BOOL)importChapterArt:(NSURL*)url chapter:(NSString*)identifier error:(NSError**)error {
+ NSFileManager *fm=NSFileManager.defaultManager;NSDictionary *attr=[fm attributesOfItemAtPath:url.path error:error];if(!attr)return NO;
+ BOOL video=[url.pathExtension.lowercaseString isEqual:@"mp4"];
+ if(![attr[NSFileType] isEqual:NSFileTypeRegular]||[attr[NSFileSize] unsignedLongLongValue]>(video?256ull:32ull)*1024*1024){if(error)*error=err(@"图片上限 32 MiB，MP4 上限 256 MiB");return NO;}
+ BOOL valid=NO;if(video){valid=[[AVURLAsset URLAssetWithURL:url options:nil] tracksWithMediaType:AVMediaTypeVideo].count>0;}else{CGImageSourceRef source=CGImageSourceCreateWithURL((__bridge CFURLRef)url,NULL);valid=source&&CGImageSourceGetCount(source)>0;if(source)CFRelease(source);}
+ if(!valid){if(error)*error=err(@"无法读取此图片");return NO;}
+ @synchronized(self){if(!safeID(identifier)||![self.chapterAssetIDs containsObject:identifier]){if(error)*error=err(@"自制章节不存在");return NO;}
+  NSString *dest=PMOSArtPath([self asset:identifier],url.lastPathComponent);if(!dest){if(error)*error=err(@"请选择文件名有效的 PNG、JPEG、WebP、GIF 或 MP4");return NO;}
+  if([fm fileExistsAtPath:dest]){if(error)*error=err(@"已有同名贴图，未覆盖");return NO;}
+  if(![fm createDirectoryAtPath:dest.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:error])return NO;
+  NSData *data=[NSData dataWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:error];if(!data||![data writeToFile:dest options:NSDataWritingAtomic error:error])return NO;self.revision++;return YES;
+ }
 }
 - (BOOL)setChapterScript:(NSURL*)url chapter:(NSString*)identifier error:(NSError**)error {
  NSData *data=nil;

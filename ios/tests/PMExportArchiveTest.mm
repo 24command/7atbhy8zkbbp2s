@@ -5,6 +5,7 @@
 #import "../PhiMod/Sources/PMChapterExportPlan.h"
 #import "../PhiMod/Sources/PMAssetLayout.h"
 #import "../PhiMod/Sources/PMChapterScript.h"
+#import "../PhiMod/Sources/PMChapterArt.h"
 #include <cassert>
 #include <cstdio>
 static void testChapterScope() {
@@ -53,13 +54,24 @@ int main(){@autoreleasepool{
  NSData *binary=[NSData dataWithBytes:"\033Lua" length:4];NSString *legacy=[old stringByAppendingPathComponent:PMChapterScriptName];
  assert([binary writeToFile:legacy atomically:YES]);assert(!PMChapterScriptData([NSURL fileURLWithPath:legacy],nil));
  assert([PMRelocateAsset(root,@"chapters",@"pm_demo") isEqual:chapter] && [f fileExistsAtPath:legacy]);
+ // Seed the installed chapter so export staging must preserve the OS art subtree.
+ NSString *artName=@"Panel.png";
+ NSString *artPath=PMOSArtPath(chapter,artName);
+ assert(artPath);
+ assert([f createDirectoryAtPath:artPath.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:&error]);
+ NSData *art=[[NSData alloc] initWithBase64EncodedString:@"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNQaPgPAAJjAaB56d6tAAAAAElFTkSuQmCC" options:0];
+ assert(art.length && [art writeToFile:artPath atomically:YES]);
  assert([f copyItemAtPath:chapter toPath:[source stringByAppendingPathComponent:@"chapter"] error:&error]);
  assert(PMCreateArchive(source,out,&error));
  mz_zip_archive z{};assert(mz_zip_reader_init_file(&z,out.fileSystemRepresentation,0));mz_zip_archive_file_stat st{};
  assert(mz_zip_reader_file_stat(&z,0,&st));assert(strcmp(st.m_filename,"chapter.json")==0);
+ assert(mz_zip_reader_locate_file(&z,"chapter/os-media/Panel.png",nullptr,MZ_ZIP_FLAG_CASE_SENSITIVE)>=0);
  int n=mz_zip_reader_locate_file(&z,"music.ogg",nullptr,0);assert(n>=0);assert(mz_zip_reader_file_stat(&z,n,&st));assert(st.m_method==0);assert(st.m_uncomp_size==32ull*1024*1024);mz_zip_reader_end(&z);
- NSString*target=[root stringByAppendingPathComponent:@"roundtrip"];assert(PMExtractArchive(out,target,&error).count==3);assert([PMFileSHA256([target stringByAppendingPathComponent:@"music.ogg"])isEqualToString:hash]);
+ const NSUInteger expectedFileCount=4; // manifest, music, chapter script and OS art
+ NSString*target=[root stringByAppendingPathComponent:@"roundtrip"];assert(PMExtractArchive(out,target,&error).count==expectedFileCount);assert([PMFileSHA256([target stringByAppendingPathComponent:@"music.ogg"])isEqualToString:hash]);
  assert([PMChapterScriptData([NSURL fileURLWithPath:[target stringByAppendingPathComponent:@"chapter/os.lua"]],&error) isEqual:script]);
+ NSString *restoredArt=PMOSArtPath([target stringByAppendingPathComponent:@"chapter"],artName);
+ assert(restoredArt && [[NSData dataWithContentsOfFile:restoredArt] isEqualToData:art]);
  // The coordinated extractor reports verified completion for this URL alone.
  NSURL *selectedURL=[NSURL fileURLWithPath:out];
  __block unsigned long long last=0, expectedBytes=0; __block bool started=false, completed=false;
@@ -69,7 +81,7 @@ int main(){@autoreleasepool{
   if(!started){assert(done==0);expectedBytes=total;started=true;}
   assert(total==expectedBytes);last=done;completed=done==total;
  }];
- assert(PMExtractArchiveURL(selectedURL,[root stringByAppendingPathComponent:@"progress"],&error).count==3);
+ assert(PMExtractArchiveURL(selectedURL,[root stringByAppendingPathComponent:@"progress"],&error).count==expectedFileCount);
  [NSNotificationCenter.defaultCenter removeObserver:observer];assert(started && completed && expectedBytes>32ull*1024*1024);
  NSError *limitError=nil; NSString *limited=[root stringByAppendingPathComponent:@"limited"];
  assert(!PMExtractArchiveLimited(out,limited,10,32ull*1024*1024,32ull*1024*1024,&limitError));
@@ -77,7 +89,7 @@ int main(){@autoreleasepool{
  // A bad member must not hide its error or poison the next member of a batch.
  NSString*bad=[root stringByAppendingPathComponent:@"broken.zip"];assert([@"not a zip" writeToFile:bad atomically:YES encoding:NSUTF8StringEncoding error:&error]);
  NSUInteger success=0,failure=0;NSArray*batch=@[out,bad,out];
- for(NSUInteger i=0;i<batch.count;++i){@autoreleasepool{NSError*itemError=nil;NSString*dest=[root stringByAppendingPathComponent:[NSString stringWithFormat:@"batch-%lu",(unsigned long)i]];NSArray*files=PMExtractArchiveURL([NSURL fileURLWithPath:batch[i]],dest,&itemError);if(files){++success;assert(files.count==3&&itemError==nil);assert([PMFileSHA256([dest stringByAppendingPathComponent:@"music.ogg"])isEqualToString:hash]);}else{++failure;assert(itemError&&[itemError.domain isEqualToString:@"PhiMod.Archive"]);assert(![f fileExistsAtPath:dest]);}}}
+ for(NSUInteger i=0;i<batch.count;++i){@autoreleasepool{NSError*itemError=nil;NSString*dest=[root stringByAppendingPathComponent:[NSString stringWithFormat:@"batch-%lu",(unsigned long)i]];NSArray*files=PMExtractArchiveURL([NSURL fileURLWithPath:batch[i]],dest,&itemError);if(files){++success;assert(files.count==expectedFileCount&&itemError==nil);assert([PMFileSHA256([dest stringByAppendingPathComponent:@"music.ogg"])isEqualToString:hash]);}else{++failure;assert(itemError&&[itemError.domain isEqualToString:@"PhiMod.Archive"]);assert(![f fileExistsAtPath:dest]);}}}
  assert(success==2&&failure==1);
  // Re-export replaces the finalized output, but a failure preserves that last good file.
  assert(PMCreateArchive(source,out,&error));NSString*before=PMFileSHA256(out);
