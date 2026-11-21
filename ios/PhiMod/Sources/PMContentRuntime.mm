@@ -501,7 +501,6 @@ void chapterReady(Runtime&r,P self){
   bindChapterCover(r,self,card,id,db);
   if([id hasPrefix:@"pm_"]){bool no=false;r.call(r.get<P>(card,"locked"),"SetActive",{"System.Boolean"},{&no});}
   if([id hasPrefix:@"pm_"]){bool hasSongs=r.count(r.get<P>(info,"songs"))>0;r.call(r.get<P>(card,"play"),"set_interactable",{"System.Boolean"},{&hasSongs});}
-  log([NSString stringWithFormat:@"Content custom chapter cover primed: %@ key=%@",id,imageKey]);
  }
  r.stat(r.type("UnityEngine.UI","LayoutRebuilder"),"ForceRebuildLayoutImmediate",{"UnityEngine.RectTransform"},{r.get<P>(self,"chapterPanel")});
  if(hiddenChapterCards>0&&cards&&r.array_length(cards)>1){
