@@ -238,6 +238,77 @@ static void testChallengeActions(void) {
     PMOSStop(s);
 }
 
+static void testChallengeBindings(void) {
+    PMOSSession *s = start(CHALLENGE_FIXTURE
+        "hotspot{challenge='locked'}; frame{challenge='gate'}; image{cover=2,challenge='gate'};"
+        "card(3,'Locked','Preview',{challenge='locked'});"
+        "card(1,nil,nil,{challenge='gate',heading='Intro',seconds=2.5});"
+        "card(1,nil,nil,{challenge='gate',seconds=0}); card(1,nil,nil,{challenge='gate',heading=''});"
+        "card(1,nil,nil,{}); card(1); card(1,nil,nil,{seconds=3,heading='Legacy'});"
+        "challenge(d); d.id='locked'; d.unlocked=false; challenge(d)");
+    assert(s && p.nodes == 3 && p.count == 7 && p.challengeCount == 2);
+    assert(p.elements[0].challenge == 2 && !p.elements[0].handler);
+    assert(p.cards[0].challenge == 2 && p.cards[0].song == 3 && !p.cards[0].speech);
+    assert(p.challenges[p.cards[0].challenge - 1].state == PMOSChallengeLocked);
+    assert(!strcmp(p.cards[0].title, "Locked") && !strcmp(p.cards[0].caption, "Preview"));
+    for (int i = 1; i <= 2; ++i) assert(p.elements[i].challenge == 1 && p.elements[i].handler);
+    for (int i = 1; i <= 3; ++i) assert(p.cards[i].challenge == 1 && p.cards[i].speech);
+    assert(p.cards[1].seconds == 2.5 && !strcmp(p.cards[1].speechHeading, "Intro"));
+    assert(p.cards[4].speech && !p.cards[4].seconds && !p.cards[4].speechHeading[0] && !p.cards[4].challenge);
+    assert(!p.cards[5].speech && !p.cards[5].challenge);
+    assert(p.cards[6].speech && !p.cards[6].challenge && p.cards[6].seconds == 3);
+    assert(!strcmp(p.cards[6].speechHeading, "Legacy"));
+    memset(&p, 0, sizeof(p));
+    expectAction(s, 0, 0, -1);
+    for (int i = 1; i <= 2; ++i) {
+        PMOSAction action;
+        assert(PMOSClick(s, i, &action) && action.challenge == 1 && !action.song && action.dest == -1);
+    }
+    PMOSStop(s);
+
+    assert(!run("hotspot{challenge='missing'}") && strstr(p.error, "unknown challenge"));
+    assert(!run("card(1,nil,nil,{challenge='missing'})") && strstr(p.error, "unknown challenge"));
+    assert(!run(CHALLENGE_FIXTURE "challenge(d); frame{challenge='gate',open=1}"));
+    assert(!run(CHALLENGE_FIXTURE "challenge(d); image{cover=1,challenge='gate',to='main'}"));
+    assert(!run(CHALLENGE_FIXTURE "challenge(d); hotspot{challenge='gate',onClick=function() end}"));
+    assert(!run(CHALLENGE_FIXTURE "challenge(d); card(1,nil,nil,{challenge='gate',seconds=-1})"));
+    assert(!run(CHALLENGE_FIXTURE "challenge(d); card(1,nil,nil,{challenge='gate',heading=false})"));
+    assert(!run(CHALLENGE_FIXTURE "challenge(d); card(1,nil,nil,{challenge='gate',open=1})"));
+}
+
+static void testChallengeProgress(void) {
+    TestStore store = {0};
+    store.entries[0] = (PMOSProgressChange){"door.gate.clear", 1};
+    store.entries[1] = (PMOSProgressChange){"door.gate.fail", 4};
+    store.count = 2;
+    PMOSSession *s = startProgress(CHALLENGE_FIXTURE
+        "local before=challengeProgress('gate'); local fresh=challengeProgress('fresh');"
+        "if before.cleared==true and before.failures==4 and fresh.cleared==false and fresh.failures==0 "
+        "then card(1,'history') end;"
+        "d.unlocked=false; local state,n,info=challenge(d);"
+        "if state=='clear' and n==4 and info.available==true and info.cleared==true and info.failures==4 "
+        "then card(2,'replay') end;"
+        "d.id='fresh'; local _,_,locked=challenge(d);"
+        "if locked.available==false and locked.cleared==false and locked.failures==0 then card(3,'locked') end;"
+        "hotspot{challenge='gate'}; hotspot{onClick=function() progress.set('door.gate.fail',-2);"
+        "local now=challengeProgress('gate'); if now.cleared and now.failures==0 then return {open=3} end end}",
+        &store);
+    assert(s && p.count == 3 && !strcmp(p.cards[0].title, "history"));
+    assert(!strcmp(p.cards[1].title, "replay") && !strcmp(p.cards[2].title, "locked"));
+    PMOSAction action;
+    assert(p.elements[0].handler && PMOSClick(s, 0, &action) && action.challenge == 1);
+    expectAction(s, 1, 3, -1);
+    assert(store.commits == 1 && store.entries[1].value == -2);
+    PMOSStop(s);
+    assert(!run("challengeProgress()"));
+    assert(!run("challengeProgress('a','b')"));
+    assert(!run("challengeProgress('bad/id')"));
+    assert(!run("challengeProgress(7)"));
+    store.failRead = 1;
+    assert(!startProgress("progress.set('pending',1); challengeProgress('gate')", &store));
+    assert(strstr(p.error, "progress read failed") && store.commits == 1);
+}
+
 static void testChallengeValidation(void) {
     const char *bad[] = {
         "d.id=nil", "d.id=''", "d.id='a/b'", "d.id='a\\0b'", "challenge(d)",
@@ -408,5 +479,5 @@ static void testClickBudgets(void) {
     assert(!PMOSStart("x", 2097153, 1, &p) && p.error[0]);
 }
 
-int main(void){testChallengeActions();testChallengeValidation();testLayout();testPersistentClicks();testHandlerFailures();testCheckpoints();testProgressTransactions();testProgressValidation();testProgressBudget();testNodeTiming();testVisibility();testClickBudgets();assert(run("return {}")&&!p.listFirst&&!p.count);assert(run("home('list'); for i=1,song_count do card(i,'Title','Body') end"));assert(p.listFirst&&p.count==3&&p.cards[2].song==3&&!strcmp(p.cards[1].caption,"Body"));
+int main(void){testChallengeBindings();testChallengeProgress();testChallengeActions();testChallengeValidation();testLayout();testPersistentClicks();testHandlerFailures();testCheckpoints();testProgressTransactions();testProgressValidation();testProgressBudget();testNodeTiming();testVisibility();testClickBudgets();assert(run("return {}")&&!p.listFirst&&!p.count);assert(run("home('list'); for i=1,song_count do card(i,'Title','Body') end"));assert(p.listFirst&&p.count==3&&p.cards[2].song==3&&!strcmp(p.cards[1].caption,"Body"));
  assert(!run("card(4)")&&strstr(p.error,"os.lua:1:"));assert(!run("home('bad')"));assert(!run("while true do end")&&strstr(p.error,"limit"));assert(!run("local t='a';for i=1,30 do t=t..t end"));assert(!run("require('os')"));assert(!run("for i=1,129 do card(1) end"));assert(!run("card("));assert(!run("\033Lua"));assert(run("card(2)")&&p.count==1);puts("chapter OS Lua tests passed");return 0;}

@@ -3,10 +3,13 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-typedef struct {int song,speech; double seconds;char speechHeading[192];char title[256], caption[1024];} PMOSCard;
+/* On cards and nodes, challenge is 0 when unbound, otherwise a one-based index
+   into page->challenges, including locked entries. A bound card keeps its song
+   for presentation; activation uses the challenge and is inert when locked. */
+typedef struct {int song,speech; double seconds;char speechHeading[192];char title[256], caption[1024];int challenge;} PMOSCard;
 enum {PMOSFrame, PMOSImage, PMOSHotspot};
 enum { PMOSMaxNodes = 256, PMOSMaxScreens = 32, PMOSScreenNameSize = 64 };
-typedef struct {double x,y,w,h,start,duration,fade;int kind,parent,depth,cover,open,screen,dest,fill,loop,handler,hidden;unsigned rgba;char id[64],src[256],label[256],to[64];} PMOSNode;
+typedef struct {double x,y,w,h,start,duration,fade;int kind,parent,depth,cover,open,screen,dest,fill,loop,handler,hidden;unsigned rgba;char id[64],src[256],label[256],to[64];int challenge;} PMOSNode;
 enum { PMOSProgressKeyMax = 64, PMOSProgressAccessLimit = 128 };
 enum { PMOSMaxChallenges = 32, PMOSMaxChallengeTiers = 16,
        PMOSChallengeIdMax = PMOSProgressKeyMax - (sizeof("door..clear") - 1) };
@@ -51,7 +54,8 @@ PMOSSession *PMOSStartWithProgress(const char *source, size_t len, int songs,
    Serialize clicks and stop for a given session. A failed start sets page->error. */
 PMOSSession *PMOSStart(const char *source, size_t len, int songs, PMOSPage *page);
 void PMOSStop(PMOSSession *session);
-/* Pass the zero-based element index (handler is a presence flag). Static actions
+/* Pass the zero-based element index (handler flags a Lua callback or a playable
+   static challenge, both dispatched via PMOSClick). Static actions
    are supported too. song defaults to 0, dest and element to -1. For show/hide,
    element indexes page->elements on the clicked screen and visible is 1/0.
    checkpoint is 0 for ordinary actions, 1 for session, or 2 for relaunch.

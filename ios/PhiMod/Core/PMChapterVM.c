@@ -8,7 +8,7 @@
 
 enum { MemoryLimit = 8 * 1024 * 1024, SourceLimit = 2 * 1024 * 1024, InstructionLimit = 150000 };
 
-typedef struct { int ref, song, dest, screen; char id[sizeof(((PMOSNode *)0)->id)]; } ClickTarget;
+typedef struct { int ref, song, dest, screen, challenge; char id[sizeof(((PMOSNode *)0)->id)]; } ClickTarget;
 struct PMOSSession {
     lua_State *L;
     size_t bytes;
@@ -142,6 +142,24 @@ static void text(lua_State *L, int i, char *dst, size_t cap) {
     dst[n] = 0;
 }
 
+/* During declaration the binding field holds a Lua registry reference so the
+   ID survives until all challenges have been declared. Zero means absent. */
+static int challengeBindingRef(lua_State *L, int table) {
+    lua_getfield(L, table, "challenge");
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        return 0;
+    }
+    luaL_checktype(L, -1, LUA_TSTRING);
+    size_t len;
+    const char *id = lua_tolstring(L, -1, &len);
+    if (!len || len > PMOSChallengeIdMax) return luaL_error(L, "invalid challenge id length");
+    validateKeyChars(L, id, len);
+    return luaL_ref(L, LUA_REGISTRYINDEX);
+}
+
+#include "PMChapterLayout.inc"
+
 static int card(lua_State *L) {
     PMOSPage *page = declarationPage(L);
     lua_Integer index = luaL_checkinteger(L, 1);
@@ -153,7 +171,19 @@ static int card(lua_State *L) {
     text(L, 3, c->caption, sizeof(c->caption));
     if (!lua_isnoneornil(L, 4)) {
         luaL_checktype(L, 4, LUA_TTABLE);
-        c->speech = 1;
+        c->challenge = challengeBindingRef(L, 4);
+        c->speech = !c->challenge; /* A legacy options table, even {}, enables speech. */
+        if (c->challenge) {
+            lua_pushnil(L);
+            while (lua_next(L, 4)) {
+                char key[sizeof("challenge")];
+                word(L, -2, key, sizeof(key));
+                if (!strcmp(key, "seconds") || !strcmp(key, "heading")) c->speech = 1;
+                else if (strcmp(key, "challenge")) return luaL_error(L, "unknown card challenge option: %s", key);
+                lua_pop(L, 1);
+            }
+            if (!c->speech) return 0;
+        }
         lua_getfield(L, 4, "seconds");
         c->seconds = luaL_optnumber(L, -1, 0);
         lua_pop(L, 1);
@@ -165,8 +195,33 @@ static int card(lua_State *L) {
     return 0;
 }
 
-#include "PMChapterLayout.inc"
 #include "PMChapterChallenge.inc"
+
+static int resolveChallengeBinding(lua_State *L, const PMOSPage *page, int ref) {
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+    const char *id = lua_tostring(L, -1);
+    for (int i = 0; i < page->challengeCount; ++i) {
+        if (!strcmp(id, page->challenges[i].id)) {
+            luaL_unref(L, LUA_REGISTRYINDEX, ref);
+            lua_pop(L, 1);
+            return i + 1;
+        }
+    }
+    return luaL_error(L, "unknown challenge: %s", id);
+}
+
+static void resolveChallengeBindings(lua_State *L, PMOSPage *page) {
+    for (int i = 0; i < page->nodes; ++i) {
+        PMOSNode *node = &page->elements[i];
+        if (!node->challenge) continue;
+        node->challenge = resolveChallengeBinding(L, page, node->challenge);
+        node->handler = page->challenges[node->challenge - 1].state != PMOSChallengeLocked;
+    }
+    for (int i = 0; i < page->count; ++i) {
+        PMOSCard *card = &page->cards[i];
+        if (card->challenge) card->challenge = resolveChallengeBinding(L, page, card->challenge);
+    }
+}
 
 typedef struct { const char *source; size_t length; } Script;
 
@@ -186,10 +241,13 @@ static int evaluate(lua_State *L) {
     lua_setglobal(L, "progress");
     lua_pushcfunction(L, declareChallenge);
     lua_setglobal(L, "challenge");
+    lua_pushcfunction(L, challengeProgress);
+    lua_setglobal(L, "challengeProgress");
     registerLayout(L);
     if (luaL_loadbufferx(L, script->source, script->length, "@os.lua", "t")) return lua_error(L);
     lua_call(L, 0, 0);
     resolveLinks(L);
+    resolveChallengeBindings(L, declarationPage(L));
     return 0;
 }
 
@@ -263,6 +321,7 @@ PMOSSession *PMOSStartWithProgress(const char *src, size_t len, int songs,
     for (int i = 0; i < s->nodes; ++i) {
         const PMOSNode *node = &page->elements[i];
         ClickTarget *target = &s->clicks[i];
+        target->challenge = node->handler ? node->challenge : 0;
         target->song = node->open;
         target->dest = node->dest;
         target->screen = node->screen;
@@ -365,6 +424,7 @@ int PMOSClick(PMOSSession *s, int node, PMOSAction *out) {
     }
     ClickTarget *target = &s->clicks[node];
     if (!target->ref) {
+        out->challenge = target->challenge;
         out->song = target->song;
         out->dest = target->dest;
         return 1;

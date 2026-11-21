@@ -50,6 +50,30 @@ static void challengeTiers(lua_State *L, PMOSChallenge *c) {
     lua_pop(L, 1);
 }
 
+/* Keep the installed key format behind an API so authored interfaces can use
+   arbitrary artwork and query another challenge before declaring its widget. */
+static void readChallengeHistory(lua_State *L, const char *id, int *cleared, int *failures) {
+    char key[PMOSProgressKeyMax + 1];
+    snprintf(key, sizeof(key), "door.%s.clear", id);
+    *cleared = readProgress(L, session(L), key) > 0;
+    snprintf(key, sizeof(key), "door.%s.fail", id);
+    int count = readProgress(L, session(L), key);
+    *failures = count > 0 ? count : 0;
+}
+
+static int challengeProgress(lua_State *L) {
+    char id[PMOSChallengeIdMax + 1];
+    if (lua_gettop(L) != 1) return luaL_error(L, "challengeProgress expects one id");
+    word(L, 1, id, sizeof(id));
+    validateKeyChars(L, id, strlen(id));
+    int cleared, failures;
+    readChallengeHistory(L, id, &cleared, &failures);
+    lua_createtable(L, 0, 2);
+    lua_pushboolean(L, cleared); lua_setfield(L, -2, "cleared");
+    lua_pushinteger(L, failures); lua_setfield(L, -2, "failures");
+    return 1;
+}
+
 static int declareChallenge(lua_State *L) {
     PMOSPage *page = declarationPage(L);
     PMOSSession *s = session(L);
@@ -71,17 +95,17 @@ static int declareChallenge(lua_State *L) {
     lua_pop(L, 1);
     challengeTiers(L, c);
 
-    char key[PMOSProgressKeyMax + 1];
-    snprintf(key, sizeof(key), "door.%s.clear", c->id);
-    int clear = readProgress(L, s, key);
-    snprintf(key, sizeof(key), "door.%s.fail", c->id);
-    int failures = readProgress(L, s, key);
-    c->failures = failures > 0 ? failures : 0;
-    c->state = clear > 0 ? PMOSChallengeClear : unlocked ? PMOSChallengeClosed : PMOSChallengeLocked;
+    int clear;
+    readChallengeHistory(L, c->id, &clear, &c->failures);
+    c->state = clear ? PMOSChallengeClear : unlocked ? PMOSChallengeClosed : PMOSChallengeLocked;
     ++page->challengeCount;
     lua_pushstring(L, c->state == PMOSChallengeClear ? "clear" : unlocked ? "closed" : "locked");
     lua_pushinteger(L, c->failures);
-    return 2;
+    lua_createtable(L, 0, 3);
+    lua_pushboolean(L, c->state != PMOSChallengeLocked); lua_setfield(L, -2, "available");
+    lua_pushboolean(L, clear); lua_setfield(L, -2, "cleared");
+    lua_pushinteger(L, c->failures); lua_setfield(L, -2, "failures");
+    return 3;
 }
 
 static int challengeAction(lua_State *L, PMOSSession *s) {

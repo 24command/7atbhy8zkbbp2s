@@ -46,6 +46,8 @@ static int layoutNode(lua_State *L){PMOSPage *p=declarationPage(L);luaL_checktyp
   if(n->id[0]&&!strcmp(prev->id,n->id))return luaL_error(L,"duplicate element: %s",n->id);
   if(parent[0]&&!strcmp(prev->id,parent)&&prev->kind==PMOSFrame){n->parent=i;n->depth=prev->depth+1;}}
  if((parent[0]&&n->parent<0)||n->depth>8)return luaL_error(L,"missing parent frame or nesting too deep: %s",parent);
+ n->challenge=challengeBindingRef(L,1);
+ if(n->challenge&&(n->open||n->to[0]))return luaL_error(L,"challenge cannot be combined with open or to");
  if(n->open&&n->to[0])return luaL_error(L,"choose either open or to");
  if(n->kind==PMOSImage){n->cover=songField(L,"cover");fieldText(L,"src",n->src,sizeof(n->src));if(!!n->cover==!!n->src[0])return luaL_error(L,"image needs exactly one of src or cover");
   if(n->src[0]&&(n->src[0]=='.'||strpbrk(n->src,"/\\:")))return luaL_error(L,"src must be a local media filename");
@@ -54,11 +56,12 @@ static int layoutNode(lua_State *L){PMOSPage *p=declarationPage(L);luaL_checktyp
  lua_getfield(L,1,"onClick");
  if(!lua_isnil(L,-1)){
   if(!lua_isfunction(L,-1))return luaL_error(L,"onClick expects a function");
+  if(n->challenge)return luaL_error(L,"challenge cannot be combined with onClick");
   if(n->open||n->to[0])return luaL_error(L,"onClick cannot be combined with open or to");
   session(L)->clicks[pos].ref=luaL_ref(L,LUA_REGISTRYINDEX);
   n->handler=1;
  }else lua_pop(L,1);
- if(n->kind==PMOSHotspot&&!n->open&&!n->to[0]&&!n->handler)return luaL_error(L,"hotspot needs open, to or onClick");
+ if(n->kind==PMOSHotspot&&!n->open&&!n->to[0]&&!n->handler&&!n->challenge)return luaL_error(L,"hotspot needs open, to, onClick or challenge");
  p->nodes++;return 0;}
 static void resolveLinks(lua_State *L){PMOSPage *p=declarationPage(L);for(int i=0;i<p->nodes;i++){PMOSNode *n=&p->elements[i];if(!n->to[0])continue;
  n->dest=findScreen(p->names,p->screens,n->to);if(n->dest<0)luaL_error(L,"unknown target screen: %s",n->to);}}
