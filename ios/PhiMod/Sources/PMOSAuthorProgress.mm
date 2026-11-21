@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <fcntl.h>
+#include <mutex>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -133,9 +134,19 @@ bool replaceValues(int directory, NSString *name, NSDictionary *values) {
 
 - (BOOL)commitValues:(NSDictionary<NSString *, NSNumber *> *)values {
     if (NSThread.isMainThread || !validValues(values)) return NO;
-    if (![NSFileManager.defaultManager createDirectoryAtPath:_directory withIntermediateDirectories:YES
-                                                  attributes:nil error:nullptr]) return NO;
-    File directory(open(_directory.fileSystemRepresentation, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+    // Separate instances share this mutex. Acquire it before directory setup
+    // and hold it through replacement, with the per-chapter file lock inside.
+    static std::mutex commitMutex;
+    const std::lock_guard<std::mutex> guard(commitMutex);
+    constexpr int directoryFlags = O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC;
+    int directoryFD = open(_directory.fileSystemRepresentation, directoryFlags);
+    if (directoryFD < 0 && errno == ENOENT) {
+        [NSFileManager.defaultManager createDirectoryAtPath:_directory withIntermediateDirectories:YES
+                                                attributes:nil error:nullptr];
+        // Another process may have created it. The verified open decides success.
+        directoryFD = open(_directory.fileSystemRepresentation, directoryFlags);
+    }
+    File directory(directoryFD);
     if (directory.fd < 0) return NO;
     // Lock a stable sibling inode across the entire read/merge/rename.
     int fd;
