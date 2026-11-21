@@ -12,6 +12,7 @@
 #include "../Core/PMCoverGeometry.hpp"
 #include "PMContentRuntime.hpp"
 #include "PMUnlockRuntime.hpp"
+#import "PMUnlockMedia.h"
 #include "PMRuntimeFeatures.hpp"
 #import "PMContentStore.h"
 #import "PMChapterOS.h"
@@ -592,6 +593,8 @@ void completeSelectorAsset(Runtime&r,P asset){
  log([NSString stringWithFormat:@"Content selected %@ request completed in %.1f ms",music?@"audio":@"cover",(selectorNow()-began)*1000]);
 }
 }
+static bool chapterOSAwaitingSelector=false;
+static BOOL startCheckpointSong(Runtime&,P,NSString *chapter,NSString *installedID,NSString *difficulty);
 static void beginChapterOS(Runtime&r,P selector){
  if(pendingSong.length)return;
  P chapter=r.get<P>(selector,"nowChapterInfo");if(!chapter)return;
@@ -602,16 +605,30 @@ static void beginChapterOS(Runtime&r,P selector){
   auto &game=*runtime;P items=game.call(selector,"get_SongItems");for(int i=0,n=game.count(items);i<n;++i){P item=game.at(items,i),song=game.get<P>(item,"songInfo");if(![game.string(game.get<P>(song,"songsId")) isEqual:group])continue;
    game.put(selector,"nowSong",i);game.put(selector,"targetSong",i);game.put(selector,"nowSongSelectorValue",float(i));game.put(selector,"lastFrameSongSelectorValue",float(i));game.put(selector,"listMoveSpeed",0.f);game.call(selector,"SetPosition");game.call(selector,"SetText");return YES;
   }
- }catch(const std::exception&e){log([NSString stringWithFormat:@"Chapter OS song selection: %s",e.what()]);}return NO;});
+ }catch(const std::exception&e){log([NSString stringWithFormat:@"Chapter OS song selection: %s",e.what()]);}return NO;},^BOOL(NSString *installedID,NSString *difficulty){
+  try{
+   if(!NSThread.isMainThread||!runtime||target(*runtime,loadingSelector)!=selector)return NO;
+   return startCheckpointSong(*runtime,selector,key,installedID,difficulty);
+  }catch(const std::exception&e){log([NSString stringWithFormat:@"Chapter OS checkpoint: %s",e.what()]);return NO;}
+ });
 }
 void selectorLoadingBegin(Runtime&r,P selector){
  if(playing||r.get<bool>(selector,"exit"))return;
- if(target(r,loadingSelector)!=selector){selectorLoadingEnd(r,false);loadingSelector=r.gchandle_new(selector,false);selectionChangedAt=selectorNow();loadingSong=-1;selectorLibraryRevision=NSUIntegerMax;beginChapterOS(r,selector);}
+ if(target(r,loadingSelector)!=selector){selectorLoadingEnd(r,false);loadingSelector=r.gchandle_new(selector,false);selectionChangedAt=selectorNow();loadingSong=-1;selectorLibraryRevision=NSUIntegerMax;chapterOSAwaitingSelector=!pendingSong.length;}
  NSUInteger revision=PMContentStore.shared.revision;
  if(selectorLibraryRevision!=revision){selectorSongIDs.clear();for(NSDictionary*song in [PMContentStore.shared snapshot][@"songs"]){for(NSString*field in @[@"id",@"groupId"]){NSString*id=song[field];if(id.length)selectorSongIDs.insert(id.UTF8String);}}selectorLibraryRevision=revision;}
 }
 void selectorLoadingFrame(Runtime&r,P selector){
  if(target(r,loadingSelector)!=selector||r.get<bool>(selector,"exit"))return;
+ // A visible OS suspends native Update. Let the cold selector settle before
+ // presenting it, including when the parent immediately consumes a relaunch.
+ if(chapterOSAwaitingSelector&&!r.get<bool>(selector,"isMoving")&&r.get<P>(selector,"nowChapterInfo")){
+  int index=r.get<int>(selector,"nowSong");
+  if(index>=0&&index<r.count(r.call(selector,"get_SongItems"))){
+   chapterOSAwaitingSelector=false;
+   beginChapterOS(r,selector);
+  }
+ }
  observeSelector(r,selector);
  if(selectorDragging||selectorNow()-selectionChangedAt<.30)return;
  updateVariantCover(r,selector);
@@ -637,6 +654,7 @@ void clearSparseButtons(Runtime&r){
 }
 #include "PMSelectorRowPresentation.inc"
 void selectorLoadingEnd(Runtime&r,bool finishSelected){
+ chapterOSAwaitingSelector=false;
  PMCloseChapterOS();
  if(finishSelected&&loadingSelector)try{P owner=target(r,loadingSelector);if(r.alive(owner))observeSelector(r,owner);}catch(const std::exception&e){log([NSString stringWithFormat:@"Selector already leaving: %s",e.what()]);}
  deferredDifficultySort.clear();
@@ -779,6 +797,154 @@ void selectorFrame(Runtime&r,P selector){
 }
 
 #include "PMDifficultyPager.inc"
+
+static bool checkpointLevelMatches(NSDictionary *chart,NSString *label){
+ int stock=PMStockDifficulty(chart[@"level"]);
+ if(stock>=0)return PMStockDifficulty(label)==stock;
+ return [PMDifficultyName(chart[@"level"]) isEqualToString:label];
+}
+
+// A new authored slot on an official row still requires access to the row.
+// If the slot already existed, its individual native lock takes precedence.
+static bool checkpointOfficialOpen(Runtime &r,P song,NSDictionary *official,int slot){
+ int unlockType=0;P mask=nullptr,hint=nullptr;bool appeared=false;
+ r.call(r.mainGame(),"CheckSongUnlock",{"System.String","System.Int32&","System.Boolean[]&","System.Boolean&","System.String&"},
+        {r.get<P>(song,"songsId"),&unlockType,&mask,&appeared,&hint});
+ if(!appeared||!mask)return false;
+ NSArray *numbers=official[@"difficulty"];
+ auto openSlot=[&](int i){return uintptr_t(i)<r.array_length(mask)&&r.unbox<bool>(r.arrayAt(mask,i));};
+ if(NSUInteger(slot)<numbers.count&&[numbers[slot] doubleValue]>0)return openSlot(slot);
+ for(int i=0;i<4&&NSUInteger(i)<numbers.count;++i)if([numbers[i] doubleValue]>0&&openSlot(i))return true;
+ return false;
+}
+
+static BOOL startCheckpointSong(Runtime &r,P selector,NSString *chapter,NSString *installedID,NSString *difficulty){
+ if(!installedID.length||playing||pendingSong.length||PMUnlockMediaBusy()||!r.alive(selector)||
+    r.get<bool>(selector,"exit")||r.get<bool>(selector,"isMoving"))return NO;
+ P currentChapter=r.get<P>(selector,"nowChapterInfo");
+ if(!currentChapter||![r.string(r.get<P>(currentChapter,"chapterCode")) isEqualToString:chapter])return NO;
+ NSDictionary *db=[PMContentStore.shared snapshot];
+ NSSet *chapterIDs=[NSSet setWithArray:PMChapterSongIDs(db,officialCache,chapter)];
+ if(applied!=PMContentStore.shared.revision||![chapterIDs containsObject:installedID])return NO;
+
+ NSDictionary *authored=nil;
+ for(NSDictionary *chart in db[@"songs"])if([chart[@"id"] isEqualToString:installedID]){
+  if(authored)return NO;
+  authored=chart;
+ }
+ NSDictionary *officialSongs=PMOfficialSongMap(officialCache);
+ if(authored&&officialSongs[installedID])return NO;
+ NSString *group=[authored[@"groupId"] length]?authored[@"groupId"]:installedID;
+ NSDictionary *official=officialSongs[group];
+ if(!authored&&!official)return NO;
+ NSString *label=[difficulty stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+ if(difficulty.length&&!label.length)return NO;
+ if(label.length&&(!authored||!checkpointLevelMatches(authored,label))){
+  // Chapter membership is by installed chart ID, while native rows are grouped.
+  // Count all chapter siblings, including inactive stock variants.
+  NSDictionary *sibling=nil;
+  for(NSDictionary *chart in db[@"songs"]){
+   NSString *chartID=chart[@"id"];
+   NSString *chartGroup=[chart[@"groupId"] length]?chart[@"groupId"]:chartID;
+   if(![group isEqualToString:chartGroup]||![chapterIDs containsObject:chartID]||!checkpointLevelMatches(chart,label))continue;
+   if(sibling)return NO;
+   sibling=chart;
+  }
+  if(authored&&!sibling)return NO;
+  authored=sibling;
+ }
+ int slot;
+ if(authored){
+  slot=PMStockDifficulty(authored[@"level"]);
+  if(slot<0)slot=3; // A named chart may have authored difficulty zero.
+ }else{
+  unsigned mask=0;NSArray *numbers=official[@"difficulty"];
+  for(NSUInteger i=0;i<4&&i<numbers.count;++i)if([numbers[i] doubleValue]>0)mask|=1u<<i;
+  slot=label.length?PMStockDifficulty(label):phimod::availableDifficulty(mask,r.get<int>(selector,"nowLevel"));
+  if(slot<0||!(mask&(1u<<slot)))return NO;
+ }
+
+ P items=r.call(selector,"get_SongItems"),item=nullptr,song=nullptr;
+ int index=-1;
+ for(int i=0,n=r.count(items);i<n;++i){
+  P row=r.at(items,i),info=r.get<P>(row,"songInfo");
+  if(![r.string(r.get<P>(info,"songsId")) isEqualToString:group])continue;
+  if(item)return NO;
+  index=i;item=row;song=info;
+ }
+ if(!item)return NO;
+ P numbers=r.get<P>(song,"difficulty");
+ if(!numbers||uintptr_t(slot)>=r.array_length(numbers))return NO;
+ // Array.GetValue(Int32) boxes the element as Single. An authored ID proves
+ // chart existence independently of its rating or the previous AT binding.
+ if(!authored&&!(r.unbox<float>(r.arrayAt(numbers,slot))>0))return NO;
+ if(official&&!checkpointOfficialOpen(r,song,official,slot))return NO;
+ P start=r.get<P>(selector,"startButton");
+ if(!r.alive(start)||!r.unbox<bool>(r.call(start,"IsActive"))||pmunlock::selectorButtonBlocked(r,start))return NO;
+
+ r.put(selector,"nowSong",index);r.put(selector,"targetSong",index);
+ r.put(selector,"nowSongSelectorValue",float(index));r.put(selector,"lastFrameSongSelectorValue",float(index));
+ r.put(selector,"listMoveSpeed",0.f);r.call(selector,"SetPosition");
+ freezeChallengeDifficulties(r,selector);
+ prepareDifficultyGroup(r,selector);
+ if(authored&&PMStockDifficulty(authored[@"level"])>=0){
+  // Stock variants can share a slot across chapters. Select the resolved ID
+  // in the runtime library only; leave the persisted chartSelections alone.
+  auto members=variants.find(group.UTF8String);
+  if(members==variants.end()||!members->second.count(slot))return NO;
+  if(hasDifficultyPager(selector)&&slot==3){
+   auto at=stockAT.find(group.UTF8String);
+   if(at==stockAT.end())return NO;
+   if(![at->second[@"id"] isEqualToString:authored[@"id"]])at->second=authored;
+  }else if(![members->second.at(slot)[@"id"] isEqualToString:authored[@"id"]]){
+   members->second.at(slot)=authored;
+   r.arrayPutFloat(numbers,slot,std::max(.1,PMDifficultyNumber(authored[@"difficulty"])));
+   pmunlock::difficultyChanged(r);recordSlot=-1;sparseSlot=-1;initializedSlot=-1;
+   deferredDifficultySort.request(uintptr_t(selector));refreshVariantRecords(r,selector,item,group);
+  }
+  if(hasDifficultyPager(selector))rebuildDifficultyEntries(group);
+ }
+ if(hasDifficultyPager(selector)){
+  // The pager contains the effective stock members, the original AT and every extra.
+  // Bind the actual entry even when the current native slot is already AT.
+  if(target(r,difficultyItem)!=item)return NO;
+  size_t entry=0;
+  for(;entry<difficultyEntries.size();++entry){
+   NSDictionary *candidate=difficultyEntries[entry];if(!candidate)continue;
+   if(authored?[candidate[@"id"] isEqualToString:authored[@"id"]]:
+      ([candidate[@"pmOfficial"] boolValue]&&PMStockDifficulty(candidate[@"level"])==slot))break;
+  }
+  if(entry==difficultyEntries.size())return NO;
+  if(slot==3)bindTransport(r,selector,item,group,difficultyEntries[entry]);
+  difficultyPage=phimod::difficultyPageFor(entry);difficultyDirty=true;
+ }
+ if(authored||hasDifficultyPager(selector))selectExistingDifficulty(r,selector,item,slot);
+ else r.call(selector,"SetLevel",{"System.Int32"},{&slot});
+ r.call(selector,"SetText");
+ // Chapter OS suspends Update. Check the same selected-chart/chapter guard
+ // as the native challenge picker, then refresh the normal Start button.
+ P challenge=r.get<P>(selector,"challengeSongSelectorControl");
+ if(r.alive(challenge)){
+  P pick=r.get<P>(challenge,"selectButton");
+  if(r.alive(pick)&&pmunlock::blockChallengeButton(r,pick))return NO;
+ }
+ pmunlock::tick(r,selector);
+ if(target(r,loadingSelector)!=selector||pendingSong.length||applied!=PMContentStore.shared.revision||r.get<bool>(selector,"exit"))return NO;
+ items=r.call(selector,"get_SongItems");index=r.get<int>(selector,"nowSong");
+ if(index<0||index>=r.count(items)||r.at(items,index)!=item||r.get<int>(selector,"nowLevel")!=slot)return NO;
+ NSDictionary *selected=difficultyForSong(r,song,slot);
+ if(authored?![selected[@"id"] isEqualToString:authored[@"id"]]:selected!=nil)return NO;
+ P locked=r.get<P>(selector,"locked");
+ if(!r.get<bool>(item,"visible")||!r.unbox<bool>(r.call(item,"get_Unlocked"))||
+    (r.alive(locked)&&r.unbox<bool>(r.call(locked,"get_activeInHierarchy")))||!r.alive(start)||
+    !r.unbox<bool>(r.call(start,"IsActive"))||!r.unbox<bool>(r.call(start,"IsInteractable"))||
+    pmunlock::selectorButtonBlocked(r,start)||PMUnlockMediaBusy())return NO;
+ r.call(selector,"NormalStart"); // onNormalStart enforces chart and parent-chapter rules.
+ // NormalStart returns void. A lock veto leaves both signals clear. An accepted
+ // intro can still be cancelled, and a later gameplay load can still fail.
+ return PMUnlockMediaBusy()||r.get<bool>(selector,"exit");
+}
+
 
 void levelBegin(Runtime&r){difficultyLabeledID=nil;playing=true;levelID=gameplayChartID(r);lastCustom=levelID.length>0;if(chapterSelectorRoot){r.gchandle_free(chapterSelectorRoot);chapterSelectorRoot=0;}selectorLoadingEnd(r,true);}
 void levelEnd(Runtime&r){clearDifficultyPager(r);playing=false;levelID=nil;lastCustom=false;pendingSong=nil;if(chapterSelectorRoot){r.gchandle_free(chapterSelectorRoot);chapterSelectorRoot=0;}clearVisuals(r);}

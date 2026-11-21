@@ -1,4 +1,7 @@
 #import "PMChapterOS.h"
+#import "PMOSCheckpoint.h"
+#import "PMOSAuthorProgress.h"
+#import <CommonCrypto/CommonDigest.h>
 #import "PMContentStore.h"
 #import "PMChapterScript.h"
 #import "PMChapterArt.h"
@@ -43,8 +46,50 @@ static UIImage *thumb(NSString *path,NSInteger pixels){CGImageSourceRef src=CGIm
 @property(nonatomic,strong) PMChapterCanvas *canvas;
 @property(nonatomic) CGFloat aspect;
 - (void)showSong:(NSDictionary*)song;
+- (void)interruptForCheckpoint:(NSDictionary*)record relaunch:(BOOL)relaunch resume:(BOOL (^)(void))resume;
 @end
 static PMOSView *active;
+static NSDictionary *bootTarget;
+static NSString *attemptedToken;
+
+static int readStoryFlag(void *context,const char *key,int *value) {
+ PMOSAuthorProgress *progress=(__bridge PMOSAuthorProgress *)context;
+ return [progress readKey:[NSString stringWithUTF8String:key] value:value];
+}
+static int commitStoryFlags(void *context,const PMOSProgressChange *changes,size_t count) {
+ PMOSAuthorProgress *progress=(__bridge PMOSAuthorProgress *)context;
+ NSMutableDictionary *values=[NSMutableDictionary dictionaryWithCapacity:count];
+ for(size_t i=0;i<count;++i)values[[NSString stringWithUTF8String:changes[i].key]]=@(changes[i].value);
+ return [progress commitValues:values];
+}
+
+static NSString *scriptDigest(NSData *data) {
+ unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+ CC_SHA256(data.bytes,(CC_LONG)data.length,digest);
+ NSMutableString *hex=[NSMutableString stringWithCapacity:64];
+ for(unsigned char byte:digest)[hex appendFormat:@"%02x",byte];
+ return hex;
+}
+
+void PMChapterOSResumeAfterBoot(BOOL (^available)(NSString *), BOOL (^navigate)(NSString *)) {
+ NSDictionary *record=PMOSPendingCheckpoint();
+ if(!record||[attemptedToken isEqual:record[@"token"]])return;
+ NSString *chapter=record[@"chapter"];
+ attemptedToken=record[@"token"];
+ if(![PMContentStore.shared hasChapterScript:chapter]){
+  PMOSClearCheckpoint(attemptedToken);
+  PMDiagnosticsWrite("Chapter OS resume discarded: chapter or script removed");return;
+ }
+ NSString *path=[[PMContentStore.shared asset:chapter] stringByAppendingPathComponent:PMChapterScriptName];
+ NSData *source=PMChapterScriptData([NSURL fileURLWithPath:path],nil);
+ if(!source||![record[@"scriptHash"] isEqual:scriptDigest(source)]){
+  PMOSClearCheckpoint(attemptedToken);
+  PMDiagnosticsWrite("Chapter OS resume discarded: script changed");return;
+ }
+ if(!available(chapter)){PMDiagnosticsWrite("Chapter OS resume deferred: chapter unavailable");return;}
+ bootTarget=record;
+ if(!navigate(chapter)){bootTarget=nil;PMDiagnosticsWrite("Chapter OS resume deferred: navigation unavailable");}
+}
 static NSUInteger generation;
 static UIView *hostView(){for(UIScene *s in UIApplication.sharedApplication.connectedScenes)if(s.activationState==UISceneActivationStateForegroundActive && [s isKindOfClass:UIWindowScene.class])for(UIWindow *w in ((UIWindowScene*)s).windows)if(!w.hidden&&w.windowLevel==UIWindowLevelNormal&&w.rootViewController.view.window==w)return w.rootViewController.view;return nil;}
 static UIButton *control(NSString *title,id target,SEL action){UIButton *b=[UIButton buttonWithType:UIButtonTypeSystem];[b setTitle:title forState:UIControlStateNormal];b.backgroundColor=UIColor.whiteColor;b.tintColor=UIColor.blackColor;[b addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];return b;}
@@ -70,6 +115,22 @@ static UIButton *control(NSString *title,id target,SEL action){UIButton *b=[UIBu
  self.heading.text=detail?self.detail[@"title"]:self.chapterName;self.caption.text=self.detail[@"caption"];self.caption.hidden=self.caption.hidden||self.speech!=nil;self.speech.hidden=!self.opened||!detail;[self.toggle setTitle:self.opened?@"普通选曲":@"OS" forState:UIControlStateNormal];[self setNeedsLayout];}
 - (void)toggleOS{[self.speech removeFromSuperview];self.speech=nil;self.opened=!self.opened;self.detail=nil;self.art.image=nil;[self refresh];}
 - (void)closeDetail{[self.speech removeFromSuperview];self.speech=nil;self.detail=nil;self.art.image=nil;[self refresh];}
+- (void)interruptForCheckpoint:(NSDictionary*)record relaunch:(BOOL)relaunch resume:(BOOL (^)(void))resume {
+ NSError *error=nil;
+ if(relaunch&&!PMOSSaveCheckpoint(record,&error)){PMDiagnosticsWrite(error.localizedDescription.UTF8String?:"Chapter OS checkpoint write failed");return;}
+ UIView *panel=[[UIView alloc]initWithFrame:self.bounds];panel.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;panel.backgroundColor=UIColor.blackColor;
+ self.canvas.hidden=YES;[self addSubview:panel];
+ UILabel *message=[UILabel new];message.textColor=UIColor.whiteColor;message.numberOfLines=0;message.textAlignment=NSTextAlignmentCenter;
+ message.text=relaunch?@"章节连接已中断。重新打开游戏可继续。":@"章节连接已中断。";
+ UIButton *button=[UIButton buttonWithType:UIButtonTypeSystem];[button setTitle:relaunch?@"暂时返回普通选曲":@"重新连接" forState:UIControlStateNormal];button.tintColor=UIColor.whiteColor;
+ UIStackView *stack=[[UIStackView alloc]initWithArrangedSubviews:@[message,button]];stack.axis=UILayoutConstraintAxisVertical;stack.spacing=16;stack.translatesAutoresizingMaskIntoConstraints=NO;[panel addSubview:stack];
+ [NSLayoutConstraint activateConstraints:@[[stack.centerXAnchor constraintEqualToAnchor:panel.centerXAnchor],[stack.centerYAnchor constraintEqualToAnchor:panel.centerYAnchor],[stack.widthAnchor constraintLessThanOrEqualToAnchor:panel.widthAnchor multiplier:.9]]];
+ __weak UIView *weakPanel=panel;__weak PMOSView *weakOwner=self;
+ [button addAction:[UIAction actionWithHandler:^(UIAction *action){PMOSView *owner=weakOwner;if(!owner||owner!=active)return;
+  [weakPanel removeFromSuperview];[owner refresh];if(relaunch){[owner toggleOS];return;}
+  if(!resume()&&owner.opened){PMDiagnosticsWrite("Chapter OS session checkpoint target unavailable");[owner toggleOS];}
+ }] forControlEvents:UIControlEventTouchUpInside];
+}
 - (void)chooseSong{if(self.selectSong&&self.selectSong(self.detail[@"group"]))[self toggleOS];else self.caption.text=@"当前选曲列表中没有此曲目。";}
 - (NSInteger)collectionView:(UICollectionView*)v numberOfItemsInSection:(NSInteger)s{return self.cards.count;}
 - (CGSize)collectionView:(UICollectionView*)v layout:(UICollectionViewLayout*)layout sizeForItemAtIndexPath:(NSIndexPath*)p{CGFloat w=MIN(v.bounds.size.width*.62,MIN(420.,v.bounds.size.height*1.7));return CGSizeMake(MAX(1,w),MAX(1,w/1.7));}
@@ -81,13 +142,21 @@ static UIButton *control(NSString *title,id target,SEL action){UIButton *b=[UIBu
 @end
 BOOL PMChapterOSVisible(){return active.opened;}
 void PMCloseChapterOS(){++generation;if(active)[coverQueue() cancelAllOperations];[active removeFromSuperview];active=nil;}
-void PMOpenChapterOS(NSString *chapter,BOOL (^selectSong)(NSString *)){
+void PMOpenChapterOS(NSString *chapter,BOOL (^selectSong)(NSString *),BOOL (^startSong)(NSString *,NSString *)){
+ NSDictionary *resume=[bootTarget[@"chapter"] isEqual:chapter]?bootTarget:nil;
+ bootTarget=nil;
  PMContentStore *store=PMContentStore.shared;if(![store hasChapterScript:chapter])return;
  NSUInteger token=generation;NSString *file=[[store asset:chapter] stringByAppendingPathComponent:PMChapterScriptName];
  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{@autoreleasepool{
  NSError *err=nil;NSData *source=PMChapterScriptData([NSURL fileURLWithPath:file],&err);NSDictionary *db=[store snapshot];NSArray *order=PMChapterSongIDs(db,nil,chapter);auto plan=std::make_unique<PMOSPage>();
- std::shared_ptr<PMOSSession> session(source?PMOSStart((const char*)source.bytes,source.length,(int)order.count,plan.get()):nullptr,[](PMOSSession *vm){if(vm)PMOSStop(vm);});
- if(!session){PMDiagnosticsWrite([[NSString stringWithFormat:@"Chapter OS %@: %@",chapter,err.localizedDescription?:[NSString stringWithUTF8String:plan->error]] UTF8String]);return;}
+ PMOSAuthorProgress *progress=[[PMOSAuthorProgress alloc] initWithRoot:store.root chapter:chapter];
+ PMOSProgress callbacks={(__bridge void*)progress,readStoryFlag,commitStoryFlags};
+ auto *raw=source?PMOSStartWithProgress((const char*)source.bytes,source.length,(int)order.count,plan.get(),callbacks):nullptr;
+ std::shared_ptr<PMOSSession> session(raw,[progress](PMOSSession *vm){(void)progress;if(vm)PMOSStop(vm);});
+ if(!session){if(resume)PMOSClearCheckpoint(resume[@"token"]);PMDiagnosticsWrite([[NSString stringWithFormat:@"Chapter OS %@: %@",chapter,err.localizedDescription?:[NSString stringWithUTF8String:plan->error]] UTF8String]);return;}
+ NSString *digest=scriptDigest(source);
+ NSMutableArray<NSString*> *screens=[NSMutableArray arrayWithCapacity:plan->screens];
+ for(int i=0;i<plan->screens;++i){NSString *name=[NSString stringWithUTF8String:plan->names[i]];if(!name){PMDiagnosticsWrite("Chapter OS invalid UTF-8 page name");return;}[screens addObject:name];}
  NSMutableDictionary *songs=[NSMutableDictionary dictionary];for(NSDictionary *song in db[@"songs"])songs[song[@"id"]]=song;
  NSString *name=chapter;for(NSDictionary *c in db[@"chapters"])if([c[@"id"] isEqual:chapter]){name=c[@"name"];break;}
  NSMutableDictionary *bySong=[NSMutableDictionary dictionary];
@@ -102,17 +171,35 @@ void PMOpenChapterOS(NSString *chapter,BOOL (^selectSong)(NSString *)){
   if(n.label[0])model[@"label"]=[NSString stringWithUTF8String:n.label];if(n.to[0])model[@"to"]=[NSString stringWithUTF8String:n.to];
   if(n.open)model[@"song"]=bySong[order[n.open-1]];
   if(n.cover)model[@"path"]=bySong[order[n.cover-1]][@"art"];
-  if(n.src[0]){NSString *path=PMOSArtPath(chapterDir,[NSString stringWithUTF8String:n.src]);if(!path||![[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil][NSFileType] isEqual:NSFileTypeRegular]){PMDiagnosticsWrite([[NSString stringWithFormat:@"Chapter OS %@: missing or invalid image %s",chapter,n.src] UTF8String]);return;}model[@"path"]=path;}
+  if(n.src[0]){NSString *path=PMOSArtPath(chapterDir,[NSString stringWithUTF8String:n.src]);if(!path||![[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil][NSFileType] isEqual:NSFileTypeRegular]){if(resume)PMOSClearCheckpoint(resume[@"token"]);PMDiagnosticsWrite([[NSString stringWithFormat:@"Chapter OS %@: missing or invalid image %s",chapter,n.src] UTF8String]);return;}model[@"path"]=path;}
   [nodes addObject:model];
  }
  CGFloat aspect=plan->aspect;BOOL opened=!plan->listFirst;dispatch_async(dispatch_get_main_queue(),^{if(token!=generation)return;UIView *host=hostView();if(!host)return;
  active=[[PMOSView alloc]initWithFrame:host.bounds];active.cards=cards;active.chapterName=name;active.selectSong=selectSong;active.opened=opened;if(nodes.count){active.aspect=aspect;PMChapterCanvas *canvas=[PMChapterCanvas new];canvas.clipsToBounds=YES;canvas.nodes=nodes;__weak PMOSView *owner=active;canvas.openSong=^(NSDictionary *song){[owner showSong:song];};__weak PMChapterCanvas *weakCanvas=canvas;
   dispatch_queue_t events=dispatch_queue_create("PhiMod.ChapterOS.events",DISPATCH_QUEUE_SERIAL);
   canvas.runHandler=^(NSInteger index){PMChapterCanvas *v=weakCanvas;if(!v||v.pending)return;v.pending=YES;NSUInteger visit=v.visit;
-   dispatch_async(events,^{PMOSAction result={};BOOL ok=PMOSClick(session.get(),(int)index,&result);NSString *why=ok?nil:[NSString stringWithUTF8String:result.error];NSInteger song=result.song,page=result.dest,element=result.element;BOOL visible=result.visible;
+   dispatch_async(events,^{PMOSAction result={};BOOL ok=PMOSClick(session.get(),(int)index,&result);NSString *why=ok?nil:[NSString stringWithUTF8String:result.error];NSInteger song=result.song,page=result.dest,element=result.element;BOOL visible=result.visible;int checkpoint=result.checkpoint;
+    NSString *difficulty=result.difficulty[0]?[NSString stringWithUTF8String:result.difficulty]:nil;
     dispatch_async(dispatch_get_main_queue(),^{PMChapterCanvas *view=weakCanvas;if(!view||active!=owner||generation!=token||view.visit!=visit)return;view.pending=NO;
      if(!ok){PMDiagnosticsWrite([[NSString stringWithFormat:@"Chapter OS click %@: %@",chapter,why] UTF8String]);PMCloseChapterOS();return;}
+     if(checkpoint){
+      NSMutableDictionary *record=[@{@"token":NSUUID.UUID.UUIDString,@"chapter":chapter,@"scriptHash":digest} mutableCopy];
+      if(song>0&&song<=(NSInteger)order.count){record[@"songID"]=order[song-1];if(difficulty)record[@"difficulty"]=difficulty;}
+      else if(page>=0&&page<(NSInteger)screens.count)record[@"page"]=screens[page];else return;
+      [owner interruptForCheckpoint:record relaunch:checkpoint==2 resume:^BOOL{
+       if(record[@"page"]){[view displayPage:page];return YES;}
+       return (BOOL)startSong(record[@"songID"],difficulty);
+      }];return;
+     }
      if(song>0&&song<=(NSInteger)order.count)[owner showSong:bySong[order[song-1]]];else if(page>=0)[view displayPage:page];else if(element>=0)[view setElement:element visible:visible];});});};
-  active.canvas=canvas;[active insertSubview:canvas atIndex:0];canvas.hidden=!opened;[canvas displayPage:0];}[active refresh];[host addSubview:active];});
+  active.canvas=canvas;[active insertSubview:canvas atIndex:0];canvas.hidden=!opened;[canvas displayPage:0];}[active refresh];[host addSubview:active];
+ if(resume){
+  BOOL exact=[digest isEqual:resume[@"scriptHash"]];BOOL applied=NO;
+  if(exact&&resume[@"page"]){NSUInteger index=[screens indexOfObject:resume[@"page"]];if(index!=NSNotFound&&active.canvas){active.opened=YES;[active.canvas displayPage:index];[active refresh];applied=YES;}}
+  else if(exact&&bySong[resume[@"songID"]])applied=startSong(resume[@"songID"],resume[@"difficulty"]);
+  PMOSClearCheckpoint(resume[@"token"]);
+  if(!applied){PMDiagnosticsWrite("Chapter OS resume: target changed or inaccessible");if(active.opened)[active toggleOS];}
+ }
+ });
  }});
 }

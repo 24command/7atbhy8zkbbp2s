@@ -23,6 +23,7 @@ static void expectAction(PMOSSession *s, int node, int song, int dest) {
     PMOSAction a;
     memset(&a, 0x55, sizeof(a));
     assert(PMOSClick(s, node, &a));
+    assert(!a.checkpoint && !a.difficulty[0]);
     assert(a.song == song && a.dest == dest && a.element == -1 && !a.visible && !a.error[0]);
 }
 
@@ -30,6 +31,7 @@ static void expectFailure(PMOSSession *s, int node, const char *message) {
     PMOSAction a;
     memset(&a, 0x55, sizeof(a));
     assert(!PMOSClick(s, node, &a));
+    assert(!a.checkpoint && !a.difficulty[0]);
     assert(!a.song && a.dest == -1 && a.element == -1 && !a.visible && a.error[0] && strstr(a.error, message));
 }
 
@@ -91,6 +93,181 @@ static void testHandlerFailures(void) {
     }
 }
 
+static void testCheckpoints(void) {
+    PMOSSession *s = start("screen('map');"
+        "hotspot{onClick=function() return {checkpoint={mode='session',page='end'}} end};"
+        "hotspot{onClick=function() return {checkpoint={song=3,difficulty='IN',mode='relaunch'}} end};"
+        "screen('end');"
+        "hotspot{onClick=function() return {checkpoint={page='map',mode='relaunch'}} end};"
+        "hotspot{onClick=function() return {checkpoint={mode='session',song=1}} end}");
+    assert(s);
+    memset(&p, 0, sizeof(p));
+    PMOSAction a;
+    const int modes[] = {1, 2, 2, 1}, songs[] = {0, 3, 0, 1}, dests[] = {1, -1, 0, -1};
+    for (int i = 0; i < 4; ++i) {
+        assert(PMOSClick(s, i, &a));
+        assert(a.checkpoint == modes[i] && a.song == songs[i] && a.dest == dests[i]);
+        assert(!strcmp(a.difficulty, i == 1 ? "IN" : ""));
+        assert(a.element == -1 && !a.visible && !a.error[0]);
+    }
+    PMOSStop(s);
+
+    const char *bad[] = {
+        "false", "{}", "{song=1}", "{mode='session'}", "{mode='session',song=1,page='main'}",
+        "{mode='Session',song=1}", "{mode='relaunch ',song=1}", "{mode=false,page='main'}",
+        "{mode='session',page='missing'}", "{mode='session',page=1}",
+        "{mode='session',page='main',difficulty='IN'}", "{mode='session',song=0}",
+        "{mode='session',song=4}", "{mode='session',song=1.5}", "{mode='session',song='1'}",
+        "{mode='session',song=1,difficulty=false}", "{mode='session',song=1,difficulty=''}",
+        "{mode='session',song=1,extra=true}", "{mode='session',song=1,[1]=true}",
+        "{mode='session\\0',song=1}", "{mode='session',page='main\\0x'}",
+        "{mode='session',song=1,difficulty='IN\\0x'}", "{mode='session',['song\\0']=1}",
+        "{mode='session',song=1,difficulty='IN'},open=2"
+    };
+    char source[384];
+    for (size_t i = 0; i < sizeof(bad)/sizeof(bad[0]); ++i) {
+        snprintf(source, sizeof(source), "hotspot{onClick=function() return {checkpoint=%s} end};"
+                 "hotspot{open=2}", bad[i]);
+        s = start(source);
+        assert(s);
+        expectFailure(s, 0, "");
+        expectAction(s, 1, 2, -1);
+        PMOSStop(s);
+    }
+
+    char difficulty[97];
+    memset(difficulty, 'x', sizeof(difficulty));
+    for (size_t len = 95; len <= 96; ++len) {
+        difficulty[len] = 0;
+        snprintf(source, sizeof(source), "hotspot{onClick=function() return "
+                 "{checkpoint={mode='session',song=1,difficulty='%s'}} end}", difficulty);
+        s = start(source);
+        assert(s);
+        if (len == 95) {
+            assert(PMOSClick(s, 0, &a) && !strcmp(a.difficulty, difficulty));
+        } else expectFailure(s, 0, "oversized");
+        PMOSStop(s);
+        difficulty[len] = 'x';
+    }
+}
+
+typedef struct {
+    PMOSProgressChange entries[PMOSProgressAccessLimit];
+    size_t count, lastBatch;
+    int reads, commits, failRead, failCommit;
+} TestStore;
+
+static size_t storeIndex(TestStore *store, const char *key) {
+    for (size_t i = 0; i < store->count; ++i)
+        if (!strcmp(store->entries[i].key, key)) return i;
+    return store->count;
+}
+
+static int storeRead(void *context, const char *key, int *value) {
+    TestStore *store = context;
+    ++store->reads;
+    if (store->failRead) return 0;
+    size_t index = storeIndex(store, key);
+    *value = index == store->count ? 0 : store->entries[index].value;
+    return 1;
+}
+
+static int storeCommit(void *context, const PMOSProgressChange *changes, size_t count) {
+    TestStore *store = context;
+    ++store->commits;
+    store->lastBatch = count;
+    assert(count && count <= PMOSProgressAccessLimit);
+    if (store->failCommit) return 0;
+    for (size_t i = 0; i < count; ++i) {
+        size_t index = storeIndex(store, changes[i].key);
+        assert(index < PMOSProgressAccessLimit);
+        if (index == store->count) ++store->count;
+        store->entries[index] = changes[i];
+    }
+    return 1;
+}
+
+static PMOSSession *startProgress(const char *src, TestStore *store) {
+    PMOSProgress callbacks = {store, storeRead, storeCommit};
+    return PMOSStartWithProgress(src, strlen(src), 3, &p, callbacks);
+}
+
+static void testProgressTransactions(void) {
+    TestStore store = {0};
+    PMOSSession *s = startProgress("card(progress.get('missing')+1);"
+        "progress.set('Act_1.key-A',-1); progress.set('second',progress.get('Act_1.key-A'));"
+        "progress.set('Act_1.key-A',2); card(progress.get('Act_1.key-A'));"
+        "hotspot{onClick=function() progress.set('second',3); progress.set('Act_1.key-A',1);"
+        "return {checkpoint={mode='session',song=progress.get('second')}} end};"
+        "hotspot{onClick=function() progress.set('second',99); return {open=9} end};"
+        "hotspot{onClick=function() progress.set('second',42); progress.get('missing') end};"
+        "hotspot{onClick=function() return {open=progress.get('Act_1.key-A')} end}", &store);
+    assert(s && p.count == 2 && p.cards[0].song == 1 && p.cards[1].song == 2);
+    assert(store.reads == 1 && store.commits == 1 && store.lastBatch == 2 && store.count == 2);
+    assert(store.entries[storeIndex(&store, "second")].value == -1);
+    expectFailure(s, 1, "song");
+    store.failRead = 1;
+    expectFailure(s, 2, "progress read");
+    store.failRead = 0;
+    assert(store.commits == 1);
+    store.failCommit = 1;
+    expectFailure(s, 0, "progress commit");
+    store.failCommit = 0;
+    assert(store.commits == 2 && store.entries[storeIndex(&store, "second")].value == -1);
+    expectAction(s, 3, 2, -1);
+    assert(store.commits == 2);
+    PMOSAction a;
+    assert(PMOSClick(s, 0, &a) && a.checkpoint == 1 && a.song == 3);
+    assert(store.commits == 3 && store.lastBatch == 2);
+    PMOSStop(s);
+    assert(!startProgress("progress.set('second',77); hotspot{to='missing'}", &store));
+    assert(strstr(p.error, "unknown target") && store.commits == 3);
+    store.failCommit = 1;
+    assert(!startProgress("progress.set('second',77); card(1)", &store));
+    assert(strstr(p.error, "progress commit") && p.count == 0);
+    s = startProgress("card(progress.get('Act_1.key-A')); card(progress.get('second'))", &store);
+    assert(s && p.cards[0].song == 1 && p.cards[1].song == 3 && store.commits == 4);
+    PMOSStop(s);
+}
+
+static void testProgressValidation(void) {
+    TestStore store = {0};
+    const char *bad[] = {
+        "get('')", "get(1)", "get('a/b')", "set('a b',1)", "set('a\\0b',1)",
+        "get('\\195\\169')", "set('a', 1.5)", "set('a', '1')", "set('a', false)",
+        "set('a',2147483648)", "set('a',-2147483649)", "get()", "set('a')", "get('a',1)"
+    };
+    char src[512];
+    for (size_t i = 0; i < sizeof(bad)/sizeof(bad[0]); ++i) {
+        snprintf(src, sizeof(src), "progress.set('first',1); progress.%s", bad[i]);
+        assert(!startProgress(src, &store) && p.error[0]);
+    }
+    assert(store.reads == 0 && store.commits == 0);
+    assert(!startProgress("local k=''; for i=1,65 do k=k..'x' end; progress.get(k)", &store));
+    PMOSSession *s = startProgress("local k=''; for i=1,64 do k=k..'x' end;"
+        "progress.set(k,-2147483648); progress.set('max',2147483647)", &store);
+    assert(s && store.count == 2 && strlen(store.entries[0].key) == 64);
+    assert(store.entries[0].value == (-2147483647-1) && store.entries[1].value == 2147483647);
+    PMOSStop(s);
+    assert(run("card(1+progress.get('missing'))") && p.cards[0].song == 1);
+    assert(!run("progress.set('a',0)") && strstr(p.error, "commit unavailable"));
+}
+
+static void testProgressBudget(void) {
+    TestStore store = {0};
+    char src[512];
+    snprintf(src, sizeof(src), "for i=1,%d do progress.set('k'..i,i) end;"
+        "hotspot{onClick=function() progress.set('k1',2); for i=1,%d do progress.get('k2') end end};"
+        "hotspot{onClick=function() return {open=progress.get('k1')} end}",
+        PMOSProgressAccessLimit, PMOSProgressAccessLimit);
+    PMOSSession *s = startProgress(src, &store);
+    assert(s && store.lastBatch == PMOSProgressAccessLimit);
+    expectFailure(s, 0, "progress access limit");
+    assert(store.reads == PMOSProgressAccessLimit - 1 && store.commits == 1);
+    expectAction(s, 1, 1, -1);
+    PMOSStop(s);
+}
+
 static void testNodeTiming(void) {
     assert(run("frame{}; image{src='a',start=2.25,duration=4.5,fade=.5};"
                "hotspot{open=1,start=3,duration=0,hidden=true}"));
@@ -147,5 +324,5 @@ static void testClickBudgets(void) {
     assert(!PMOSStart("x", 2097153, 1, &p) && p.error[0]);
 }
 
-int main(void){testLayout();testPersistentClicks();testHandlerFailures();testNodeTiming();testVisibility();testClickBudgets();assert(run("return {}")&&!p.listFirst&&!p.count);assert(run("home('list'); for i=1,song_count do card(i,'Title','Body') end"));assert(p.listFirst&&p.count==3&&p.cards[2].song==3&&!strcmp(p.cards[1].caption,"Body"));
+int main(void){testLayout();testPersistentClicks();testHandlerFailures();testCheckpoints();testProgressTransactions();testProgressValidation();testProgressBudget();testNodeTiming();testVisibility();testClickBudgets();assert(run("return {}")&&!p.listFirst&&!p.count);assert(run("home('list'); for i=1,song_count do card(i,'Title','Body') end"));assert(p.listFirst&&p.count==3&&p.cards[2].song==3&&!strcmp(p.cards[1].caption,"Body"));
  assert(!run("card(4)")&&strstr(p.error,"os.lua:1:"));assert(!run("home('bad')"));assert(!run("while true do end")&&strstr(p.error,"limit"));assert(!run("local t='a';for i=1,30 do t=t..t end"));assert(!run("require('os')"));assert(!run("for i=1,129 do card(1) end"));assert(!run("card("));assert(!run("\033Lua"));assert(run("card(2)")&&p.count==1);puts("chapter OS Lua tests passed");return 0;}

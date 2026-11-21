@@ -621,6 +621,17 @@ void onChapterStart(P self,P mi){
  orig<VoidFn>(h::chapterStart)(self,mi);
  if(prepared)contentBoundary("Content chapter layout failed",[&]{pmcontent::chapterReady(R(),self);});
  contentBoundary("Chapter unlock layout failed",[&]{pmunlock::chapterReady(R(),self);});
+ if(prepared)contentBoundary("Chapter OS boot checkpoint",[&]{
+  PMChapterOSResumeAfterBoot(^BOOL(NSString *chapter){
+   auto &r=R();P cards=r.get<P>(self,"_chapterInfos");
+   for(uintptr_t i=0;cards&&i<r.array_length(cards);++i){
+    P card=r.arrayAt(cards,(int)i);
+    if(![r.string(r.get<P>(card,"chapterCode")) isEqual:chapter])continue;
+    P button=r.get<P>(card,"play");return r.alive(button)&&r.unbox<bool>(r.call(button,"get_interactable"));
+   }
+   return NO;
+  },^BOOL(NSString *chapter){return [pmcontent::command(@"chapter",chapter,0)[@"ok"] boolValue];});
+ });
 }
 P onSongInfo(P self,int slot,P mi){P value=orig<P(*)(P,int,P)>(h::songInfo)(self,slot,mi);try{pmcontent::levelInfo(R(),self,slot,value);pmunlock::songInfo(R(),self,slot,value);}catch(const std::exception&e){diagf("Content level info: %s",e.what());}return value;}
 P onItemInfo(P self,int slot,P mi){P value=orig<P(*)(P,int,P)>(h::itemInfo)(self,slot,mi);try{pmcontent::levelInfo(R(),R().get<P>(self,"songInfo"),slot,value);pmunlock::itemInfo(R(),self,slot,value);}catch(const std::exception&e){diagf("Content item info: %s",e.what());}return value;}

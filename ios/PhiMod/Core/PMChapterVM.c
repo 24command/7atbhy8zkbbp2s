@@ -1,6 +1,7 @@
 #include "PMChapterVM.h"
 #include "../Vendor/lua54/lua.h"
 #include "../Vendor/lua54/lauxlib.h"
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -15,6 +16,9 @@ struct PMOSSession {
     char names[PMOSMaxScreens][PMOSScreenNameSize];
     ClickTarget clicks[PMOSMaxNodes];
     PMOSPage *declaring;
+    PMOSProgress progress;
+    size_t accesses, changeCount;
+    PMOSProgressChange changes[PMOSProgressAccessLimit];
 };
 
 static void *budget(void *ctx, void *ptr, size_t old, size_t size) {
@@ -36,6 +40,57 @@ static PMOSSession *session(lua_State *L) {
     void *ctx;
     lua_getallocf(L, &ctx);
     return ctx;
+}
+
+static const char *progressKey(lua_State *L, PMOSSession *s, int argc) {
+    if (lua_gettop(L) != argc) luaL_error(L, "wrong number of progress arguments");
+    if (s->accesses >= PMOSProgressAccessLimit) luaL_error(L, "progress access limit exceeded");
+    ++s->accesses;
+    luaL_checktype(L, 1, LUA_TSTRING);
+    size_t len;
+    const char *key = lua_tolstring(L, 1, &len);
+    if (!len || len > PMOSProgressKeyMax) luaL_error(L, "invalid progress key length");
+    for (size_t i = 0; i < len; ++i) {
+        char c = key[i];
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '-'))
+            luaL_error(L, "invalid progress key character");
+    }
+    return key;
+}
+
+static PMOSProgressChange *stagedChange(PMOSSession *s, const char *key) {
+    for (size_t i = 0; i < s->changeCount; ++i)
+        if (!strcmp(s->changes[i].key, key)) return &s->changes[i];
+    return NULL;
+}
+
+static int progressGet(lua_State *L) {
+    PMOSSession *s = session(L);
+    const char *key = progressKey(L, s, 1);
+    PMOSProgressChange *change = stagedChange(s, key);
+    int value = 0;
+    if (change) value = change->value;
+    else if (s->progress.read && s->progress.read(s->progress.context, key, &value) != 1)
+        return luaL_error(L, "progress read failed");
+    lua_pushinteger(L, value);
+    return 1;
+}
+
+static int progressSet(lua_State *L) {
+    PMOSSession *s = session(L);
+    const char *key = progressKey(L, s, 2);
+    if (!lua_isinteger(L, 2)) return luaL_error(L, "progress value must be an integer");
+    lua_Integer value = lua_tointeger(L, 2);
+    if (value < INT_MIN || value > INT_MAX) return luaL_error(L, "progress integer out of range");
+    if (!s->progress.commit) return luaL_error(L, "progress commit unavailable");
+    PMOSProgressChange *change = stagedChange(s, key);
+    if (!change) {
+        change = &s->changes[s->changeCount++]; /* At most one new key per access. */
+        memcpy(change->key, key, lua_rawlen(L, 1) + 1);
+    }
+    change->value = (int)value;
+    return 0;
 }
 
 static PMOSPage *declarationPage(lua_State *L) {
@@ -109,6 +164,12 @@ static int evaluate(lua_State *L) {
     lua_setglobal(L, "card");
     lua_pushinteger(L, session(L)->songs);
     lua_setglobal(L, "song_count");
+    lua_createtable(L, 0, 2);
+    lua_pushcfunction(L, progressGet);
+    lua_setfield(L, -2, "get");
+    lua_pushcfunction(L, progressSet);
+    lua_setfield(L, -2, "set");
+    lua_setglobal(L, "progress");
     registerLayout(L);
     if (luaL_loadbufferx(L, script->source, script->length, "@os.lua", "t")) return lua_error(L);
     lua_call(L, 0, 0);
@@ -118,11 +179,19 @@ static int evaluate(lua_State *L) {
 
 /* All allocating Lua operations, including action decoding, run inside pcall.
    The outer stack only receives a light C function and scalar arguments. */
-static int runProtected(lua_State *L, int nargs, char *error, size_t cap) {
+static int runProtected(PMOSSession *s, int nargs, char *error, size_t cap) {
+    lua_State *L = s->L;
+    s->accesses = s->changeCount = 0;
     lua_sethook(L, limit, LUA_MASKCOUNT, InstructionLimit);
     int status = lua_pcall(L, nargs, 0, 0);
     lua_sethook(L, NULL, 0, 0);
-    if (status == LUA_OK) return 1;
+    if (status == LUA_OK) {
+        if (s->changeCount && s->progress.commit(s->progress.context, s->changes, s->changeCount) != 1) {
+            snprintf(error, cap, "progress commit failed");
+            return 0;
+        }
+        return 1;
+    }
     const char *msg = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : NULL;
     snprintf(error, cap, "%s", msg ? msg : "script failed");
     lua_pop(L, 1);
@@ -136,6 +205,12 @@ void PMOSStop(PMOSSession *s) {
 }
 
 PMOSSession *PMOSStart(const char *src, size_t len, int songs, PMOSPage *page) {
+    PMOSProgress callbacks = {0};
+    return PMOSStartWithProgress(src, len, songs, page, callbacks);
+}
+
+PMOSSession *PMOSStartWithProgress(const char *src, size_t len, int songs,
+                                  PMOSPage *page, PMOSProgress callbacks) {
     if (!page) return NULL;
     memset(page, 0, sizeof(*page));
     if (!src || !len || len > SourceLimit || songs < 0) {
@@ -148,12 +223,13 @@ PMOSSession *PMOSStart(const char *src, size_t len, int songs, PMOSPage *page) {
         PMOSStop(s);
         return NULL;
     }
+    s->progress = callbacks;
     s->songs = songs;
     s->declaring = page;
     Script script = {src, len};
     lua_pushcfunction(s->L, evaluate);
     lua_pushlightuserdata(s->L, &script);
-    int ok = runProtected(s->L, 1, page->error, sizeof(page->error));
+    int ok = runProtected(s, 1, page->error, sizeof(page->error));
     s->declaring = NULL;
     if (!ok) {
         page->count = page->nodes = page->screens = 0;
@@ -174,6 +250,50 @@ PMOSSession *PMOSStart(const char *src, size_t len, int songs, PMOSPage *page) {
     return s;
 }
 
+static int actionSong(lua_State *L, const PMOSSession *s, const char *action) {
+    luaL_checktype(L, -1, LUA_TNUMBER);
+    lua_Integer n = luaL_checkinteger(L, -1);
+    if (n < 1 || n > s->songs) return luaL_error(L, "invalid song number in %s", action);
+    return (int)n;
+}
+
+static int actionScreen(lua_State *L, PMOSSession *s) {
+    char name[PMOSScreenNameSize];
+    word(L, -1, name, sizeof(name));
+    int dest = findScreen(s->names, s->screens, name);
+    if (dest < 0) return luaL_error(L, "unknown target screen: %s", name);
+    return dest;
+}
+
+static void parseCheckpoint(lua_State *L, PMOSSession *s, PMOSAction *action) {
+    luaL_checktype(L, -1, LUA_TTABLE);
+    int table = lua_gettop(L);
+    lua_pushnil(L);
+    while (lua_next(L, table)) {
+        char key[sizeof("difficulty")];
+        word(L, -2, key, sizeof(key));
+        if (!strcmp(key, "mode")) {
+            char mode[sizeof("relaunch")];
+            word(L, -1, mode, sizeof(mode));
+            if (!strcmp(mode, "session")) action->checkpoint = 1;
+            else if (!strcmp(mode, "relaunch")) action->checkpoint = 2;
+            else luaL_error(L, "checkpoint mode must be session or relaunch");
+        } else if (!strcmp(key, "page")) {
+            action->dest = actionScreen(L, s);
+        } else if (!strcmp(key, "song")) {
+            action->song = actionSong(L, s, "checkpoint");
+        } else if (!strcmp(key, "difficulty")) {
+            word(L, -1, action->difficulty, sizeof(action->difficulty));
+        } else luaL_error(L, "unknown checkpoint field: %s", key);
+        lua_pop(L, 1);
+    }
+    if (!action->checkpoint) luaL_error(L, "checkpoint requires a mode");
+    if ((action->dest >= 0) == (action->song > 0))
+        luaL_error(L, "checkpoint requires exactly one page or song");
+    if (action->difficulty[0] && !action->song)
+        luaL_error(L, "checkpoint difficulty requires a song");
+}
+
 static int invokeHandler(lua_State *L) {
     PMOSSession *s = session(L);
     PMOSAction *action = lua_touserdata(L, 1);
@@ -187,37 +307,28 @@ static int invokeHandler(lua_State *L) {
 
     lua_pushnil(L);
     if (!lua_next(L, 1)) return luaL_error(L, "empty onClick action");
-    char key[8];
+    char key[sizeof("checkpoint")];
     word(L, -2, key, sizeof(key));
-    int song = 0, dest = -1, element = -1, visible = 0;
-    if (!strcmp(key, "open")) {
-        luaL_checktype(L, -1, LUA_TNUMBER);
-        lua_Integer n = luaL_checkinteger(L, -1);
-        if (n < 1 || n > s->songs) return luaL_error(L, "invalid song number in open");
-        song = (int)n;
+    if (!strcmp(key, "checkpoint")) {
+        parseCheckpoint(L, s, action);
+    } else if (!strcmp(key, "open")) {
+        action->song = actionSong(L, s, "open");
     } else if (!strcmp(key, "to")) {
-        char name[PMOSScreenNameSize];
-        word(L, -1, name, sizeof(name));
-        dest = findScreen(s->names, s->screens, name);
-        if (dest < 0) return luaL_error(L, "unknown target screen: %s", name);
+        action->dest = actionScreen(L, s);
     } else if (!strcmp(key, "show") || !strcmp(key, "hide")) {
         char id[sizeof(target->id)];
         word(L, -1, id, sizeof(id));
         for (int i = 0; i < s->nodes; ++i) {
             if (s->clicks[i].screen == target->screen && !strcmp(s->clicks[i].id, id)) {
-                element = i;
+                action->element = i;
                 break;
             }
         }
-        if (element < 0) return luaL_error(L, "unknown element on clicked screen: %s", id);
-        visible = !strcmp(key, "show");
+        if (action->element < 0) return luaL_error(L, "unknown element on clicked screen: %s", id);
+        action->visible = !strcmp(key, "show");
     } else return luaL_error(L, "unknown onClick action: %s", key);
     lua_pop(L, 1);
     if (lua_next(L, 1)) return luaL_error(L, "onClick action must have exactly one field");
-    action->song = song;
-    action->dest = dest;
-    action->element = element;
-    action->visible = visible;
     return 0;
 }
 
@@ -235,10 +346,13 @@ int PMOSClick(PMOSSession *s, int node, PMOSAction *out) {
         out->dest = target->dest;
         return 1;
     }
+    PMOSAction parsed = *out;
     lua_pushcfunction(s->L, invokeHandler);
-    lua_pushlightuserdata(s->L, out);
+    lua_pushlightuserdata(s->L, &parsed);
     lua_pushlightuserdata(s->L, target);
-    return runProtected(s->L, 2, out->error, sizeof(out->error));
+    if (!runProtected(s, 2, out->error, sizeof(out->error))) return 0;
+    *out = parsed;
+    return 1;
 }
 
 int PMBuildOSPage(const char *source, size_t len, int songs, PMOSPage *page) {
