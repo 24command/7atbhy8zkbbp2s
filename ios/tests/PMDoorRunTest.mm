@@ -73,6 +73,19 @@ int main() {
         PMDoorFinish(YES);
         expectProgress(1, 1);
 
+        // The replay token matches once and has no outcome owner. Native
+        // cancellation or a different chart must never affect the next play.
+        CHECK(PMDoorArmReplay(@"song",3,@"AT-extra"));
+        CHECK(!PMDoorConsumeReplay(@"song",3,@"other-extra")&&!PMDoorReplayPending());
+        CHECK(PMDoorArmReplay(@"song",3,@"AT-extra"));PMDoorCancelPending();
+        CHECK(!PMDoorConsumeReplay(@"song",3,@"AT-extra"));
+        CHECK(PMDoorArmReplay(@"song",3,@"AT-extra"));CHECK(PMDoorConsumeReplay(@"song",3,@"AT-extra"));
+        CHECK(!PMDoorActive()&&!PMDoorConsumeReplay(@"song",3,@"AT-extra"));
+        PMDoorFinish(YES);PMDoorFinish(NO);expectProgress(1,1);
+        arm();CHECK(PMDoorSetPendingNoPause(YES));
+        CHECK(PMDoorBeginExactTrack(@"song",2,@"chart-IN",&hp,delta)&&PMDoorPlayingNoPause());
+        PMDoorAbandon();CHECK(!PMDoorPlayingNoPause());
+
         // Enqueue distinct failed replays back to back, then drain once before reading.
         constexpr int replays = 8;
         for (int i = 0; i < replays; ++i) {

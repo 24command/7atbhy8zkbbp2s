@@ -35,6 +35,11 @@ int main(){
  Object info{{{"chartLoaded",true},{"levelBegan",true},{"levelOver",true},{"canLevelOver",true}}};
  Object pc{{{"leave",false},{"levelBreak",false},{"_inChallengeMode",false},{"exit",false}},&info},other;
  options.hpEnabled=true;options.hpMax=5;options.hpDelta={1,-1,-3,-5};
+ auto replay=options;
+ assert(applyChapterReplay(true,replay) && !replay.hpEnabled && options.hpEnabled);
+ assert(replay.hpMax==options.hpMax && replay.hpDelta==options.hpDelta);
+ auto next=options;assert(!applyChapterReplay(false,next) && next.hpEnabled);
+ finishBoundDoor(true);finishBoundDoor(false);assert(clears==0 && losses==0);
  phimod::Session session;session.setCoverage({true,true,true,true,true,true,true});session.request(options);assert(session.begin({}));
  // An unfinished chart, manual transition, or course produces no door result.
  for(auto &field:info.flags){doorProgress=&pc;field.second=false;settleDoorEnd(&pc,&session,false);field.second=true;assert(!doorProgress);}

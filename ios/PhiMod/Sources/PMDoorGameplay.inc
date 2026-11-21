@@ -1,6 +1,12 @@
 // Unity owns these objects for the scene lifetime. Use them only for identity.
 P doorProgress=nullptr, lostDoorProgress=nullptr;
-bool watchingDoorLaunch=false;
+bool watchingDoorLaunch=false,doorNoPause=false;
+
+// Apply only to the per-attempt copy, and only after consuming an exact replay.
+static inline bool applyChapterReplay(bool matched,phimod::Options &attemptOptions){
+ if(matched)attemptOptions.hpEnabled=false;
+ return matched;
+}
 
 bool doorPlayEligible(const phimod::Options &options){
  return !options.autoplay && !options.practiceMode && std::fabs(options.playbackRate-1.f)<=.0001f;
@@ -17,7 +23,7 @@ void clearDoorPresentation(){
  end();
 }
 void releaseDoorBinding(){
- doorProgress=nullptr;
+ doorProgress=nullptr;doorNoPause=false;
  clearDoorPresentation();
 }
 void abandonBoundDoor(){
@@ -73,19 +79,21 @@ bool cancelIdleDoorLaunch(P selector,bool disabling=false){
 template<class Bridge> class StoryPauseScope {
  Bridge &r;
  P levelOwner=nullptr,owner=nullptr,info=nullptr;
+ bool course=false;
 public:
  StoryPauseScope(const StoryPauseScope &)=delete;
- StoryPauseScope(Bridge &runtime,P self,bool judge,bool (*blocks)(double)):r(runtime){
-  if(!endDoorPresentation)return;
+ StoryPauseScope(Bridge &runtime,P self,bool judge,bool (*blocks)(double),P courseOwner=nullptr):r(runtime){
+  if(!endDoorPresentation&&!doorNoPause&&!courseOwner)return;
   try{
    P pc=judge?r.template get<P>(self,"progressControl"):self;
-   if(pc!=doorProgress)return;
+   if(!pc||(pc!=doorProgress&&pc!=courseOwner))return;
+   bool whole=pc==courseOwner||doorNoPause;
    P level=r.template get<P>(pc,"levelInformation");
-   if(!level || r.template get<bool>(pc,"levelBreak") || r.template get<bool>(level,"levelOver")){
+   if(!level || (pc!=courseOwner&&r.template get<bool>(pc,"levelBreak")) || r.template get<bool>(level,"levelOver")){
     clearDoorPresentation();return;
    }
    if(!r.template get<bool>(level,"levelBegan") || !r.template get<bool>(pc,"isPlaying") ||
-      !blocks(r.template get<float>(pc,"nowTime")) || !r.template get<bool>(level,"canPause"))return;
+      (!whole&&!blocks(r.template get<float>(pc,"nowTime"))) || !r.template get<bool>(level,"canPause"))return;
    if(judge){
     if(r.template get<float>(self,"pauseTime")>0)r.put(self,"pauseTime",0.f);
    }else if(r.template get<bool>(pc,"leave")){
@@ -94,13 +102,13 @@ public:
     r.put(pc,"leave",false);
    }
    r.put(level,"canPause",false);
-   levelOwner=currentLevel;owner=pc;info=level;
+   levelOwner=currentLevel;owner=pc;info=level;course=(pc==courseOwner);
   }catch(const std::exception &e){diagf("Story pause gate: %s",e.what());}
  }
  ~StoryPauseScope(){
   if(!info || currentLevel!=levelOwner || owner==lostDoorProgress)return;
   try{
-   if(!r.template get<bool>(owner,"levelBreak") && !r.template get<bool>(info,"levelOver"))r.put(info,"canPause",true);
+   if((course||!r.template get<bool>(owner,"levelBreak")) && !r.template get<bool>(info,"levelOver"))r.put(info,"canPause",true);
   }catch(const std::exception &e){diagf("Story pause restore: %s",e.what());}
  }
 };

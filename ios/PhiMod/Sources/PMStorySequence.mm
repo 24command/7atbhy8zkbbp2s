@@ -48,7 +48,7 @@ BOOL PMStorySequenceSelectorReady(NSString *chapter, PMStoryStartSong startSong)
             if (!open || !NSThread.isMainThread) return NO;
             open = NO;
             if (!PMDoorArm(chapter, run[@"door"], group, slot, chart, [run[@"hp"] doubleValue], run[@"delta"])) return NO;
-            armed = pmstorysequence::attachToPending(chapter, rest);
+            armed = PMDoorSetPendingNoPause([run[@"noPause"] boolValue]) && pmstorysequence::attachToPending(chapter, rest);
             if (!armed) PMDoorCancelPending();
             return armed;
         }) && armed;

@@ -134,7 +134,7 @@ void logProgressSnapshot(Runtime&r,P p,const char*source,uint64_t count){
 }
 #include "PMDoorGameplay.inc"
 bool bindDoor(Runtime &r,P level,phimod::Options &options){
- if(!doorPlayEligible(options) || pmchallenge::variable())return false;
+ if((!doorPlayEligible(options)&&!PMDoorReplayPending()) || pmchallenge::variable())return false;
  P pc=r.get<P>(level,"progressControl"), start=r.get<P>(r.mainGame(),"levelStartInfo");
  if(!pc || !start || r.get<bool>(pc,"_inChallengeMode"))return false;
  NSString *identifier=r.string(r.get<P>(start,"songsId"));
@@ -162,9 +162,11 @@ bool bindDoor(Runtime &r,P level,phimod::Options &options){
   if(slot!=transport)return false;
   if([chart[@"groupId"] length])group=chart[@"groupId"];
  }
+ // A replay uses the same resolved native tuple but never acquires a door owner.
+ if(applyChapterReplay(PMDoorConsumeReplay(group,slot,identifier),options))return true;
  double hp=0,delta[4]={};
  if(slot<0 || !PMDoorBeginExactTrack(group,slot,identifier,&hp,delta))return false;
- doorProgress=pc;
+ doorProgress=pc;doorNoPause=PMDoorPlayingNoPause();
  if(pmstory::beginExactTrack())endDoorPresentation=pmstory::endTrack;
  auto overrides=options;
  overrides.hpEnabled=true;
@@ -440,7 +442,7 @@ void onProgressUpdate(P self,P mi){
  // Failure fading must keep advancing when the native judge stops updating.
  if(attempt && attempt->trackLost() && !levelOverStarted && self==progress())
   tickGameplay(R(),self,"HP failure progress");
- {StoryPauseScope pause(R(),self,false,pmstory::blocksPause);orig<VoidFn>(h::progressUpdate)(self,mi);}
+ {StoryPauseScope pause(R(),self,false,pmstory::blocksPause,pmsecretcourse::pauseOwner());orig<VoidFn>(h::progressUpdate)(self,mi);}
  if(pmsecretcourse::active())try{pmsecretcourse::progressFrame(R(),self);}catch(const std::exception&e){diagf("Secret course end flags: %s",e.what());}
  updateStoryPresentation(self);
  if(heartbeat)diagf("ProgressControl.Update original returned n=%llu",(unsigned long long)count);
@@ -460,7 +462,7 @@ void onJudgeUpdate(P self,P mi){
  try{auto&r=R();P pc=r.get<P>(self,"progressControl");ensureFloorArray(r,pc?r.get<P>(pc,"levelInformation"):nullptr);}catch(const std::exception&e){diagf("Judge floor buffer preparation failed: %s",e.what());}
  {
   auto &r=R();PlaybackJudgeScope rate(r);
-  StoryPauseScope pause(r,self,true,pmstory::blocksPause);
+  StoryPauseScope pause(r,self,true,pmstory::blocksPause,pmsecretcourse::pauseOwner());
   pmcontent::judgeWithHudPause(r,self,mi,orig<VoidFn>(h::judgeUpdate));
  }
  if(heartbeat)diagf("JudgeControl.Update original returned n=%llu",(unsigned long long)count);

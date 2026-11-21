@@ -112,6 +112,17 @@ int main() {
         observeDoorLoss(&pc, session, accepted, before);
     }
     assert(!canPause() && !doorProgress && lostDoorProgress == &pc && ends == 3);
+    // Lock the entire attempt, even with no cue presentation or timed interval.
+    doorProgress=&pc;doorNoPause=true;lostDoorProgress=nullptr;endDoorPresentation=nullptr;
+    pc.values["nowTime"]=600;pc.values["levelBreak"]=0;info.values["canPause"]=1;
+    {StoryPauseScope gate(R(),&judge,true,blocked);assert(!canPause());} assert(canPause());
+    {StoryPauseScope gate(R(),&pc,false,blocked);assert(!canPause());abandonBoundDoor();} assert(canPause()&&!doorNoPause);
+    {StoryPauseScope gate(R(),&pc,false,blocked);assert(canPause());}
+    doorProgress=&pc;doorNoPause=true;finishBoundDoor(YES);assert(!doorNoPause);
+    // In a native course levelBreak is set for the normal challenge transition.
+    pc.values["levelBreak"]=1;
+    {StoryPauseScope gate(R(),&pc,false,blocked,&pc);assert(!canPause());} assert(canPause());
+    {StoryPauseScope gate(R(),&pc,false,blocked);assert(canPause());}
     watchingDoorLaunch = true;
     unrelated.values["exit"] = 0;
     assert(cancelIdleDoorLaunch(&unrelated) && !cancelIdleDoorLaunch(&unrelated));

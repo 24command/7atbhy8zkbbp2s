@@ -27,18 +27,19 @@ NSString *chapterID,*doorID;
 int entered=-1, launchedTier=-1;
 bool reported;
 P progressOwner;
-bool finishedLeg;
+bool finishedLeg,lockPause;
 struct Binding {uint32_t root; NSDictionary *chart;};
 std::vector<Binding> bindings;
 P rules(Runtime &r){return r.type("Phigros2.ChallengeMode.Scripts","SecretChallengeLifeRules");}
 bool owns(Runtime &r,P game){return owned&&r.get<P>(game,"challengeSongItems")==r.gchandle_get_target(owned);}
 void release(Runtime &r){if(owned)r.gchandle_free(owned);owned=0;previous.reset();protecting.store(false);clearBindings(r);chapterID=nil;doorID=nil;entered=launchedTier=-1;reported=false;progressOwner=nullptr;finishedLeg=false;}
 }
+P pauseOwner(){return active()&&lockPause&&!reported&&!finishedLeg?progressOwner:nullptr;}
 bool active(){return protecting.load();}
 void bindChart(Runtime &r,P song,NSDictionary *chart){bindings.push_back({r.gchandle_new(song,false),chart?:@{}});}
 void clearBindings(Runtime &r){for(auto &b:bindings)r.gchandle_free(b.root);bindings.clear();}
 NSDictionary *binding(Runtime &r,P song){for(auto &b:bindings)if(r.gchandle_get_target(b.root)==song)return b.chart;return nil;}
-bool launch(Runtime &r,P list,NSString *chapter,NSString *door,NSInteger tier){
+bool launch(Runtime &r,P list,NSString *chapter,NSString *door,NSInteger tier,bool noPause){
  P game=r.mainGame(),rulesClass=rules(r);
  const int count=r.count(list);
  if(active()||(count!=3&&count!=4))return false;
@@ -50,7 +51,7 @@ bool launch(Runtime &r,P list,NSString *chapter,NSString *door,NSInteger tier){
  Pin result(r,r.object_new(r.klass("LevelResultInfo")));r.call(result.get(),".ctor");
  // No stock PlayUnlock: it substitutes its own song IDs. ChallengeMode's
  // iterator reads rows 0..2 from the list and row 3 from hiddenChallengeSongItem.
- owned=r.gchandle_new(list,false);if(!owned)return false;previous=std::move(saved);protecting.store(true);chapterID=[chapter copy];doorID=[door copy];launchedTier=index;
+ owned=r.gchandle_new(list,false);if(!owned)return false;previous=std::move(saved);protecting.store(true);chapterID=[chapter copy];doorID=[door copy];launchedTier=index;lockPause=noPause;
  try{
   r.put(game,"challengeSongItems",list);r.put(game,"hiddenChallengeSongItem",count==4?r.at(list,3):nullptr);
   r.put(game,"levelResultInfo",result.get());r.put(game,"nowChallengeIndex",0);

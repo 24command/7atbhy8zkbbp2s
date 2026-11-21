@@ -49,6 +49,9 @@ static UIImage *thumb(NSString *path,NSInteger pixels){CGImageSourceRef src=CGIm
 @property(nonatomic,strong) UITextView *caption;
 @property(nonatomic,strong) PMOSSpeechView *speech;
 @property(nonatomic,strong) UIImageView *art;
+@property(nonatomic,strong) UIView *mapBackdrop;
+@property(nonatomic,strong) UISegmentedControl *levelPicker;
+@property(nonatomic) NSUInteger artVisit;
 @property(nonatomic,strong) NSDictionary *detail;
 @property(nonatomic,copy) NSString *chapterName;
 @property(nonatomic) BOOL opened, listSwitchHidden;
@@ -123,13 +126,39 @@ static UIButton *control(NSString *title,id target,SEL action){UIButton *b=[UIBu
  self.toggle.frame=self.opened?CGRectMake(x+w*.5-50,y+h-46,100,42):CGRectMake(x+w*.54,y+4,60,42);
  self.back.frame=CGRectMake(x+12,y+8,52,42);self.heading.frame=CGRectMake(x+78,y+6,MAX(60,w-106),46);
  CGFloat cardHeight=MAX(1,MIN(MIN(420.,(w-32)*.62)/1.7,h-114));self.table.frame=CGRectMake(x+16,y+(h-cardHeight)*.5,w-32,cardHeight);self.caption.frame=CGRectMake(x+24,y+62,w*.44,MAX(60,h-132));self.speech.frame=self.caption.frame;self.art.frame=CGRectMake(x+w*.5,y+58,w*.48,MAX(60,h-128));self.choose.frame=CGRectMake(x+w-168,y+h-52,156,44);
+ if(self.levelPicker){self.art.frame=CGRectMake(x+w*.46,y+48,w*.52,MAX(36,h-145));self.levelPicker.frame=CGRectMake(x+w*.47,y+h-91,MAX(56,w*.48),32);}
 }
-- (void)refresh{BOOL detail=self.detail!=nil;self.backgroundColor=self.opened?[UIColor colorWithWhite:.075 alpha:1]:UIColor.clearColor;
+// The stock Chapter9SongDetailsControl belongs to the two story scenes. Keep
+// the map underneath a non-interactive detail layer; never load a stock story
+// scene or let its chapter-specific song indices interpret an authored chart.
+- (void)dismissMapDetail {
+ [self.mapBackdrop removeFromSuperview];self.mapBackdrop=nil;
+ [self.levelPicker removeFromSuperview];self.levelPicker=nil;++self.artVisit;
+}
+- (void)loadDetailArt:(NSString *)path {
+ NSUInteger visit=++self.artVisit;self.art.image=nil;if(!path.length)return;
+ __weak PMOSView *weak=self;
+ dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{UIImage *image=thumb(path,768);dispatch_async(dispatch_get_main_queue(),^{PMOSView *owner=weak;if(owner&&owner==active&&owner.detail&&owner.artVisit==visit)owner.art.image=image;});});
+}
+- (void)changeReplayDifficulty {
+ NSArray *options=self.detail[@"replaySongs"];NSInteger i=self.levelPicker.selectedSegmentIndex;
+ if(i>=0 && (NSUInteger)i<options.count)[self loadDetailArt:options[i][@"art"]?:self.detail[@"art"]];
+}
+- (void)prepareMapDetail:(NSDictionary *)card {
+ if(![card[@"mapDetail"] boolValue])return;
+ if(self.canvas){
+ UIView *backdrop=[[UIView alloc] initWithFrame:self.bounds];backdrop.userInteractionEnabled=NO;backdrop.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
+ UIView *map=[self.canvas snapshotViewAfterScreenUpdates:NO];if(map){map.frame=self.canvas.frame;map.autoresizingMask=UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleRightMargin|UIViewAutoresizingFlexibleHeight;[backdrop addSubview:map];}
+ UIVisualEffectView *blur=[[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleDark]];blur.frame=backdrop.bounds;blur.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;[backdrop addSubview:blur];[self insertSubview:backdrop aboveSubview:self.canvas];self.mapBackdrop=backdrop;}
+ NSArray *options=card[@"replaySongs"];NSMutableArray *labels=[NSMutableArray array];for(NSDictionary *o in options)[labels addObject:o[@"difficulty"]?:o[@"title"]];if(!labels.count)[labels addObject:card[@"difficulty"]?:@"挑战"];
+ UISegmentedControl *picker=[[UISegmentedControl alloc]initWithItems:labels];picker.selectedSegmentIndex=0;picker.userInteractionEnabled=options.count>1;picker.accessibilityLabel=@"谱面难度";[picker addTarget:self action:@selector(changeReplayDifficulty) forControlEvents:UIControlEventValueChanged];[self insertSubview:picker belowSubview:self.choose];self.levelPicker=picker;
+}
+- (void)refresh{BOOL detail=self.detail!=nil;if(!detail||!self.opened)[self dismissMapDetail];self.backgroundColor=self.opened?[UIColor colorWithWhite:.075 alpha:1]:UIColor.clearColor;
  self.canvas.hidden=!self.opened||detail;self.table.hidden=!self.opened||detail||self.canvas!=nil;self.heading.hidden=!self.opened||(!detail&&self.canvas!=nil);self.back.hidden=self.caption.hidden=self.art.hidden=self.choose.hidden=!self.opened||!detail;
  self.toggle.hidden=self.listSwitchHidden;
  self.back.hidden=!self.opened||(!detail&&!self.listSwitchHidden);
  self.back.accessibilityLabel=detail?@"返回章节 OS":@"返回章节选择";
- [self.choose setTitle:self.detail[@"challengeID"]?@"开始挑战":(self.listSwitchHidden?@"开始游玩":@"在普通选曲中选择") forState:UIControlStateNormal];self.heading.text=detail?self.detail[@"title"]:self.chapterName;self.caption.text=self.detail[@"caption"];self.caption.hidden=self.caption.hidden||self.speech!=nil;self.speech.hidden=!self.opened||!detail;[self.toggle setTitle:self.opened?@"普通选曲":@"OS" forState:UIControlStateNormal];[self setNeedsLayout];}
+ [self.choose setTitle:self.detail[@"challengeID"]?@"开始挑战":(self.listSwitchHidden?@"开始游玩":@"在普通选曲中选择") forState:UIControlStateNormal];self.heading.text=detail?self.detail[@"title"]:self.chapterName;self.caption.text=self.detail[@"caption"];self.caption.hidden=self.caption.hidden||self.speech!=nil;self.speech.hidden=!self.opened||!detail;[self.toggle setTitle:self.opened?@"普通选曲":@"OS" forState:UIControlStateNormal];if([self.detail[@"replaySongs"] count])[self.choose setTitle:@"开始游玩" forState:UIControlStateNormal];[self setNeedsLayout];}
 - (void)toggleOS{if(self.listSwitchHidden)return;[self.speech removeFromSuperview];self.speech=nil;self.opened=!self.opened;self.detail=nil;self.art.image=nil;[self refresh];}
 - (void)closeDetail{if(!self.detail&&self.listSwitchHidden){if(self.leaveChapter&&self.leaveChapter())PMCloseChapterOS();return;}[self.speech removeFromSuperview];self.speech=nil;self.detail=nil;self.art.image=nil;[self refresh];}
 - (void)interruptForCheckpoint:(NSDictionary*)record relaunch:(BOOL)relaunch resume:(BOOL (^)(void))resume {
@@ -148,7 +177,8 @@ static UIButton *control(NSString *title,id target,SEL action){UIButton *b=[UIBu
   if(!resume()&&owner.opened){PMDiagnosticsWrite("Chapter OS session checkpoint target unavailable");[owner toggleOS];}
  }] forControlEvents:UIControlEventTouchUpInside];
 }
-- (void)chooseSong{if(self.detail[@"challengeID"]){if(!self.startChallenge(self.detail)){[self.choose setTitle:@"当前无法挑战" forState:UIControlStateNormal];}return;}if(self.listSwitchHidden){if(!self.startListedSong(self.detail[@"installedID"],nil,nil))[self.choose setTitle:@"当前无法游玩" forState:UIControlStateNormal];return;}if(self.selectSong&&self.selectSong(self.detail[@"group"]))[self toggleOS];else self.caption.text=@"当前选曲列表中没有此曲目。";}
+- (void)chooseSong{NSArray *replays=self.detail[@"replaySongs"];if(replays.count){NSInteger i=self.levelPicker?self.levelPicker.selectedSegmentIndex:0;if(active!=self||self.ownsIntro||PMUnlockMediaBusy()||i<0||(NSUInteger)i>=replays.count)return;NSDictionary *e=replays[i];
+ if(!self.startListedSong(e[@"songID"],e[@"difficulty"],^BOOL(NSString *group,int slot,NSString *chart){return PMDoorArmReplay(group,slot,chart);})) [self.choose setTitle:@"当前谱面不可用" forState:UIControlStateNormal];return;}if(self.detail[@"challengeID"]){if(!self.startChallenge(self.detail)){[self.choose setTitle:@"当前无法挑战" forState:UIControlStateNormal];}return;}if(self.listSwitchHidden){if(!self.startListedSong(self.detail[@"installedID"],nil,nil))[self.choose setTitle:@"当前无法游玩" forState:UIControlStateNormal];return;}if(self.selectSong&&self.selectSong(self.detail[@"group"]))[self toggleOS];else self.caption.text=@"当前选曲列表中没有此曲目。";}
 - (NSInteger)collectionView:(UICollectionView*)v numberOfItemsInSection:(NSInteger)s{return self.cards.count;}
 - (CGSize)collectionView:(UICollectionView*)v layout:(UICollectionViewLayout*)layout sizeForItemAtIndexPath:(NSIndexPath*)p{CGFloat w=MIN(v.bounds.size.width*.62,MIN(420.,v.bounds.size.height*1.7));return CGSizeMake(MAX(1,w),MAX(1,w/1.7));}
 - (UICollectionViewCell*)collectionView:(UICollectionView*)v cellForItemAtIndexPath:(NSIndexPath*)p{PMOSCell *cell=[v dequeueReusableCellWithReuseIdentifier:@"os" forIndexPath:p];NSDictionary *row=self.cards[p.item];BOOL locked=[row[@"lockedChallenge"] boolValue];cell.contentView.alpha=locked?.55:1;cell.accessibilityTraits=UIAccessibilityTraitButton|(locked?UIAccessibilityTraitNotEnabled:0);cell.name.text=row[@"title"];cell.accessibilityLabel=cell.name.text;NSString *path=row[@"art"];cell.path=path;cell.image.image=path?[self.thumbs objectForKey:path]:nil;
@@ -158,7 +188,6 @@ static UIButton *control(NSString *title,id target,SEL action){UIButton *b=[UIBu
  if(active!=self)return;
  NSArray *intro=card[@"intro"];
  if(index==intro.count){
-  self.canvas.hidden=YES;
   if(![card[@"showDetail"] boolValue] && self.startChallenge(card))return;
   [self showDetail:card];return;
  }
@@ -173,11 +202,12 @@ static UIButton *control(NSString *title,id target,SEL action){UIButton *b=[UIBu
 }
 - (void)showSong:(NSDictionary*)card {
  if(self.ownsIntro)return;
+ if([card[@"replaySongs"] count]){[self showDetail:card];return;}
  if(card[@"challengeID"]){[self presentChallenge:card index:0];return;}
  [self showDetail:card];
 }
-- (void)showDetail:(NSDictionary*)card{self.art.image=nil;self.detail=card;[self.speech removeFromSuperview];self.speech=nil;if(card[@"seconds"]){self.speech=[[PMOSSpeechView alloc] initWithSeconds:[card[@"seconds"] doubleValue] heading:card[@"speechHeading"] transcript:card[@"caption"]];[self insertSubview:self.speech belowSubview:self.toggle];}[UIView transitionWithView:self duration:.2 options:UIViewAnimationOptionTransitionCrossDissolve animations:^{[self refresh];} completion:nil];NSString *path=card[@"art"];if(!path)return;
- dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{UIImage *image=thumb(path,768);dispatch_async(dispatch_get_main_queue(),^{if(active==self&&self.detail==card)self.art.image=image;});});}
+- (void)showDetail:(NSDictionary*)card{[self dismissMapDetail];self.art.image=nil;self.detail=card;[self prepareMapDetail:card];[self.speech removeFromSuperview];self.speech=nil;if(card[@"seconds"]){self.speech=[[PMOSSpeechView alloc] initWithSeconds:[card[@"seconds"] doubleValue] heading:card[@"speechHeading"] transcript:card[@"caption"]];[self insertSubview:self.speech belowSubview:self.toggle];}[UIView transitionWithView:self duration:.2 options:UIViewAnimationOptionTransitionCrossDissolve animations:^{[self refresh];} completion:nil];if([card[@"replaySongs"] count])[self changeReplayDifficulty];else [self loadDetailArt:card[@"art"]];}
+
 @end
 BOOL PMChapterOSVisible(){return active.opened;}
 void PMCloseChapterOS(){++generation;PMOSView *previous=active;active=nil;if(previous)[coverQueue() cancelAllOperations];if(previous.ownsIntro)PMCancelUnlockMedia();[previous removeFromSuperview];}
@@ -227,6 +257,19 @@ void PMOpenChapterOS(NSString *chapter,BOOL (^selectSong)(NSString *),BOOL (^lea
    row[@"hp"]=@(tier->hp);row[@"delta"]=@[@(tier->perfect),@(tier->good),@(tier->bad),@(tier->miss)];
   }
   if(challenge.difficulty[0])row[@"difficulty"]=[NSString stringWithUTF8String:challenge.difficulty];
+  row[@"noPause"]=@(challenge.noPause!=0);row[@"mapDetail"]=@(challenge.replayCount>0);
+  if(challenge.state==PMOSChallengeClear && challenge.replayCount){
+   NSMutableArray *entries=[NSMutableArray arrayWithCapacity:challenge.replayCount];
+   for(int j=0;j<challenge.replayCount;++j){
+    const auto &option=challenge.replaySongs[j];NSString *idValue=order[option.song-1];
+    NSString *label=option.difficulty[0]?[NSString stringWithUTF8String:option.difficulty]:nil;
+    NSString *title=bySong[idValue][@"title"]?:idValue;
+    NSMutableDictionary *entry=[@{@"songID":idValue,@"title": label?[NSString stringWithFormat:@"%@ · %@",title,label]:title} mutableCopy];
+    if(label)entry[@"difficulty"]=label; if(bySong[idValue][@"art"])entry[@"art"]=bySong[idValue][@"art"];
+    [entries addObject:entry];
+   }
+   row[@"replaySongs"]=[entries copy];
+  }
   row[@"showDetail"]=@(challenge.showDetail!=0);
   NSMutableArray *intro=[NSMutableArray array];
   for(int j=0;j<challenge.introCount;j++){
@@ -285,10 +328,10 @@ void PMOpenChapterOS(NSString *chapter,BOOL (^selectSong)(NSString *),BOOL (^lea
  CGFloat aspect=plan->aspect;BOOL switchHidden=plan->listSwitchHidden!=0;BOOL opened=switchHidden||!plan->listFirst;dispatch_async(dispatch_get_main_queue(),^{if(token!=generation)return;UIView *host=hostView();if(!host)return;
  active=[[PMOSView alloc]initWithFrame:host.bounds];active.cards=cards;active.chapterName=name;active.selectSong=selectSong;active.leaveChapter=leaveChapter;active.startListedSong=startSong;active.listSwitchHidden=switchHidden;
  active.startChallenge=^BOOL(NSDictionary *row){
-  if(row[@"secretCourse"]){NSInteger tier=[row[@"lifeTier"] integerValue];return PMChapterStartSecretCourse(chapter,row[@"challengeID"],row[@"secretCourse"],tier<0?selectedLifeTier:tier);}
+  if(row[@"secretCourse"]){NSInteger tier=[row[@"lifeTier"] integerValue];return PMChapterStartSecretCourseWithPauseLock(chapter,row[@"challengeID"],row[@"secretCourse"],tier<0?selectedLifeTier:tier,[row[@"noPause"] boolValue]);}
   return startSong(row[@"sid"],row[@"difficulty"],^BOOL(NSString *group,int slot,NSString *chart){
   if(!PMDoorArm(chapter,row[@"challengeID"],group,slot,chart,[row[@"hp"] doubleValue],row[@"delta"]))return NO;
-  if(!PMStorySequenceArm(chapter,row[@"nextSongs"])){PMDoorCancelPending();return NO;}
+  if(!PMDoorSetPendingNoPause([row[@"noPause"] boolValue])||!PMStorySequenceArm(chapter,row[@"nextSongs"])){PMDoorCancelPending();return NO;}
   PMStoryCueArm(row[@"cues"]);
   return YES;
  });};active.opened=opened;if(nodes.count){active.aspect=aspect;PMChapterCanvas *canvas=[PMChapterCanvas new];canvas.clipsToBounds=YES;canvas.nodes=nodes;__weak PMOSView *owner=active;canvas.openSong=^(NSDictionary *song){[owner showSong:song];};__weak PMChapterCanvas *weakCanvas=canvas;

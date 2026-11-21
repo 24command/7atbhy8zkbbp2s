@@ -9,4 +9,6 @@ NS_ASSUME_NONNULL_BEGIN
 // NO means nothing launched. No saved stock tier, unlock or ranking is changed.
 FOUNDATION_EXPORT BOOL PMChapterStartSecretCourse(NSString *chapter, NSString *door,
     NSArray<NSDictionary *> *members, NSInteger tier);
+FOUNDATION_EXPORT BOOL PMChapterStartSecretCourseWithPauseLock(NSString *chapter, NSString *door,
+    NSArray<NSDictionary *> *members, NSInteger tier, BOOL noPause);
 NS_ASSUME_NONNULL_END

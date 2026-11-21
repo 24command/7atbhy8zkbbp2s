@@ -19,7 +19,7 @@ NSString *progressRoot() {
 #endif
 }
 // Game and selector calls are on Unity's main thread. Disk writes use a serial worker.
-NSDictionary *pending, *playing;
+NSDictionary *pending, *playing, *replay;
 dispatch_queue_t writes(){
  static dispatch_queue_t queue; static dispatch_once_t once;
  dispatch_once(&once, ^{queue=dispatch_queue_create("PhiMod.DoorProgress", DISPATCH_QUEUE_SERIAL);});return queue;
@@ -39,6 +39,7 @@ BOOL PMDoorArm(NSString *chapter,NSString *door,NSString *group,int slot,NSStrin
  if(!chapter.length||!door.length||!group.length||!chart.length||slot<0||slot>3||delta.count!=4||!(hp>=1&&hp<=10000)||playing)return NO;
  for(NSNumber *number in delta){double value=number.doubleValue;if(!(value>=-10000&&value<=10000))return NO;}
  pmstorysequence::handoff.take();
+ replay=nil;
  pending=@{@"chapter":chapter,@"door":door,@"group":group,@"slot":@(slot),@"chart":chart,@"hp":@(hp),@"delta":[delta copy]};return YES;
 }
 BOOL PMDoorBeginExactTrack(NSString *group,int slot,NSString *chart,double *hp,double delta[4]){
@@ -48,9 +49,23 @@ BOOL PMDoorBeginExactTrack(NSString *group,int slot,NSString *chart,double *hp,d
  playing=candidate;*hp=[candidate[@"hp"] doubleValue];for(int i=0;i<4;++i)delta[i]=[candidate[@"delta"][i] doubleValue];return YES;
 }
 BOOL PMDoorBeginTrack(NSString *group,int slot,double *hp,double delta[4]){return PMDoorBeginExactTrack(group,slot,group,hp,delta);}
+BOOL PMDoorSetPendingNoPause(BOOL value){
+ if(!pending)return NO;
+ NSMutableDictionary *run=[pending mutableCopy];run[@"noPause"]=@(value);pending=[run copy];return YES;
+}
+BOOL PMDoorPlayingNoPause(){return [playing[@"noPause"] boolValue];}
+BOOL PMDoorArmReplay(NSString *group,int slot,NSString *chart){
+ if(pending||playing||replay||!group.length||!chart.length||slot<0||slot>3)return NO;
+ pmstorysequence::handoff.take();replay=@{@"group":[group copy],@"slot":@(slot),@"chart":[chart copy]};return YES;
+}
+BOOL PMDoorReplayPending(){return replay!=nil;}
+BOOL PMDoorConsumeReplay(NSString *group,int slot,NSString *chart){
+ NSDictionary *request=replay;replay=nil;
+ return [request[@"group"] isEqual:group]&&slot==[request[@"slot"] intValue]&&[request[@"chart"] isEqual:chart];
+}
 BOOL PMDoorActive(){return playing!=nil;}
-void PMDoorAbandon(){pending=nil;playing=nil;pmstorysequence::handoff.take();}
-void PMDoorCancelPending(){pending=nil;}
+void PMDoorAbandon(){replay=nil;pending=nil;playing=nil;pmstorysequence::handoff.take();}
+void PMDoorCancelPending(){pending=nil;replay=nil;}
 static void enqueueOutcome(NSString *chapter, NSString *door, int tier, BOOL clear);
 void PMDoorFinish(BOOL clear){
  NSDictionary *run=playing;playing=nil;if(!run)return;

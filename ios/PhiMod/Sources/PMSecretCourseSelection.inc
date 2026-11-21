@@ -1,5 +1,5 @@
 // Included in pmcontent, next to the shared checked selector path.
-static BOOL startSecretCourse(NSString *chapter,NSString *door,NSArray *members,NSInteger tier){
+static BOOL startSecretCourse(NSString *chapter,NSString *door,NSArray *members,NSInteger tier,bool noPause){
  using pmsecretcourse::Pin;
  if(!runtime||!pmsecretcourse::backendReady()||playing||PMDoorActive()||pmchallenge::variable()||pmsecretcourse::active()||
     ![chapter isKindOfClass:NSString.class]||![chapter hasPrefix:@"pm_"]||
@@ -32,5 +32,5 @@ static BOOL startSecretCourse(NSString *chapter,NSString *door,NSArray *members,
    r.call(queue,"Add",{"Phigros2.SongSelector.Scripts.ChallengeSongItem"},{entry.get()});return YES;
   }))return NO;
  }
- return revision==PMContentStore.shared.revision && pmsecretcourse::launch(r,list.get(),chapter,door,tier);
+ return revision==PMContentStore.shared.revision && pmsecretcourse::launch(r,list.get(),chapter,door,tier,noPause);
 }

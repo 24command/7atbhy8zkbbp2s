@@ -1966,8 +1966,11 @@ void validate(Runtime&r){
 }
 
 BOOL PMChapterStartSecretCourse(NSString *chapter,NSString *door,NSArray<NSDictionary *> *members,NSInteger tier){
+ return PMChapterStartSecretCourseWithPauseLock(chapter,door,members,tier,NO);
+}
+BOOL PMChapterStartSecretCourseWithPauseLock(NSString *chapter,NSString *door,NSArray<NSDictionary *> *members,NSInteger tier,BOOL noPause){
  if(!NSThread.isMainThread)return NO;
- @try{try{return pmcontent::startSecretCourse(chapter,door,members,tier);}
+ @try{try{return pmcontent::startSecretCourse(chapter,door,members,tier,noPause);}
  catch(const std::exception &e){PMDiagnosticsWrite(e.what());return NO;}}
  @catch(NSException *e){PMDiagnosticsWrite(e.reason.UTF8String);return NO;}
 }

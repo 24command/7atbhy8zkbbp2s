@@ -224,7 +224,7 @@ bool beforeStart(Runtime&r,void*selector,void(^resume)(void)){
   restoreMediaAudio(); // Release our audio state before native navigation changes it.
   P current=rt->gchandle_get_target(handle);bool valid=rt->alive(current);rt->gchandle_free(handle);menuActive=true;
   if(!completed||!valid){PMDoorCancelPending();pmstory::cancelLaunch();return;}
-  NSDictionary*latest=ruleFor(id);if(![PMUnlockSignature(latest) isEqualToString:signature])return;
+  NSDictionary*latest=ruleFor(id);if(![PMUnlockSignature(latest) isEqualToString:signature]){PMDoorCancelPending();pmstory::cancelLaunch();return;}
   NSError*error=nil;[progress seen:id signature:signature error:&error];if(error)logf("Intro progress save failed: %s",error.localizedDescription.UTF8String);continueChain(id);
   resume();
  });

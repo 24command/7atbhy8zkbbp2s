@@ -75,6 +75,17 @@ static void challengeMember(lua_State *L, PMOSChallengeSong *song, int songs, co
 }
 
 static void challengePresentation(lua_State *L, PMOSChallenge *c, int songs) {
+    lua_getfield(L, 1, "noPause");
+    if (!lua_isnil(L, -1) && !lua_isboolean(L, -1)) luaL_error(L, "noPause expects true or false");
+    c->noPause = lua_toboolean(L, -1);
+    lua_pop(L, 1);
+    c->replayCount = presentationArray(L, "replaySongs", PMOSMaxChallengeReplays);
+    for (int i=0; i<c->replayCount; ++i) {
+        lua_rawgeti(L, -1, i+1);
+        challengeMember(L, &c->replaySongs[i], songs, "replaySongs");
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
     lua_getfield(L, 1, "showDetail");
     if (!lua_isnil(L, -1) && !lua_isboolean(L, -1)) luaL_error(L, "showDetail expects true or false");
     c->showDetail = lua_isnil(L, -1) || lua_toboolean(L, -1);

@@ -30,7 +30,7 @@ typedef struct {
     char text[256], src[256];
     int blockPause;
 } PMOSChallengeCue;
-enum { PMOSMaxChallengeIntro = 4, PMOSMaxChallengeNextSongs = 2 };
+enum { PMOSMaxChallengeIntro = 4, PMOSMaxChallengeNextSongs = 2, PMOSMaxChallengeReplays = 8 };
 typedef struct { int song; char difficulty[96]; } PMOSChallengeSong;
 typedef struct {
     char id[PMOSChallengeIdMax + 1], difficulty[96]; /* Empty difficulty if omitted. */
@@ -39,6 +39,8 @@ typedef struct {
     PMOSChallengeTier tiers[PMOSMaxChallengeTiers]; /* Increasing after, starting at zero. */
     int courseCount, lifeTier; /* 3 visible songs, optional fourth; -1 follows the current chapter-local tier. */
     PMOSChallengeSong course[4];
+    int noPause, replayCount;
+    PMOSChallengeSong replaySongs[PMOSMaxChallengeReplays];
     int cueStart, cueCount;
     int introCount, showDetail, nextSongCount; /* showDetail defaults to 1. Zero starts play after intro. */
     char intro[PMOSMaxChallengeIntro][256]; /* Local GIF/MP4 basenames in playback order. */
