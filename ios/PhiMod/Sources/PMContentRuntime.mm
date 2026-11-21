@@ -16,6 +16,7 @@
 #include "PMRuntimeFeatures.hpp"
 #import "PMContentStore.h"
 #import "PMChapterOS.h"
+#import "PMDoorRun.h"
 #import "PMCoverImage.h"
 #import <ImageIO/ImageIO.h>
 #import "PMChapterEditing.h"
@@ -594,7 +595,7 @@ void completeSelectorAsset(Runtime&r,P asset){
 }
 }
 static bool chapterOSAwaitingSelector=false;
-static BOOL startCheckpointSong(Runtime&,P,NSString *chapter,NSString *installedID,NSString *difficulty);
+static BOOL startCheckpointSong(Runtime&,P,NSString *chapter,NSString *installedID,NSString *difficulty,PMChapterDoorArm arm);
 static void beginChapterOS(Runtime&r,P selector){
  if(pendingSong.length)return;
  P chapter=r.get<P>(selector,"nowChapterInfo");if(!chapter)return;
@@ -605,11 +606,12 @@ static void beginChapterOS(Runtime&r,P selector){
   auto &game=*runtime;P items=game.call(selector,"get_SongItems");for(int i=0,n=game.count(items);i<n;++i){P item=game.at(items,i),song=game.get<P>(item,"songInfo");if(![game.string(game.get<P>(song,"songsId")) isEqual:group])continue;
    game.put(selector,"nowSong",i);game.put(selector,"targetSong",i);game.put(selector,"nowSongSelectorValue",float(i));game.put(selector,"lastFrameSongSelectorValue",float(i));game.put(selector,"listMoveSpeed",0.f);game.call(selector,"SetPosition");game.call(selector,"SetText");return YES;
   }
- }catch(const std::exception&e){log([NSString stringWithFormat:@"Chapter OS song selection: %s",e.what()]);}return NO;},^BOOL(NSString *installedID,NSString *difficulty){
+ }catch(const std::exception&e){log([NSString stringWithFormat:@"Chapter OS song selection: %s",e.what()]);}return NO;},^BOOL(NSString *installedID,NSString *difficulty,PMChapterDoorArm arm){
   try{
    if(!NSThread.isMainThread||!runtime||target(*runtime,loadingSelector)!=selector)return NO;
-   return startCheckpointSong(*runtime,selector,key,installedID,difficulty);
+   return startCheckpointSong(*runtime,selector,key,installedID,difficulty,arm);
   }catch(const std::exception&e){log([NSString stringWithFormat:@"Chapter OS checkpoint: %s",e.what()]);return NO;}
+  catch(...){log(@"Chapter OS checkpoint: unexpected exception");return NO;}
  });
 }
 void selectorLoadingBegin(Runtime&r,P selector){
@@ -654,6 +656,9 @@ void clearSparseButtons(Runtime&r){
 }
 #include "PMSelectorRowPresentation.inc"
 void selectorLoadingEnd(Runtime&r,bool finishSelected){
+ // An intro still waiting on this selector cannot resume after scene teardown.
+ // NormalStart releases loadingSelector on the successful path before OnDisable.
+ if(!finishSelected&&loadingSelector)PMDoorCancelPending();
  chapterOSAwaitingSelector=false;
  PMCloseChapterOS();
  if(finishSelected&&loadingSelector)try{P owner=target(r,loadingSelector);if(r.alive(owner))observeSelector(r,owner);}catch(const std::exception&e){log([NSString stringWithFormat:@"Selector already leaving: %s",e.what()]);}
@@ -818,7 +823,7 @@ static bool checkpointOfficialOpen(Runtime &r,P song,NSDictionary *official,int 
  return false;
 }
 
-static BOOL startCheckpointSong(Runtime &r,P selector,NSString *chapter,NSString *installedID,NSString *difficulty){
+static BOOL startCheckpointSong(Runtime &r,P selector,NSString *chapter,NSString *installedID,NSString *difficulty,PMChapterDoorArm arm){
  if(!installedID.length||playing||pendingSong.length||PMUnlockMediaBusy()||!r.alive(selector)||
     r.get<bool>(selector,"exit")||r.get<bool>(selector,"isMoving"))return NO;
  P currentChapter=r.get<P>(selector,"nowChapterInfo");
@@ -932,6 +937,9 @@ static BOOL startCheckpointSong(Runtime &r,P selector,NSString *chapter,NSString
  if(target(r,loadingSelector)!=selector||pendingSong.length||applied!=PMContentStore.shared.revision||r.get<bool>(selector,"exit"))return NO;
  items=r.call(selector,"get_SongItems");index=r.get<int>(selector,"nowSong");
  if(index<0||index>=r.count(items)||r.at(items,index)!=item||r.get<int>(selector,"nowLevel")!=slot)return NO;
+ if(r.get<P>(item,"songInfo")!=song)return NO;
+ NSString *nativeGroup=r.string(r.get<P>(song,"songsId"));
+ if(![nativeGroup isEqualToString:group])return NO;
  NSDictionary *selected=difficultyForSong(r,song,slot);
  if(authored?![selected[@"id"] isEqualToString:authored[@"id"]]:selected!=nil)return NO;
  P locked=r.get<P>(selector,"locked");
@@ -939,10 +947,23 @@ static BOOL startCheckpointSong(Runtime &r,P selector,NSString *chapter,NSString
     (r.alive(locked)&&r.unbox<bool>(r.call(locked,"get_activeInHierarchy")))||!r.alive(start)||
     !r.unbox<bool>(r.call(start,"IsActive"))||!r.unbox<bool>(r.call(start,"IsInteractable"))||
     pmunlock::selectorButtonBlocked(r,start)||PMUnlockMediaBusy())return NO;
- r.call(selector,"NormalStart"); // onNormalStart enforces chart and parent-chapter rules.
- // NormalStart returns void. A lock veto leaves both signals clear. An accepted
- // intro can still be cancelled, and a later gameplay load can still fail.
- return PMUnlockMediaBusy()||r.get<bool>(selector,"exit");
+ if(arm&&PMDoorActive())return NO;
+ BOOL accepted=NO;
+ @try{
+  if(arm){
+   NSString *resolvedChartID=selected?selected[@"id"]:nativeGroup;
+   if(!arm(nativeGroup,slot,resolvedChartID))return NO;
+  }else{
+   PMDoorCancelPending();
+  }
+  r.call(selector,"NormalStart");
+  // A movie defers the native start. The gameplay hook watches for cancellation
+  // and verifies group, slot and chart again when it consumes the pending arm.
+  accepted=PMUnlockMediaBusy()||r.get<bool>(selector,"exit");
+  return accepted;
+ }@finally{
+  if(arm&&!accepted)PMDoorAbandon();
+ }
 }
 
 

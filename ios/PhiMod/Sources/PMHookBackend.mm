@@ -1,4 +1,7 @@
 #import "PMDifficultyMetadata.h"
+#import "PMDoorRun.h"
+#import "PMContentStore.h"
+#import "PMUnlockMedia.h"
 #import "PMChapterOS.h"
 #include "../Core/PMBuildInfo.hpp"
 #import "PMHookBackend.h"
@@ -127,7 +130,54 @@ void logProgressSnapshot(Runtime&r,P p,const char*source,uint64_t count){
        source,(unsigned long long)count,now,audioTime,length,playing,prepared,volumeSet,loadOver,wrapperTime,internalTime,audioPlayFlag,pitch,audioClipTime,chartLoaded,levelBegan,judgeLineCount,(unsigned long)floorCount,info?r.get<bool>(info,"levelOver"):false,info?r.get<bool>(info,"canLevelOver"):false,r.get<bool>(p,"leave"),r.get<bool>(p,"levelBreak"),stopJudge,judgeNow,r.get<int>(p,"_nowFrameIndex"));
  if(pmhp::active())diagf("HP loader %s",pmhp::loadingStatus(r).c_str());
 }
-void fault(const std::exception &e){diagf("fault: %s",e.what());NSLog(@"[PhiMod] Gameplay failure: %s",e.what());lastError=e.what();broken=true;guard.store(true);if(attempt)attempt->failClosed();}
+#include "PMDoorGameplay.inc"
+P currentLevel=nullptr;
+bool bindDoor(Runtime &r,P level,phimod::Options &options){
+ if(!doorPlayEligible(options) || pmchallenge::variable())return false;
+ P pc=r.get<P>(level,"progressControl"), start=r.get<P>(r.mainGame(),"levelStartInfo");
+ if(!pc || !start || r.get<bool>(pc,"_inChallengeMode"))return false;
+ NSString *identifier=r.string(r.get<P>(start,"songsId"));
+ NSString *label=[r.string(r.get<P>(start,"songsLevel")) stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+ if(!identifier.length || !label.length)return false;
+ int slot=PMStockDifficulty(label);
+ NSString *group=identifier;
+ NSString *key=r.string(r.get<P>(start,"chartAddressableKey"));
+ if(!key.length)return false;
+ if([key hasPrefix:@"PM/"]){
+  // GetLevelStartInfo keeps the native transport level and substitutes the
+  // installed ID and chart key. Multiple named charts can share the AT slot.
+  NSString *prefix=[NSString stringWithFormat:@"PM/%@/chart@",identifier];
+  if(![key hasPrefix:prefix])return false;
+  NSDictionary *chart=nil;
+  for(NSDictionary *row in [PMContentStore.shared snapshot][@"songs"]){
+   if(![row[@"id"] isEqualToString:identifier])continue;
+   if(chart)return false;
+   chart=row;
+  }
+  if(!chart || ![chart[@"level"] length])return false;
+  int stock=PMStockDifficulty(chart[@"level"]);
+  int transport=stock<0?3:stock;
+  if(stock<0 && [label isEqualToString:PMDifficultyName(chart[@"level"])])slot=transport;
+  if(slot!=transport)return false;
+  if([chart[@"groupId"] length])group=chart[@"groupId"];
+ }
+ double hp=0,delta[4]={};
+ if(slot<0 || !PMDoorBeginExactTrack(group,slot,identifier,&hp,delta))return false;
+ doorProgress=pc;
+ auto overrides=options;
+ overrides.hpEnabled=true;
+ overrides.hpMax=hp;
+ std::copy_n(delta,4,overrides.hpDelta.begin());
+ overrides.validate();
+ options=overrides;
+ return true;
+}
+void prepareDoor(Runtime &r,P level,phimod::Options &options){
+ try{if(bindDoor(r,level,options))return;}
+ catch(const std::exception &e){diagf("Door bind failed: %s",e.what());abandonBoundDoor();}
+ PMDoorCancelPending();
+}
+void fault(const std::exception &e){abandonBoundDoor();diagf("fault: %s",e.what());NSLog(@"[PhiMod] Gameplay failure: %s",e.what());lastError=e.what();broken=true;guard.store(true);if(attempt)attempt->failClosed();}
 bool applying(){return ready&&!broken&&attempt&&attempt->shouldApplyGameplay();}
 P progress(){return progressRoot?R().gchandle_get_target(progressRoot):nullptr;}
 P score(){return scoreRoot?R().gchandle_get_target(scoreRoot):nullptr;}
@@ -159,13 +209,18 @@ void begin(P p){
  auto jc=r.klass("JudgeControl");r.runtime_class_init(jc);
  phimod::Windows baseline{r.staticValue<float>(jc,"PerfectTimeRange","System.Single"),r.staticValue<float>(jc,"GoodTimeRange","System.Single"),r.staticValue<float>(jc,"BadTimeRange","System.Single")};
   if(!attempt->begin(baseline))throw std::runtime_error("Incomplete hook coverage");
-  if(options.hpEnabled){attempt->seedTrackHP(pmchallenge::beginTrack(r,p,options.hpMax));pmhp::beginAttempt(attempt->hp());}
+  if(doorProgress==p){pmchallenge::clearHP(r);pmhp::beginAttempt(attempt->hp());}
+  else if(options.hpEnabled){attempt->seedTrackHP(pmchallenge::beginTrack(r,p,options.hpMax));pmhp::beginAttempt(attempt->hp());}
   else pmchallenge::clearHP(r);
  if(options.requiresSaveProtection())guard.store(true);
  lastError="Gameplay hooks armed (device verification pending)";
  diagf("ProgressControl.Start armed baseline P=%.4f G=%.4f B=%.4f",baseline.perfect,baseline.good,baseline.bad);
 }
 void onAwake(P self,P mi){
+ abandonBoundDoor();
+ watchingDoorLaunch=false;
+ currentLevel=self;
+ lostDoorProgress=nullptr;
  timingHints::clear();
  timingHints::enabled=PMSettingBool("earlyLateHints");
  timingHints::showBad=timingHints::enabled && PMSettingBool("earlyLateBad");
@@ -181,13 +236,20 @@ void onAwake(P self,P mi){
  }
   try{release(progressRoot);release(scoreRoot);attempt.reset();resetChartRegistration();judgeUpdateSeen=false;pmscene::settingsLeave(R(),"level-start");pmscene::clearRecovery(R());pmhp::clear(R());pmmodes::clear(R());pmpractice::clear(R());}catch(const std::exception&e){fault(e);}
    inResult=false;resultPresented=false;levelOverStarted=false;loadingMaskCleared=false;
- try{frozenOptions=PMReadOptions([[PMSettings shared] snapshot]);diagf("LevelControl.Awake options assisted=%d hp=%d hpMax=%.1f hpD=[%.1f,%.1f,%.1f,%.1f]",frozenOptions.assisted(),frozenOptions.hpEnabled,frozenOptions.hpMax,frozenOptions.hpDelta[0],frozenOptions.hpDelta[1],frozenOptions.hpDelta[2],frozenOptions.hpDelta[3]);if(!broken){pmhp::prepare(R(),self,frozenOptions);diagf("HP prepare ok active=%d normalized=%.3f",pmhp::active(),pmhp::normalized());pmmodes::prepare(R(),self,frozenOptions);pmpractice::prepare(R(),frozenOptions);diagf("Chart modes and practice prepare ok");}}catch(const std::exception&e){diagf("LevelControl.Awake prepare failed: %s",e.what());fault(e);}
+ try{frozenOptions=PMReadOptions([[PMSettings shared] snapshot]);
+  if(!broken)prepareDoor(R(),self,frozenOptions);
+  diagf("LevelControl.Awake options assisted=%d hp=%d hpMax=%.1f hpD=[%.1f,%.1f,%.1f,%.1f]",frozenOptions.assisted(),frozenOptions.hpEnabled,frozenOptions.hpMax,frozenOptions.hpDelta[0],frozenOptions.hpDelta[1],frozenOptions.hpDelta[2],frozenOptions.hpDelta[3]);if(!broken){pmhp::prepare(R(),self,frozenOptions);diagf("HP prepare ok active=%d normalized=%.3f",pmhp::active(),pmhp::normalized());pmmodes::prepare(R(),self,frozenOptions);pmpractice::prepare(R(),frozenOptions);diagf("Chart modes and practice prepare ok");}}catch(const std::exception&e){diagf("LevelControl.Awake prepare failed: %s",e.what());fault(e);}
+ if(broken)PMDoorCancelPending();
  diagf("LevelControl.Awake calling original hpActive=%d",pmhp::active());
  orig<VoidFn>(h::levelAwake)(self,mi);
  try{pmcontent::difficultyIntro(R(),self);}catch(const std::exception&e){diagf("Difficulty intro: %s",e.what());}
  diagf("LevelControl.Awake returned");
 }
 void onDestroy(P self,P mi){
+ if(currentLevel && self!=currentLevel){orig<VoidFn>(h::levelDestroy)(self,mi);return;}
+ currentLevel=nullptr;
+ lostDoorProgress=nullptr;
+ abandonBoundDoor();
  diagf("LevelControl.OnDestroy enter");
  timingHints::clear();
  try{clearRealtimeAccuracy(R());}catch(const std::exception&e){diagf("Live ACC cleanup: %s",e.what());}
@@ -200,6 +262,7 @@ void onDestroy(P self,P mi){
   diagf("LevelControl.OnDestroy returned");
 }
 void onProgressStart(P self,P mi){
+ if(doorProgress && self!=doorProgress){orig<VoidFn>(h::progressStart)(self,mi);return;}
  diagf("ProgressControl.Start enter");
  try{pmpractice::begin(R(),self);diagf("Practice clock/pitch armed before ProgressControl.Start");}catch(const std::exception&e){diagf("Practice pre-start setup failed; original audio path retained: %s",e.what());try{pmpractice::clear(R());}catch(...){}}
  orig<VoidFn>(h::progressStart)(self,mi);
@@ -232,9 +295,10 @@ void clearGameplayMask(Runtime&r,P progressControl){
 void credit(P self,float code,float offset,V3 pos,bool hold,P mi){
  orig<PerfectFn>(h::perfect)(self,code,offset,pos,hold,mi);
 }
-void observe(float code,float offset,phimod::Rating rating){
- if(!applying())return;
+void observe(P scoreOwner,float code,float offset,phimod::Rating rating){
+ if(!applying() || (doorProgress && scoreOwner!=score()))return;
  float before=attempt->hp();if(attempt->options().hpEnabled&&rating!=phimod::Rating::Perfect)diagf("HP judgement enter code=%.3f rating=%d hp=%.2f",code,(int)rating,before);bool accepted=attempt->observe(code,offset,rating);
+ if(doorProgress && attempt->trackLost())observeDoorLoss(progress(),*attempt,accepted,before);
  if(accepted&&attempt->options().hpEnabled&&before!=attempt->hp()){pmchallenge::observe(before,attempt->hp());diagf("HP state changed code=%.3f hp=%.2f -> %.2f; visual update deferred",code,before,attempt->hp());}
 }
 // The judgment that drains LIFE still runs its native callback. Later judgments,
@@ -250,7 +314,7 @@ void onPerfect(P self,float code,float offset,V3 pos,bool hold,P mi){
    if(!attempt->creditOnce(code))return;
   }catch(const std::exception&e){fault(e);return;}
  }
- observe(code,offset,phimod::Rating::Perfect);pmfeatures::observe(0);credit(self,code,offset,pos,hold,mi);
+ observe(self,code,offset,phimod::Rating::Perfect);pmfeatures::observe(0);credit(self,code,offset,pos,hold,mi);
 }
 void onMiss(P self,float code,P mi){
  if(courseScoreFrozen())return;
@@ -263,16 +327,16 @@ void onMiss(P self,float code,P mi){
   bool hold=attempt->noteType(code)==3;
   onPerfect(self,code,0,{0,0,0},hold,nullptr);return;
  }
- observe(code,0,phimod::Rating::Miss);pmfeatures::observe(3);if(pmhp::active())diagf("HP Miss original enter code=%.3f hp=%.2f",code,attempt?attempt->hp():-1);orig<void(*)(P,float,P)>(h::miss)(self,code,mi);if(pmhp::active())diagf("HP Miss original returned code=%.3f",code);
+ observe(self,code,0,phimod::Rating::Miss);pmfeatures::observe(3);if(pmhp::active())diagf("HP Miss original enter code=%.3f hp=%.2f",code,attempt?attempt->hp():-1);orig<void(*)(P,float,P)>(h::miss)(self,code,mi);if(pmhp::active())diagf("HP Miss original returned code=%.3f",code);
 }
 void onBad(P self,float code,float offset,P mi){
  if(courseScoreFrozen())return;
-observe(code,offset,phimod::Rating::Bad);pmfeatures::observe(2);orig<void(*)(P,float,float,P)>(h::bad)(self,code,offset,mi);
+observe(self,code,offset,phimod::Rating::Bad);pmfeatures::observe(2);orig<void(*)(P,float,float,P)>(h::bad)(self,code,offset,mi);
  if(timingHints::showBad)timingHints::show(code,offset,nullptr);
 }
 void onGood(P self,float code,float offset,V3 pos,bool hold,P mi){
  if(courseScoreFrozen())return;
-observe(code,offset,phimod::Rating::Good);pmfeatures::observe(1);orig<PerfectFn>(h::good)(self,code,offset,pos,hold,mi);timingHints::show(code,offset,&pos);}
+observe(self,code,offset,phimod::Rating::Good);pmfeatures::observe(1);orig<PerfectFn>(h::good)(self,code,offset,pos,hold,mi);timingHints::show(code,offset,&pos);}
 void diagnosticTick(Runtime&r,P progressControl,const char *source){
  if(!progressControl)return;
  bool playing=r.get<bool>(progressControl,"isPlaying");
@@ -303,13 +367,14 @@ void tickGameplay(Runtime&r,P progressControl,const char *source){
   // completion point. Exactly one sample/HP award and one original Perfect.
   for(auto c:attempt->dueHolds(now,playing)){
    if(courseScoreFrozen())break;
-   observe(c.code,c.offset,phimod::Rating::Perfect);
+   observe(score(),c.code,c.offset,phimod::Rating::Perfect);
    credit(score(),c.code,c.offset,{c.position[0],c.position[1],c.position[2]},c.hold,nullptr);
   }
   bool hpLost=attempt->options().hpEnabled&&attempt->trackLost();
   auto action=attempt->pendingAction(playing||pmhp::failing()||hpLost,r.get<bool>(progressControl,"leave"),r.get<bool>(progressControl,"levelBreak"));
   P info=r.get<P>(progressControl,"levelInformation");
   if(action==phimod::Action::Retry){
+   if(progressControl==doorProgress)abandonBoundDoor();
    if(attempt->options().requiresSaveProtection())guard.store(true);r.call(progressControl,"LevelBreak",{"System.String"},{r.string_new("Level")});
    r.put(info,"levelOver",true);r.put(info,"canPause",false);r.call(r.get<P>(progressControl,"audioSource"),"Stop");attempt->acknowledgeAction(action);diagf("gameplay retry dispatched");
   }else if(action==phimod::Action::TrackLost&&!levelOverStarted&&pmhp::failureReady(r,progressControl)){
@@ -329,6 +394,15 @@ void tickGameplay(Runtime&r,P progressControl,const char *source){
 void onProgressUpdate(P self,P mi){
  uint64_t count=++progressUpdateCalls;bool heartbeat=heartbeatDue(lastProgressHeartbeat,count);
  if(heartbeat)diagf("ProgressControl.Update enter n=%llu",(unsigned long long)count);
+ // The native end timer can already be running when the last note drains HP.
+ // Let the existing LIFE fade dispatch LevelBreak before advancing that timer.
+ if(self==lostDoorProgress && applying() && !levelOverStarted){
+  auto &r=R();
+  if(!r.get<bool>(self,"leave") && !r.get<bool>(self,"levelBreak")){
+   tickGameplay(r,self,"Door HP failure");
+   return;
+  }
+ }
  // Once the lethal judgment has returned, the course owns this frame. Native
  // leave/levelBreak and practice gates must not suppress or race the death fade.
  if(courseScoreFrozen() && self==progress()){
@@ -529,7 +603,7 @@ P onResultStart(P self,P mi){
   try{
    if(attempt){
     for(auto c:attempt->flushPendingHolds()){
-     observe(c.code,c.offset,phimod::Rating::Perfect);
+     observe(score(),c.code,c.offset,phimod::Rating::Perfect);
      credit(score(),c.code,c.offset,{c.position[0],c.position[1],c.position[2]},c.hold,nullptr);
     }
     attempt->result();
@@ -581,7 +655,9 @@ void onLifeUpdate(P self,P mi){
  orig<VoidFn>(h::lifeUpdate)(self,mi);
 }
  P onProgressLevelOver(P self,P mi){
+  if(doorProgress && self!=doorProgress)return orig<P(*)(P,P)>(h::progressLevelOver)(self,mi);
   diagf("ProgressControl.LevelOver enter hpActive=%d",pmhp::active());
+  if(doorProgress)settleDoorEnd(self,applying() && self==progress()?attempt.get():nullptr,levelOverStarted);
   try{pmpractice::clear(R());}catch(const std::exception&e){diagf("Practice result cleanup failed: %s",e.what());}
   if(pmhp::active())try{pmhp::finish(R());}catch(const std::exception&e){lastError=std::string("HP result cleanup: ")+e.what();diagf("HP result cleanup failed: %s",e.what());}
   return orig<P(*)(P,P)>(h::progressLevelOver)(self,mi);
@@ -615,6 +691,8 @@ template<class F>bool contentBoundary(const char*stage,F&&work){
  return false;
 }
 void onChapterStart(P self,P mi){
+ watchingDoorLaunch=false;
+ PMDoorCancelPending();
  try{pmchallenge::cancelVariable(R());}catch(const std::exception&e){diagf("Challenge reset: %s",e.what());}
  // A MOD data failure must not prevent Unity's original chapter UI from starting.
  bool prepared=contentBoundary("Content chapter prepare failed",[&]{pmscene::settingsLeave(R(),"chapter-start");pmcontent::chapterPrepare(R(),self);});
@@ -699,6 +777,7 @@ void onHoldMove(P self,P mi){
 }
 template<h::Index i>void onNoteMove(P self,P mi){pmfeatures::beforeNoteMove(R(),self,false);orig<VoidFn>(i)(self,mi);pmfeatures::noteMoved(R(),self,false);try{pmcontent::noteMoved(R(),self,false);pmcontent::finishNoteGeometry(R(),self,false);}catch(const std::exception&e){diagf("RPE note visual/skin failed: %s",e.what());}if(applying())try{pmmodes::moved(R(),self);}catch(const std::exception&e){fault(e);}}
 void onNormalStart(P self,P mi){
+ watchingDoorLaunch=true;
  try{if(pmunlock::beforeStart(R(),self,^{try{pmcontent::selectorLoadingEnd(R(),true);}catch(const std::exception&e){diagf("Selector loading resume: %s",e.what());}orig<VoidFn>(h::normalStart)(self,mi);try{pmcontent::difficultyTransitionLabel(R(),self);}catch(const std::exception&e){diagf("Difficulty transition: %s",e.what());}}))return;}
  catch(const std::exception&e){diagf("Unlock start gate failed: %s",e.what());return;}
  try{pmcontent::selectorLoadingEnd(R(),true);}catch(const std::exception&e){diagf("Selector loading start: %s",e.what());}
@@ -744,6 +823,7 @@ void onMainlineApplyMapCover(P self,P mi){
 }
 
 void onSelector(P self,P mi){
+ cancelIdleDoorLaunch(self);
  if(PMChapterOSVisible())return;
  if(pmchallenge::atResult || pmchallenge::cursor>=0 || pmchallenge::hpRoot)pmchallenge::cancelVariable(R());
  bool modal=false;if(!contentBoundary("Selector modal",[&]{modal=pmunlock::selectorModalUpdate(R(),self);})||modal)return;
@@ -759,7 +839,7 @@ void onSelector(P self,P mi){
   contentBoundary("Selector difficulty UI",[&]{pmcontent::selectorDifficultyUI(R(),self);});
  contentBoundary("Selector loading",[&]{pmcontent::selectorLoadingFrame(R(),self);});
 }
-void onSelectorOff(P self,P mi){try{pmcontent::difficultySelectorOff(R());pmcontent::selectorLoadingEnd(R(),false);pmscene::selectorOff(R());pmunlock::clear(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::selectorOff)(self,mi);}
+void onSelectorOff(P self,P mi){cancelIdleDoorLaunch(self);try{pmcontent::difficultySelectorOff(R());pmcontent::selectorLoadingEnd(R(),false);pmscene::selectorOff(R());pmunlock::clear(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::selectorOff)(self,mi);}
 void onSetting(P self,P mi){if(!pmscene::settingsPreviewSuspended(R(),self))orig<VoidFn>(h::setting)(self,mi);static std::string previous;try{pmunlock::clear(R());pmscene::settingsFrame(R(),self);previous.clear();}catch(const std::exception&e){lastError=e.what();if(previous!=lastError){previous=lastError;diagf("MOD settings update failed: %s",e.what());}}}
 void onSettingTab(P self,int index,P mi){try{if(pmscene::settingsTabRequest(R(),self,index))return;}catch(const std::exception&e){lastError=e.what();diagf("MOD tab routing failed target=%d: %s",index,e.what());return;}orig<void(*)(P,int,P)>(h::settingTab)(self,index,mi);}
 void onSettingBack(P self,P mi){try{pmscene::settingsLeave(R(),"back-button");}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::settingBack)(self,mi);}
@@ -1016,6 +1096,7 @@ void onCheckFlick(P s,int f,P m){onCheck(s,f,m,h::checkFlick);}
  if(!ready||broken||!rt)return @{ @"ok":@NO,@"message":@"Gameplay backend unavailable" };
  try{auto&r=R();auto options=PMReadOptions([[PMSettings shared] snapshot]);float position=[[[PMSettings shared] value:@"practicePosition"] floatValue];
   bool ok=action==6?pmpractice::updateRange(r,options):pmpractice::command(r,(int)action,options.playbackRate,position);
+  if(ok && action!=8 && !(action==4 && options.playbackRate==1.f))abandonBoundDoor();
   if(ok&&action==4&&attempt&&attempt->phase()==phimod::Phase::Playing){auto changed=attempt->options();changed.playbackRate=options.playbackRate;attempt->request(changed);if(!attempt->sync())throw std::runtime_error("Could not apply live practice rate");frozenOptions.playbackRate=options.playbackRate;if(changed.requiresSaveProtection())guard.store(true);}
   if(ok&&pmpractice::consumeRestart())restartPracticeSession();
   std::string message=ok?pmpractice::status(r):"Practice command unavailable: enable range practice before entering a song, wait for chart loading, and check the range";

@@ -15,6 +15,8 @@ struct PMOSSession {
     int songs, nodes, screens;
     char names[PMOSMaxScreens][PMOSScreenNameSize];
     ClickTarget clicks[PMOSMaxNodes];
+    int challengeCount;
+    struct { char id[PMOSChallengeIdMax + 1]; PMOSChallengeState state; } challenges[PMOSMaxChallenges];
     PMOSPage *declaring;
     PMOSProgress progress;
     size_t accesses, changeCount;
@@ -42,20 +44,27 @@ static PMOSSession *session(lua_State *L) {
     return ctx;
 }
 
-static const char *progressKey(lua_State *L, PMOSSession *s, int argc) {
-    if (lua_gettop(L) != argc) luaL_error(L, "wrong number of progress arguments");
+static void countProgressAccess(lua_State *L, PMOSSession *s) {
     if (s->accesses >= PMOSProgressAccessLimit) luaL_error(L, "progress access limit exceeded");
     ++s->accesses;
-    luaL_checktype(L, 1, LUA_TSTRING);
-    size_t len;
-    const char *key = lua_tolstring(L, 1, &len);
-    if (!len || len > PMOSProgressKeyMax) luaL_error(L, "invalid progress key length");
+}
+
+static void validateKeyChars(lua_State *L, const char *key, size_t len) {
     for (size_t i = 0; i < len; ++i) {
         char c = key[i];
         if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
               (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '-'))
             luaL_error(L, "invalid progress key character");
     }
+}
+
+static const char *progressKey(lua_State *L, int argc) {
+    if (lua_gettop(L) != argc) luaL_error(L, "wrong number of progress arguments");
+    luaL_checktype(L, 1, LUA_TSTRING);
+    size_t len;
+    const char *key = lua_tolstring(L, 1, &len);
+    if (!len || len > PMOSProgressKeyMax) luaL_error(L, "invalid progress key length");
+    validateKeyChars(L, key, len);
     return key;
 }
 
@@ -65,21 +74,25 @@ static PMOSProgressChange *stagedChange(PMOSSession *s, const char *key) {
     return NULL;
 }
 
-static int progressGet(lua_State *L) {
-    PMOSSession *s = session(L);
-    const char *key = progressKey(L, s, 1);
+static int readProgress(lua_State *L, PMOSSession *s, const char *key) {
+    countProgressAccess(L, s);
     PMOSProgressChange *change = stagedChange(s, key);
     int value = 0;
     if (change) value = change->value;
     else if (s->progress.read && s->progress.read(s->progress.context, key, &value) != 1)
         return luaL_error(L, "progress read failed");
-    lua_pushinteger(L, value);
+    return value;
+}
+
+static int progressGet(lua_State *L) {
+    lua_pushinteger(L, readProgress(L, session(L), progressKey(L, 1)));
     return 1;
 }
 
 static int progressSet(lua_State *L) {
     PMOSSession *s = session(L);
-    const char *key = progressKey(L, s, 2);
+    const char *key = progressKey(L, 2);
+    countProgressAccess(L, s);
     if (!lua_isinteger(L, 2)) return luaL_error(L, "progress value must be an integer");
     lua_Integer value = lua_tointeger(L, 2);
     if (value < INT_MIN || value > INT_MAX) return luaL_error(L, "progress integer out of range");
@@ -153,6 +166,7 @@ static int card(lua_State *L) {
 }
 
 #include "PMChapterLayout.inc"
+#include "PMChapterChallenge.inc"
 
 typedef struct { const char *source; size_t length; } Script;
 
@@ -170,6 +184,8 @@ static int evaluate(lua_State *L) {
     lua_pushcfunction(L, progressSet);
     lua_setfield(L, -2, "set");
     lua_setglobal(L, "progress");
+    lua_pushcfunction(L, declareChallenge);
+    lua_setglobal(L, "challenge");
     registerLayout(L);
     if (luaL_loadbufferx(L, script->source, script->length, "@os.lua", "t")) return lua_error(L);
     lua_call(L, 0, 0);
@@ -232,9 +248,14 @@ PMOSSession *PMOSStartWithProgress(const char *src, size_t len, int songs,
     int ok = runProtected(s, 1, page->error, sizeof(page->error));
     s->declaring = NULL;
     if (!ok) {
-        page->count = page->nodes = page->screens = 0;
+        page->count = page->nodes = page->screens = page->challengeCount = 0;
         PMOSStop(s);
         return NULL;
+    }
+    s->challengeCount = page->challengeCount;
+    for (int i = 0; i < s->challengeCount; ++i) {
+        strcpy(s->challenges[i].id, page->challenges[i].id);
+        s->challenges[i].state = page->challenges[i].state;
     }
     s->nodes = page->nodes;
     s->screens = page->screens;
@@ -311,6 +332,8 @@ static int invokeHandler(lua_State *L) {
     word(L, -2, key, sizeof(key));
     if (!strcmp(key, "checkpoint")) {
         parseCheckpoint(L, s, action);
+    } else if (!strcmp(key, "challenge")) {
+        action->challenge = challengeAction(L, s);
     } else if (!strcmp(key, "open")) {
         action->song = actionSong(L, s, "open");
     } else if (!strcmp(key, "to")) {

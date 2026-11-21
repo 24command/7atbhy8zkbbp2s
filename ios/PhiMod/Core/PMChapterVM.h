@@ -7,11 +7,26 @@ typedef struct {int song,speech; double seconds;char speechHeading[192];char tit
 enum {PMOSFrame, PMOSImage, PMOSHotspot};
 enum { PMOSMaxNodes = 256, PMOSMaxScreens = 32, PMOSScreenNameSize = 64 };
 typedef struct {double x,y,w,h,start,duration,fade;int kind,parent,depth,cover,open,screen,dest,fill,loop,handler,hidden;unsigned rgba;char id[64],src[256],label[256],to[64];} PMOSNode;
-typedef struct {int nodes,screens;double aspect;char names[PMOSMaxScreens][PMOSScreenNameSize];PMOSNode elements[PMOSMaxNodes];int listFirst,count; PMOSCard cards[128];char error[384];} PMOSPage;
-typedef struct PMOSSession PMOSSession;
-typedef struct {int song, dest, element, visible; char error[384]; int checkpoint; char difficulty[96];} PMOSAction;
-
 enum { PMOSProgressKeyMax = 64, PMOSProgressAccessLimit = 128 };
+enum { PMOSMaxChallenges = 32, PMOSMaxChallengeTiers = 16,
+       PMOSChallengeIdMax = PMOSProgressKeyMax - (sizeof("door..clear") - 1) };
+typedef enum { PMOSChallengeLocked, PMOSChallengeClosed, PMOSChallengeClear } PMOSChallengeState;
+typedef struct {
+    int after;
+    float hp, perfect, good, bad, miss;
+} PMOSChallengeTier;
+typedef struct {
+    char id[PMOSChallengeIdMax + 1], difficulty[96]; /* Empty difficulty if omitted. */
+    int song, failures, tierCount;
+    PMOSChallengeState state;
+    PMOSChallengeTier tiers[PMOSMaxChallengeTiers]; /* Increasing after, starting at zero. */
+} PMOSChallenge;
+typedef struct {int nodes,screens;double aspect;char names[PMOSMaxScreens][PMOSScreenNameSize];PMOSNode elements[PMOSMaxNodes];int listFirst,count; PMOSCard cards[128];char error[384];
+    int challengeCount; PMOSChallenge challenges[PMOSMaxChallenges];
+} PMOSPage;
+typedef struct PMOSSession PMOSSession;
+typedef struct {int song, dest, element, visible; char error[384]; int checkpoint; char difficulty[96]; int challenge;} PMOSAction;
+
 typedef struct { char key[PMOSProgressKeyMax + 1]; int value; } PMOSProgressChange;
 typedef struct {
     void *context;
@@ -41,6 +56,8 @@ void PMOSStop(PMOSSession *session);
    element indexes page->elements on the clicked screen and visible is 1/0.
    checkpoint is 0 for ordinary actions, 1 for session, or 2 for relaunch.
    Checkpoints use dest for a page or song with an optional difficulty (empty if omitted).
+   challenge is a 1-based index into page->challenges, or 0 when absent. A locked
+   challenge returns a successful empty action. Cleared challenges can be replayed.
    Failure returns 0, clears the action and sets out->error. */
 int PMOSClick(PMOSSession *session, int zeroBasedNode, PMOSAction *out);
 int PMBuildOSPage(const char *source,size_t len,int songs,PMOSPage *page);

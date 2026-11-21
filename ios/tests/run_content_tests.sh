@@ -2,13 +2,16 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/phimod-content.XXXXXX")"
-trap 'rm -f "$OUT/core" "$OUT/host" "$OUT/unlock" "$OUT/text" "$OUT/cover" "$OUT/pcm" "$OUT/compact" "$OUT/trash" "$OUT/opacity" "$OUT/framecache" "$OUT/visibility" "$OUT/export" "$OUT/cachedtrack" "$OUT/difficulties" "$OUT/selection" "$OUT/arrows" "$OUT/modlayout" "$OUT/recoveryindex" "$OUT/contentio" "$OUT/selectorrows" "$OUT/selectorsort" "$OUT/chaptervm" "$OUT/checkpoint" "$OUT/chapter-checkpoint.plist" "$OUT/chapter-checkpoint.lock"; rmdir "$OUT"' EXIT
+trap 'rm -f "$OUT/core" "$OUT/host" "$OUT/unlock" "$OUT/text" "$OUT/cover" "$OUT/pcm" "$OUT/compact" "$OUT/trash" "$OUT/opacity" "$OUT/framecache" "$OUT/visibility" "$OUT/export" "$OUT/cachedtrack" "$OUT/difficulties" "$OUT/selection" "$OUT/arrows" "$OUT/modlayout" "$OUT/recoveryindex" "$OUT/contentio" "$OUT/selectorrows" "$OUT/selectorsort" "$OUT/chaptervm" "$OUT/checkpoint" "$OUT/doorrun" "$OUT/chapter-checkpoint.plist" "$OUT/chapter-checkpoint.lock"; rmdir "$OUT"' EXIT
 clang++ -std=c++17 -fobjc-arc -DPMOS_CHECKPOINT_HOST_TEST -framework Foundation -framework CoreFoundation \
   "$ROOT/tests/PMOSCheckpointTest.mm" "$ROOT/PhiMod/Sources/PMOSCheckpoint.mm" -o "$OUT/checkpoint"
 # Each phase is a new process sharing only the temporary on-disk store.
 for phase in write resume consume; do
   "$OUT/checkpoint" "$OUT" "$phase"
 done
+clang++ -std=c++17 -fobjc-arc -DPMDOOR_RUN_HOST_TEST -framework Foundation -framework CoreFoundation \
+  "$ROOT/tests/PMDoorRunTest.mm" "$ROOT/PhiMod/Sources/PMDoorRun.mm" "$ROOT/PhiMod/Sources/PMOSAuthorProgress.mm" -o "$OUT/doorrun"
+"$OUT/doorrun"
 clang -std=c99 -O2 "$ROOT"/PhiMod/Vendor/lua54/*.c "$ROOT/PhiMod/Core/PMChapterVM.c" "$ROOT/tests/PMChapterVMTest.c" -o "$OUT/chaptervm"
 "$OUT/chaptervm"
 clang++ -std=c++17 -Wall -Wextra -Werror "$ROOT/tests/PMRPECoreTest.cpp" -o "$OUT/core"
