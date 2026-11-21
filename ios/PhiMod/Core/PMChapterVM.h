@@ -9,7 +9,7 @@ extern "C" {
 typedef struct {int song,speech; double seconds;char speechHeading[192];char title[256], caption[1024];int challenge;} PMOSCard;
 enum {PMOSFrame, PMOSImage, PMOSHotspot};
 enum { PMOSMaxNodes = 256, PMOSMaxScreens = 32, PMOSScreenNameSize = 64 };
-typedef struct {double x,y,w,h,start,duration,fade;int kind,parent,depth,cover,open,screen,dest,fill,loop,handler,hidden;unsigned rgba;char id[64],src[256],label[256],to[64];int challenge;} PMOSNode;
+typedef struct {double x,y,w,h,start,duration,fade;int kind,parent,depth,cover,open,screen,dest,fill,loop,handler,hidden;unsigned rgba;char id[64],src[256],label[256],to[64];int challenge; char dropTarget[64]; int dropIndex, alphaHit;} PMOSNode;
 enum { PMOSProgressKeyMax = 64, PMOSProgressAccessLimit = 128 };
 enum { PMOSMaxChallenges = 32, PMOSMaxChallengeTiers = 16,
        PMOSChallengeIdMax = PMOSProgressKeyMax - (sizeof("door..clear") - 1) };
@@ -18,17 +18,40 @@ typedef struct {
     int after;
     float hp, perfect, good, bad, miss;
 } PMOSChallengeTier;
+/* Lua challenge.cues is optional. Supply a dense 1-based array of dictionaries.
+   at >= 0, duration > 0 and their sum must be finite gameplay seconds. Each cue
+   needs text, src or blockPause=true. Strings are 1..255 bytes without NUL.
+   src is a local PNG/JPG/JPEG/WebP filename. Omitted strings are empty and
+   blockPause defaults to false. The page accepts up to 128 cues total, in
+   declaration and array order. Exceeding that limit rejects the page. */
+enum { PMOSMaxChallengeCues = 128 };
+typedef struct {
+    double at, duration; /* Seconds on the gameplay clock. */
+    char text[256], src[256];
+    int blockPause;
+} PMOSChallengeCue;
+enum { PMOSMaxChallengeIntro = 4, PMOSMaxChallengeNextSongs = 2 };
+typedef struct { int song; char difficulty[96]; } PMOSChallengeSong;
 typedef struct {
     char id[PMOSChallengeIdMax + 1], difficulty[96]; /* Empty difficulty if omitted. */
     int song, failures, tierCount;
     PMOSChallengeState state;
     PMOSChallengeTier tiers[PMOSMaxChallengeTiers]; /* Increasing after, starting at zero. */
+    int cueStart, cueCount;
+    int introCount, showDetail, nextSongCount; /* showDetail defaults to 1. Zero starts play after intro. */
+    char intro[PMOSMaxChallengeIntro][256]; /* Local GIF/MP4 basenames in playback order. */
+    PMOSChallengeSong nextSongs[PMOSMaxChallengeNextSongs]; /* After each clear, in order. */
 } PMOSChallenge;
 typedef struct {int nodes,screens;double aspect;char names[PMOSMaxScreens][PMOSScreenNameSize];PMOSNode elements[PMOSMaxNodes];int listFirst,count; PMOSCard cards[128];char error[384];
+    int cueCount; PMOSChallengeCue cues[PMOSMaxChallengeCues];
     int challengeCount; PMOSChallenge challenges[PMOSMaxChallenges];
 } PMOSPage;
 typedef struct PMOSSession PMOSSession;
-typedef struct {int song, dest, element, visible; char error[384]; int checkpoint; char difficulty[96]; int challenge;} PMOSAction;
+typedef struct {int song, dest, element, visible; char error[384]; int checkpoint; char difficulty[96]; int challenge;
+    /* A nonempty revealTitle tags a focus/popup. element is its resolved local
+       target and song is the optional one-based native song (0 to resume only). */
+    char revealTitle[256], revealText[1024];
+} PMOSAction;
 
 typedef struct { char key[PMOSProgressKeyMax + 1]; int value; } PMOSProgressChange;
 typedef struct {

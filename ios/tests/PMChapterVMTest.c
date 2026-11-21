@@ -309,8 +309,108 @@ static void testChallengeProgress(void) {
     assert(strstr(p.error, "progress read failed") && store.commits == 1);
 }
 
-static void testChallengeValidation(void) {
+/* A single loaded chapter must keep puzzle callbacks, sequence metadata and
+   page-owned cue slices alive together, including across a VM restart. */
+static void testPuzzleChallengeSequence(void) {
+    const char *script = CHALLENGE_FIXTURE
+        "puzzle.define{id='key',mode='ordered',pieces={'A'}};"
+        "local _,_,solved=puzzle.status('key'); d.unlocked=solved;"
+        "d.showDetail=false; d.intro={'entry.gif'}; d.nextSongs={{song=2,difficulty='IN'}};"
+        "d.cues={{at=0,duration=1,text='go'}}; challenge(d);"
+        "hotspot{onClick=function() puzzle.submit('key','A') end}; hotspot{challenge='gate'}";
+    TestStore store = {0};
+    PMOSSession *vm = startProgress(script, &store);
+    assert(vm && p.challenges[0].state == PMOSChallengeLocked);
+    expectAction(vm, 0, 0, -1);
+    PMOSStop(vm);
+    vm = startProgress(script, &store);
+    assert(vm && store.commits == 1 && p.challengeCount == 1);
+    const PMOSChallenge *gate = &p.challenges[0];
+    assert(gate->state == PMOSChallengeClosed && !gate->showDetail);
+    assert(gate->introCount == 1 && !strcmp(gate->intro[0], "entry.gif"));
+    assert(gate->nextSongCount == 1 && gate->nextSongs[0].song == 2 && !strcmp(gate->nextSongs[0].difficulty, "IN"));
+    assert(p.cueCount == 1 && gate->cueStart == 0 && gate->cueCount == 1 && !strcmp(p.cues[0].text, "go"));
+    PMOSAction action;
+    assert(PMOSClick(vm, 1, &action) && action.challenge == 1);
+    PMOSStop(vm);
+}
+
+static void testChallengeCues(void) {
+    assert(run(CHALLENGE_FIXTURE
+        "challenge(d); d.id='empty'; d.cues={}; challenge(d); d.id='first';"
+        "d.cues[2]={at=0,duration=.5,blockPause=true};"
+        "d.cues[1]={at=8.25,duration=1.5,text='hello',src='card.JpEg',blockPause=false};"
+        "challenge(d); d.id='next'; d.cues={{at=0,duration=2,src='art.WeBp'}}; challenge(d)"));
+    assert(p.challengeCount == 4 && p.cueCount == 3);
+    assert(!p.challenges[0].cueCount && !p.challenges[1].cueCount);
+    assert(p.challenges[2].cueStart == 0 && p.challenges[2].cueCount == 2);
+    assert(p.challenges[3].cueStart == 2 && p.challenges[3].cueCount == 1);
+    assert(p.cues[0].at == 8.25 && p.cues[0].duration == 1.5 && !p.cues[0].blockPause);
+    assert(!strcmp(p.cues[0].text,"hello") && !strcmp(p.cues[0].src,"card.JpEg"));
+    assert(!p.cues[1].text[0] && !p.cues[1].src[0] && p.cues[1].blockPause);
+    assert(!strcmp(p.cues[2].src,"art.WeBp") && !p.cues[2].blockPause);
+
+    char source[768];
     const char *bad[] = {
+        "d.cues=false", "d.cues.extra=c", "d.cues[3]=c", "d.cues[0]=c", "d.cues[1]=1",
+        "c.at=nil", "c.at=-1", "c.at='0'", "c.at=0/0", "c.duration=nil", "c.duration=0",
+        "c.duration=-1", "c.duration=1/0", "c.at=1e308; c.duration=1e308", "c.blockPause=1",
+        "c.text=nil; c.blockPause=false", "c.text=''", "c.text=2", "c.text='a\\0b'",
+        "for i=1,8 do c.text=c.text..c.text end", "c.src='.a.png'", "c.src='../a.png'",
+        "c.src='dir\\\\a.jpg'", "c.src='C:a.png'", "c.src='a\\nb.png'", "c.src='a.gif'"
+    };
+    for (size_t i = 0; i < sizeof(bad)/sizeof(bad[0]); ++i) {
+        snprintf(source, sizeof(source), CHALLENGE_FIXTURE
+            "local c={at=0,duration=1,text='x'}; d.cues={c}; %s; challenge(d)", bad[i]);
+        assert(!run(source) && p.error[0] && !p.challengeCount && !p.cueCount);
+    }
+    snprintf(source, sizeof(source), CHALLENGE_FIXTURE
+        "d.cues={{at=0,duration=1,text='first'}}; challenge(d); d.id='second';"
+        "for i=%d,1,-1 do d.cues[i]={at=i,duration=1,blockPause=true} end; challenge(d);"
+        "d.id='full'; d.cues={}; challenge(d)", PMOSMaxChallengeCues - 1);
+    assert(run(source) && p.cueCount == PMOSMaxChallengeCues);
+    assert(!strcmp(p.cues[0].text, "first"));
+    assert(p.challenges[1].cueStart == 1 && p.challenges[1].cueCount == PMOSMaxChallengeCues - 1);
+    assert(p.challenges[2].cueStart == PMOSMaxChallengeCues && !p.challenges[2].cueCount);
+    for (int i = 1; i < p.cueCount; ++i) assert(p.cues[i].at == i);
+    strcat(source, "; d.id='overflow'; d.cues={{at=0,duration=1,text='extra'}}; challenge(d)");
+    assert(!run(source) && strstr(p.error, "too many challenge cues"));
+    snprintf(source, sizeof(source), CHALLENGE_FIXTURE
+        "d.cues={}; for i=1,%d do d.cues[i]={at=i,duration=1,text='x'} end; challenge(d)",
+        PMOSMaxChallengeCues + 1);
+    assert(!run(source) && strstr(p.error, "too many challenge cues"));
+}
+
+static void testChallengeValidation(void) {
+    assert(run(CHALLENGE_FIXTURE "challenge(d); d.id='full'; d.showDetail=false;"
+        "d.intro={'first.GiF','clip 2.MP4','third.gif','last.mp4'};"
+        "d.nextSongs={{song=3,difficulty='IN'},{song=2}}; challenge(d);"
+        "d.id='empty'; d.intro={}; d.nextSongs={}; d.showDetail=true; challenge(d)"));
+    const PMOSChallenge *c = &p.challenges[1];
+    assert(p.challengeCount == 3 && c->song == 1 && !c->showDetail && c->introCount == 4);
+    assert(!strcmp(c->intro[0], "first.GiF") && !strcmp(c->intro[1], "clip 2.MP4") &&
+           !strcmp(c->intro[2], "third.gif") && !strcmp(c->intro[3], "last.mp4"));
+    assert(c->nextSongCount == 2 && c->nextSongs[0].song == 3 && !strcmp(c->nextSongs[0].difficulty, "IN"));
+    assert(c->nextSongs[1].song == 2 && !c->nextSongs[1].difficulty[0]);
+    assert(p.challenges[0].showDetail && !p.challenges[0].introCount && !p.challenges[0].nextSongCount);
+    assert(p.challenges[2].showDetail && !p.challenges[2].introCount && !p.challenges[2].nextSongCount);
+    assert(run(CHALLENGE_FIXTURE "d.intro={'@stock/c8/321-unlock','local.mp4','@stock/c9/to-phase-2',"
+        "'@stock/c9/after-deduction'}; challenge(d)"));
+    assert(p.challenges[0].introCount == 4 && !strcmp(p.challenges[0].intro[2], "@stock/c9/to-phase-2"));
+    assert(!run("image{src='@stock/c9/to-phase-2'}"));
+    const char *bad[] = {
+        "d.intro={'@stock/c9/to-phase-2.mp4'}", "d.intro={'@stock/c9/../to-phase-2'}",
+        "d.intro={'@stock/c9/after-deduction\\0.mp4'}", "d.intro={'@stock/C8/321-unlock'}",
+        "d.showDetail=0", "d.showDetail='false'", "d.intro='a.gif'", "d.intro={false}",
+        "d.intro={'a.gif','a.gif','a.gif','a.gif','a.gif'}", "d.intro={[2]='a.gif'}", "d.intro={x='a.gif'}",
+        "d.intro={'../a.gif'}", "d.intro={'.a.gif'}", "d.intro={'a/b.gif'}", "d.intro={'a\\\\b.mp4'}",
+        "d.intro={'C:a.gif'}", "d.intro={'a.png'}", "d.intro={'a.gif.tmp'}", "d.intro={'a\\0.gif'}",
+        "d.intro={'a\\n.gif'}", "d.intro={'\\255.gif'}", "local a=''; for i=1,252 do a=a..'a' end; d.intro={a..'.gif'}",
+        "d.nextSongs=false", "d.nextSongs={{song=1},{song=2},{song=3}}", "d.nextSongs={[2]={song=1}}",
+        "d.nextSongs={x={song=1}}", "d.nextSongs={2}", "d.nextSongs={{}}", "d.nextSongs={{song='2'}}",
+        "d.nextSongs={{song=0}}", "d.nextSongs={{song=4}}", "d.nextSongs={{song=1.5}}",
+        "d.nextSongs={{song=2,diff='IN'}}", "d.nextSongs={{song=2,difficulty=false}}", "d.nextSongs={{song=2,difficulty=''}}",
+        "d.nextSongs={{song=2,difficulty='I\\0N'}}", "local a=''; for i=1,96 do a=a..'a' end; d.nextSongs={{song=2,difficulty=a}}",
         "d.id=nil", "d.id=''", "d.id='a/b'", "d.id='a\\0b'", "challenge(d)",
         "d.song=nil", "d.song=4", "d.song=1.5", "d.song='1'", "d.unlocked=0",
         "d.difficulty=''", "d.difficulty=false", "d.tiers=nil", "d.tiers={}",
@@ -479,5 +579,37 @@ static void testClickBudgets(void) {
     assert(!PMOSStart("x", 2097153, 1, &p) && p.error[0]);
 }
 
-int main(void){testChallengeBindings();testChallengeProgress();testChallengeActions();testChallengeValidation();testLayout();testPersistentClicks();testHandlerFailures();testCheckpoints();testProgressTransactions();testProgressValidation();testProgressBudget();testNodeTiming();testVisibility();testClickBudgets();assert(run("return {}")&&!p.listFirst&&!p.count);assert(run("home('list'); for i=1,song_count do card(i,'Title','Body') end"));assert(p.listFirst&&p.count==3&&p.cards[2].song==3&&!strcmp(p.cards[1].caption,"Body"));
+static void testReveal(void) {
+    PMOSAction a;
+    PMOSSession *s = start("screen('first'); frame{id='node'}; screen('second');"
+        "hotspot{onClick=function() return {reveal={target='node',title='Focus',text='Read',song=3}} end};"
+        "frame{id='box'}; frame{id='node',parent='box',onClick=function() "
+        "return {reveal={target='node',title='Again',text='Resume'}} end}");
+    assert(s && PMOSClick(s, 1, &a));
+    assert(a.element == 3 && a.song == 3 && !strcmp(a.revealTitle,"Focus") && !strcmp(a.revealText,"Read"));
+    assert(PMOSClick(s, 3, &a) && a.element == 3 && !a.song && !strcmp(a.revealText,"Resume"));
+    PMOSStop(s);
+
+    const char *bad[] = {
+        "false", "{}", "{title='t',text='x'}", "{target='node',title='',text='x'}",
+        "{target='node',title=7,text='x'}", "{target='node',title='t'}",
+        "{target='other',title='t',text='x'}", "{target='node',title='t',text='x',more=true}",
+        "{target='node',title='t',text='x',song=0}", "{target='node',title='t',text='x',song=4}",
+        "{target='node',title='t',text='x',song='1'}", "{target='node',title='t',text='x',song=1.5}",
+        "{target='node',title='t',text='\\0'}", "{target='node',title='t',text='\\255'}",
+        "{target='node',title='t',text='x'},open=1"
+    };
+    for (size_t i=0; i<sizeof(bad)/sizeof(*bad); ++i) {
+        char source[512];
+        snprintf(source,sizeof(source),"screen('a');frame{id='other'};screen('b');frame{id='node',"
+                 "onClick=function() progress.set('seen',1);return {reveal=%s} end}",bad[i]);
+        TestStore store = {0};
+        s = startProgress(source, &store);
+        assert(s && !PMOSClick(s, 1, &a) && a.error[0]);
+        assert(!store.commits && a.element == -1 && !a.song && !a.revealTitle[0] && !a.revealText[0]);
+        PMOSStop(s);
+    }
+}
+
+int main(void){testReveal();testPuzzleChallengeSequence();testChallengeCues();testChallengeBindings();testChallengeProgress();testChallengeActions();testChallengeValidation();testLayout();testPersistentClicks();testHandlerFailures();testCheckpoints();testProgressTransactions();testProgressValidation();testProgressBudget();testNodeTiming();testVisibility();testClickBudgets();assert(run("return {}")&&!p.listFirst&&!p.count);assert(run("home('list'); for i=1,song_count do card(i,'Title','Body') end"));assert(p.listFirst&&p.count==3&&p.cards[2].song==3&&!strcmp(p.cards[1].caption,"Body"));
  assert(!run("card(4)")&&strstr(p.error,"os.lua:1:"));assert(!run("home('bad')"));assert(!run("while true do end")&&strstr(p.error,"limit"));assert(!run("local t='a';for i=1,30 do t=t..t end"));assert(!run("require('os')"));assert(!run("for i=1,129 do card(1) end"));assert(!run("card("));assert(!run("\033Lua"));assert(run("card(2)")&&p.count==1);puts("chapter OS Lua tests passed");return 0;}

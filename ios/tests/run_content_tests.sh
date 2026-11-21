@@ -14,6 +14,9 @@ clang++ -std=c++17 -fobjc-arc -DPMDOOR_RUN_HOST_TEST -framework Foundation -fram
 "$OUT/doorrun"
 clang -std=c99 -O2 "$ROOT"/PhiMod/Vendor/lua54/*.c "$ROOT/PhiMod/Core/PMChapterVM.c" "$ROOT/tests/PMChapterVMTest.c" -o "$OUT/chaptervm"
 "$OUT/chaptervm"
+python3 "$ROOT/tests/run_chapter_puzzle.py" clang -O2
+python3 "$ROOT/tests/test_story_sequence.py"
+python3 "$ROOT/tests/test_story_native_start.py"
 clang++ -std=c++17 -Wall -Wextra -Werror "$ROOT/tests/PMRPECoreTest.cpp" -o "$OUT/core"
 clang++ -std=c++17 -Wall -Wextra -Werror "$ROOT/tests/PMCoverGeometryTest.cpp" -o "$OUT/cover"
 "$OUT/cover"

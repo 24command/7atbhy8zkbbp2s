@@ -74,6 +74,9 @@ static int challengeProgress(lua_State *L) {
     return 1;
 }
 
+#include "PMChapterPresentation.inc"
+#include "PMChapterCues.inc"
+
 static int declareChallenge(lua_State *L) {
     PMOSPage *page = declarationPage(L);
     PMOSSession *s = session(L);
@@ -94,6 +97,8 @@ static int declareChallenge(lua_State *L) {
     int unlocked = lua_isnil(L, -1) || lua_toboolean(L, -1);
     lua_pop(L, 1);
     challengeTiers(L, c);
+    challengePresentation(L, c, s->songs);
+    challengeCues(L, page, c);
 
     int clear;
     readChallengeHistory(L, c->id, &clear, &c->failures);

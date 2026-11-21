@@ -31,6 +31,9 @@ static int screen(lua_State *L){PMOSPage *p=declarationPage(L);char name[64];wor
 static int layoutNode(lua_State *L){PMOSPage *p=declarationPage(L);luaL_checktype(L,1,LUA_TTABLE);if(p->nodes>=PMOSMaxNodes)return luaL_error(L,"too many layout elements");
  if(!p->screens)strcpy(p->names[p->screens++],"main");
  int pos=p->nodes;PMOSNode *n=&p->elements[pos];n->kind=(int)lua_tointeger(L,lua_upvalueindex(1));n->screen=p->screens-1;n->parent=n->dest=-1;
+ n->dropIndex=-1;
+ fieldText(L,"dropTarget",n->dropTarget,sizeof(n->dropTarget));
+ n->alphaHit=fieldBool(L,"alphaHit");
  n->hidden=fieldBool(L,"hidden");
  n->start=secondsField(L,"start");
  n->duration=secondsField(L,"duration");
@@ -61,9 +64,20 @@ static int layoutNode(lua_State *L){PMOSPage *p=declarationPage(L);luaL_checktyp
   session(L)->clicks[pos].ref=luaL_ref(L,LUA_REGISTRYINDEX);
   n->handler=1;
  }else lua_pop(L,1);
+ if(n->dropTarget[0] && !n->handler)return luaL_error(L,"dropTarget needs onClick");
+ if(n->alphaHit && (!n->dropTarget[0] || n->kind!=PMOSImage))return luaL_error(L,"alphaHit needs a draggable image");
  if(n->kind==PMOSHotspot&&!n->open&&!n->to[0]&&!n->handler&&!n->challenge)return luaL_error(L,"hotspot needs open, to, onClick or challenge");
  p->nodes++;return 0;}
-static void resolveLinks(lua_State *L){PMOSPage *p=declarationPage(L);for(int i=0;i<p->nodes;i++){PMOSNode *n=&p->elements[i];if(!n->to[0])continue;
+static void resolveLinks(lua_State *L){PMOSPage *p=declarationPage(L);for(int i=0;i<p->nodes;i++){PMOSNode *n=&p->elements[i];if(n->dropTarget[0]) {
+  for(int j=0;j<p->nodes;j++) {
+   if(p->elements[j].screen==n->screen && !strcmp(p->elements[j].id,n->dropTarget)) { n->dropIndex=j; break; }
+  }
+  if(n->dropIndex<0)luaL_error(L,"unknown drop target on this screen: %s",n->dropTarget);
+  // A stationary target also prevents placement cycles through nested frames.
+  for(int j=n->dropIndex;j>=0;j=p->elements[j].parent)
+   if(p->elements[j].dropTarget[0])luaL_error(L,"drop target must be stationary: %s",n->dropTarget);
+ }
+ if(!n->to[0])continue;
  n->dest=findScreen(p->names,p->screens,n->to);if(n->dest<0)luaL_error(L,"unknown target screen: %s",n->to);}}
 static void registerLayout(lua_State *L){const char *names[]={"frame","image","hotspot"};for(int i=0;i<3;i++){lua_pushinteger(L,i);lua_pushcclosure(L,layoutNode,1);lua_setglobal(L,names[i]);}
  lua_pushcfunction(L,setCanvas);lua_setglobal(L,"canvas");lua_pushcfunction(L,screen);lua_setglobal(L,"screen");}

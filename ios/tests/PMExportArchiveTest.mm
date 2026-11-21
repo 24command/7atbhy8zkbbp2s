@@ -6,6 +6,7 @@
 #import "../PhiMod/Sources/PMAssetLayout.h"
 #import "../PhiMod/Sources/PMChapterScript.h"
 #import "../PhiMod/Sources/PMChapterArt.h"
+#import "../PhiMod/Sources/PMStockIntroResolver.hpp"
 #include <cassert>
 #include <cstdio>
 static void testChapterScope() {
@@ -34,6 +35,20 @@ int main(){@autoreleasepool{
  NSString*root=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
  NSString*source=[root stringByAppendingPathComponent:@"source"],*out=[root stringByAppendingPathComponent:@"export.zip"];
  assert([f createDirectoryAtPath:source withIntermediateDirectories:YES attributes:nil error:&error]);
+ // Exercise the resolver with a private fixture, without a game install or save.
+ NSString *dataDir=[root stringByAppendingPathComponent:@"Data"], *cache=[root stringByAppendingPathComponent:@"cache"];
+ assert([f createDirectoryAtPath:dataDir withIntermediateDirectories:YES attributes:nil error:nil]);
+ const PMStockIntro fixture={"@stock/test", "sample.resource", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", 3};
+ NSString *sample=[dataDir stringByAppendingPathComponent:@"sample.resource"];
+ assert(!PMStockIntroCopy(&fixture,dataDir,cache));
+ assert([@"abc" writeToFile:sample atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+ NSString *movie=PMStockIntroCopy(&fixture,dataDir,cache);
+ assert([movie.pathExtension isEqual:@"mp4"] && [PMFileSHA256(movie) isEqual:@(fixture.sha256)]);
+ assert([movie isEqual:PMStockIntroCopy(&fixture,dataDir,cache)]);
+ assert([@"xyz" writeToFile:sample atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+ assert(!PMStockIntroCopy(&fixture,dataDir,cache)); // same size, wrong digest
+ assert([f removeItemAtPath:sample error:nil] && [f createSymbolicLinkAtPath:sample withDestinationPath:movie error:nil]);
+ assert(!PMStockIntroCopy(&fixture,dataDir,cache));
  [@"{\"songs\":[]}" writeToFile:[source stringByAppendingPathComponent:@"chapter.json"] atomically:YES encoding:NSUTF8StringEncoding error:&error];
  NSString*media=[source stringByAppendingPathComponent:@"music.ogg"];FILE*fp=fopen(media.fileSystemRepresentation,"wb");assert(fp);
  unsigned char chunk[65536];for(size_t i=0;i<sizeof(chunk);i++)chunk[i]=(unsigned char)(i*31);

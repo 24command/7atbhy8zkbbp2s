@@ -196,6 +196,7 @@ static int card(lua_State *L) {
 }
 
 #include "PMChapterChallenge.inc"
+#include "PMChapterPuzzle.inc"
 
 static int resolveChallengeBinding(lua_State *L, const PMOSPage *page, int ref) {
     lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
@@ -244,6 +245,7 @@ static int evaluate(lua_State *L) {
     lua_pushcfunction(L, challengeProgress);
     lua_setglobal(L, "challengeProgress");
     registerLayout(L);
+    registerPuzzle(L);
     if (luaL_loadbufferx(L, script->source, script->length, "@os.lua", "t")) return lua_error(L);
     lua_call(L, 0, 0);
     resolveLinks(L);
@@ -374,6 +376,8 @@ static void parseCheckpoint(lua_State *L, PMOSSession *s, PMOSAction *action) {
         luaL_error(L, "checkpoint difficulty requires a song");
 }
 
+#include "PMChapterReveal.inc"
+
 static int invokeHandler(lua_State *L) {
     PMOSSession *s = session(L);
     PMOSAction *action = lua_touserdata(L, 1);
@@ -391,6 +395,8 @@ static int invokeHandler(lua_State *L) {
     word(L, -2, key, sizeof(key));
     if (!strcmp(key, "checkpoint")) {
         parseCheckpoint(L, s, action);
+    } else if (!strcmp(key, "reveal")) {
+        parseReveal(L, s, target->screen, action);
     } else if (!strcmp(key, "challenge")) {
         action->challenge = challengeAction(L, s);
     } else if (!strcmp(key, "open")) {

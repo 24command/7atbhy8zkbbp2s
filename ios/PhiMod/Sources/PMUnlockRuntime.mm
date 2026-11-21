@@ -5,6 +5,8 @@
 #import "PMUnlockRules.h"
 #import "PMUnlockProgress.h"
 #import "PMUnlockMedia.h"
+#import "PMDoorRun.h"
+#import "PMStoryCueRun.h"
 #include "PMContentRuntime.hpp"
 #import "PMSettings.h"
 #import "PMDiagnostics.h"
@@ -30,7 +32,7 @@ BOOL presentMedia(NSString*path,NSString*cover,NSString*title,void(^done)(BOOL))
  auto&r=*runtime;P listener=r.type("UnityEngine","AudioListener");
  bool wasOwned=mediaAudioOwned;if(!wasOwned){previousAudioPause=r.unbox<bool>(r.stat(listener,"get_pause"));previousAudioVolume=r.unbox<float>(r.stat(listener,"get_volume"));mediaAudioOwned=true;}
  bool paused=true;float muted=0;r.stat(listener,"set_pause",{"System.Boolean"},{&paused});r.stat(listener,"set_volume",{"System.Single"},{&muted});
- BOOL shown=PMPresentUnlockMedia(path,cover,title,^(BOOL completed){@try{if(done)done(completed);}@finally{if(!completed||!pending.count||(!menuActive&&!resultResume))restoreMediaAudio();}});
+ BOOL shown=PMPresentUnlockMedia(path,cover,title,^(BOOL completed){@try{if(done)done(completed);}@finally{if(!PMUnlockMediaBusy()&&(!completed||!pending.count||(!menuActive&&!resultResume)))restoreMediaAudio();}});
  if(!shown&&!wasOwned)restoreMediaAudio();return shown;
 }
 void logf(const char*fmt,...){char b[768];va_list a;va_start(a,fmt);vsnprintf(b,sizeof(b),fmt,a);va_end(a);PMDiagnosticsWrite(b);}
@@ -186,6 +188,14 @@ void enqueueReveals(Runtime&r,bool activateMenu=true){
  if(!menuTimer)menuTimer=[NSTimer scheduledTimerWithTimeInterval:.25 repeats:YES block:^(NSTimer*t){try{pumpAnimations();}catch(const std::exception&e){logf("Unlock queue failed: %s",e.what());}}];
 }
 }
+bool playChapterStoryMedia(NSString *path, NSString *cover, NSString *title, void (^done)(BOOL)) {
+ if (!NSThread.isMainThread) return false;
+ return presentMedia(path,cover,title,^(BOOL completed){
+  // Restore the selector before done starts the next movie or launches a song.
+  restoreMediaAudio();
+  if(done)done(completed);
+ });
+}
 NSString*coverPath(Runtime&r,NSString*identifier){
  NSString*folder=[PMContentStore.shared coverFolder:identifier];NSDictionary*subject=entity(identifier);NSString*variant=@"image";
  if(subject){BOOL locked=!opened(r,identifier),special=NO;NSDictionary*config=subject[@"coverSwitch"];NSString*mode=config[@"mode"]?:@"none";
@@ -209,7 +219,7 @@ bool beforeStart(Runtime&r,void*selector,void(^resume)(void)){
  BOOL presented=presentMedia(name.length?[folder stringByAppendingPathComponent:name]:@"",coverPath(r,id),subject[@"title"]?:subject[@"name"],^(BOOL completed){
   restoreMediaAudio(); // Release our audio state before native navigation changes it.
   P current=rt->gchandle_get_target(handle);bool valid=rt->alive(current);rt->gchandle_free(handle);menuActive=true;
-  if(!completed||!valid)return;
+  if(!completed||!valid){PMDoorCancelPending();pmstory::cancelLaunch();return;}
   NSDictionary*latest=ruleFor(id);if(![PMUnlockSignature(latest) isEqualToString:signature])return;
   NSError*error=nil;[progress seen:id signature:signature error:&error];if(error)logf("Intro progress save failed: %s",error.localizedDescription.UTF8String);continueChain(id);
   resume();

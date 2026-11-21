@@ -6,14 +6,28 @@ bool doorPlayEligible(const phimod::Options &options){
  return !options.autoplay && !options.practiceMode && std::fabs(options.playbackRate-1.f)<=.0001f;
 }
 
+// Owned by the exact door binding. Release presentation synchronously, including
+// a lethal judgment nested inside the native judge update.
+void (*endDoorPresentation)()=nullptr;
+P currentLevel=nullptr;
+void clearDoorPresentation(){
+ if(!endDoorPresentation)return;
+ auto end=endDoorPresentation;
+ endDoorPresentation=nullptr;
+ end();
+}
+void releaseDoorBinding(){
+ doorProgress=nullptr;
+ clearDoorPresentation();
+}
 void abandonBoundDoor(){
  if(!doorProgress)return;
- doorProgress=nullptr;
+ releaseDoorBinding();
  PMDoorAbandon();
 }
 void finishBoundDoor(BOOL clear){
  if(!doorProgress)return;
- doorProgress=nullptr; // Disarm before handing the outcome to the OS worker.
+ releaseDoorBinding(); // Disarm before handing the outcome to the OS worker.
  PMDoorFinish(clear);
 }
 
@@ -42,12 +56,51 @@ void settleDoorEnd(P pc,const phimod::Session *session,bool ending){
  }catch(const std::exception &e){diagf("Door level end unavailable: %s",e.what());abandonBoundDoor();}
 }
 
-void cancelIdleDoorLaunch(P selector){
- if(!watchingDoorLaunch || PMUnlockMediaBusy())return;
+bool cancelIdleDoorLaunch(P selector,bool disabling=false){
+ if(!watchingDoorLaunch || (!disabling && PMUnlockMediaBusy()))return false;
  // An accepted native launch holds exit until Awake. A canceled intro gives
  // control back to the selector and never creates a LevelControl to clean up.
- try{if(R().get<bool>(selector,"exit"))return;}
+ try{if(R().get<bool>(selector,"exit"))return false;}
  catch(const std::exception &e){diagf("Door launch state unavailable: %s",e.what());}
  watchingDoorLaunch=false;
  PMDoorCancelPending();
+ return true;
 }
+
+// The 4.0.4 gesture path (JudgeControl.Update -> CheckPause) and the
+// app pause/focus path (ProgressControl.Update -> Play(false)) both read
+// LevelInformation.canPause. Mask only across those native calls.
+template<class Bridge> class StoryPauseScope {
+ Bridge &r;
+ P levelOwner=nullptr,owner=nullptr,info=nullptr;
+public:
+ StoryPauseScope(const StoryPauseScope &)=delete;
+ StoryPauseScope(Bridge &runtime,P self,bool judge,bool (*blocks)(double)):r(runtime){
+  if(!endDoorPresentation)return;
+  try{
+   P pc=judge?r.template get<P>(self,"progressControl"):self;
+   if(pc!=doorProgress)return;
+   P level=r.template get<P>(pc,"levelInformation");
+   if(!level || r.template get<bool>(pc,"levelBreak") || r.template get<bool>(level,"levelOver")){
+    clearDoorPresentation();return;
+   }
+   if(!r.template get<bool>(level,"levelBegan") || !r.template get<bool>(pc,"isPlaying") ||
+      !blocks(r.template get<float>(pc,"nowTime")) || !r.template get<bool>(level,"canPause"))return;
+   if(judge){
+    if(r.template get<float>(self,"pauseTime")>0)r.put(self,"pauseTime",0.f);
+   }else if(r.template get<bool>(pc,"leave")){
+    // Both application callbacks latch leave. Consume the blocked request so
+    // native Update cannot replay it after the end boundary.
+    r.put(pc,"leave",false);
+   }
+   r.put(level,"canPause",false);
+   levelOwner=currentLevel;owner=pc;info=level;
+  }catch(const std::exception &e){diagf("Story pause gate: %s",e.what());}
+ }
+ ~StoryPauseScope(){
+  if(!info || currentLevel!=levelOwner || owner==lostDoorProgress)return;
+  try{
+   if(!r.template get<bool>(owner,"levelBreak") && !r.template get<bool>(info,"levelOver"))r.put(info,"canPause",true);
+  }catch(const std::exception &e){diagf("Story pause restore: %s",e.what());}
+ }
+};

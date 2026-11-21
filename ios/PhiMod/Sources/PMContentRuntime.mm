@@ -17,6 +17,7 @@
 #import "PMContentStore.h"
 #import "PMChapterOS.h"
 #import "PMDoorRun.h"
+#import "PMStorySequence.h"
 #import "PMCoverImage.h"
 #import <ImageIO/ImageIO.h>
 #import "PMChapterEditing.h"
@@ -296,7 +297,8 @@ void syncChapterCoverFallbacks(Runtime&r){P selector=chapterSelectorRoot?r.gchan
 }
 // Match Android prepareChapterCards: clone before hiding the active template,
 // then publish the ordered ChapterInfo array before native Start wires buttons.
-void chapterPrepare(Runtime&r,P self){selectorLoadingEnd(r,false);for(auto&entry:chapterCoverFits)r.gchandle_free(entry.second.image);chapterCoverFits.clear();
+static void releaseSelectorLoading(Runtime &r, bool finishSelected);
+void chapterPrepare(Runtime&r,P self){releaseSelectorLoading(r,false);for(auto&entry:chapterCoverFits)r.gchandle_free(entry.second.image);chapterCoverFits.clear();
  if(playing)throw std::runtime_error("Chapter prepare during gameplay");
  capture(r);if(!baseline)throw std::runtime_error("Chapter library is not ready");hiddenChapterCards=0;
  if(applied!=PMContentStore.shared.revision||appliedMainline!=PMSettingBool("mainlineUnlock"))apply(r);
@@ -513,6 +515,7 @@ NSDictionary*command(NSString*action,NSString*identifier,int slot){
    if([action isEqualToString:@"play"]){
     NSDictionary*chosen=nil;for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"]isEqualToString:identifier]){chosen=s;break;}
     if(!chosen)throw std::runtime_error("Custom chart no longer exists");
+    PMStorySequenceDiscardHandoff();
     chapterID=chosen[@"targetChapter"] ?: @"pm_local";pendingSong=groupFor(identifier);pendingSlot=PMStockDifficulty(chosen[@"level"]);if(pendingSlot<0){pendingSlot=3;variants[pendingSong.UTF8String][3]=chosen;}
    }
    P chapter=r.call(r.mainGame(),"GetChapterWithCode",{"System.String"},{r.managedString(chapterID)});
@@ -599,8 +602,9 @@ static BOOL startCheckpointSong(Runtime&,P,NSString *chapter,NSString *installed
 static void beginChapterOS(Runtime&r,P selector){
  if(pendingSong.length)return;
  P chapter=r.get<P>(selector,"nowChapterInfo");if(!chapter)return;
- NSString *key=r.string(r.get<P>(chapter,"chapterCode"));if(![key hasPrefix:@"pm_"])return;
- P challenge=r.get<P>(selector,"challengeSongSelectorControl");if(r.alive(challenge)){P button=r.get<P>(challenge,"selectButton");if(r.alive(button)&&r.unbox<bool>(r.call(r.call(button,"get_gameObject"),"get_activeInHierarchy")))return;}
+ NSString *key=r.string(r.get<P>(chapter,"chapterCode"));
+ if(![key hasPrefix:@"pm_"]){PMStorySequenceDiscardHandoff();return;}
+ P challenge=r.get<P>(selector,"challengeSongSelectorControl");if(r.alive(challenge)){P button=r.get<P>(challenge,"selectButton");if(r.alive(button)&&r.unbox<bool>(r.call(r.call(button,"get_gameObject"),"get_activeInHierarchy"))){PMStorySequenceDiscardHandoff();return;}}
  PMOpenChapterOS(key,^BOOL(NSString *group){try{
   if(!runtime||target(*runtime,loadingSelector)!=selector||runtime->get<bool>(selector,"exit"))return NO;
   auto &game=*runtime;P items=game.call(selector,"get_SongItems");for(int i=0,n=game.count(items);i<n;++i){P item=game.at(items,i),song=game.get<P>(item,"songInfo");if(![game.string(game.get<P>(song,"songsId")) isEqual:group])continue;
@@ -616,7 +620,7 @@ static void beginChapterOS(Runtime&r,P selector){
 }
 void selectorLoadingBegin(Runtime&r,P selector){
  if(playing||r.get<bool>(selector,"exit"))return;
- if(target(r,loadingSelector)!=selector){selectorLoadingEnd(r,false);loadingSelector=r.gchandle_new(selector,false);selectionChangedAt=selectorNow();loadingSong=-1;selectorLibraryRevision=NSUIntegerMax;chapterOSAwaitingSelector=!pendingSong.length;}
+ if(target(r,loadingSelector)!=selector){releaseSelectorLoading(r,false);loadingSelector=r.gchandle_new(selector,false);selectionChangedAt=selectorNow();loadingSong=-1;selectorLibraryRevision=NSUIntegerMax;chapterOSAwaitingSelector=!pendingSong.length;}
  NSUInteger revision=PMContentStore.shared.revision;
  if(selectorLibraryRevision!=revision){selectorSongIDs.clear();for(NSDictionary*song in [PMContentStore.shared snapshot][@"songs"]){for(NSString*field in @[@"id",@"groupId"]){NSString*id=song[field];if(id.length)selectorSongIDs.insert(id.UTF8String);}}selectorLibraryRevision=revision;}
 }
@@ -629,6 +633,8 @@ void selectorLoadingFrame(Runtime&r,P selector){
   if(index>=0&&index<r.count(r.call(selector,"get_SongItems"))){
    chapterOSAwaitingSelector=false;
    beginChapterOS(r,selector);
+   // The handoff can run NormalStart synchronously and release this selector.
+   if(target(r,loadingSelector)!=selector||r.get<bool>(selector,"exit")||PMUnlockMediaBusy())return;
   }
  }
  observeSelector(r,selector);
@@ -656,6 +662,13 @@ void clearSparseButtons(Runtime&r){
 }
 #include "PMSelectorRowPresentation.inc"
 void selectorLoadingEnd(Runtime&r,bool finishSelected){
+ // OnDisable can precede selector-ready when every row is hidden by chapter locks.
+ // Its abandoned return must not auto-launch on a later visit. Initializing a
+ // chapter or selector uses releaseSelectorLoading directly to preserve the return.
+ if(!finishSelected)PMStorySequenceDiscardHandoff();
+ releaseSelectorLoading(r,finishSelected);
+}
+static void releaseSelectorLoading(Runtime&r,bool finishSelected){
  // An intro still waiting on this selector cannot resume after scene teardown.
  // NormalStart releases loadingSelector on the successful path before OnDisable.
  if(!finishSelected&&loadingSelector)PMDoorCancelPending();
@@ -885,7 +898,8 @@ static BOOL startCheckpointSong(Runtime &r,P selector,NSString *chapter,NSString
  if(!authored&&!(r.unbox<float>(r.arrayAt(numbers,slot))>0))return NO;
  if(official&&!checkpointOfficialOpen(r,song,official,slot))return NO;
  P start=r.get<P>(selector,"startButton");
- if(!r.alive(start)||!r.unbox<bool>(r.call(start,"IsActive"))||pmunlock::selectorButtonBlocked(r,start))return NO;
+ // Start can be hidden for the previous row. Check its native state after SetText.
+ if(!r.alive(start)||pmunlock::selectorButtonBlocked(r,start))return NO;
 
  r.put(selector,"nowSong",index);r.put(selector,"targetSong",index);
  r.put(selector,"nowSongSelectorValue",float(index));r.put(selector,"lastFrameSongSelectorValue",float(index));
@@ -943,7 +957,9 @@ static BOOL startCheckpointSong(Runtime &r,P selector,NSString *chapter,NSString
  NSDictionary *selected=difficultyForSong(r,song,slot);
  if(authored?![selected[@"id"] isEqualToString:authored[@"id"]]:selected!=nil)return NO;
  P locked=r.get<P>(selector,"locked");
- if(!r.get<bool>(item,"visible")||!r.unbox<bool>(r.call(item,"get_Unlocked"))||
+ // NormalStart (4.0.4) checks the selector latch and the selected row's slot count.
+ if(r.get<bool>(selector,"onStart")||slot>=r.get<int>(item,"<PlayableLevelCount>k__BackingField")||
+    !r.get<bool>(item,"visible")||!r.unbox<bool>(r.call(item,"get_Unlocked"))||
     (r.alive(locked)&&r.unbox<bool>(r.call(locked,"get_activeInHierarchy")))||!r.alive(start)||
     !r.unbox<bool>(r.call(start,"IsActive"))||!r.unbox<bool>(r.call(start,"IsInteractable"))||
     pmunlock::selectorButtonBlocked(r,start)||PMUnlockMediaBusy())return NO;
@@ -967,7 +983,10 @@ static BOOL startCheckpointSong(Runtime &r,P selector,NSString *chapter,NSString
 }
 
 
-void levelBegin(Runtime&r){difficultyLabeledID=nil;playing=true;levelID=gameplayChartID(r);lastCustom=levelID.length>0;if(chapterSelectorRoot){r.gchandle_free(chapterSelectorRoot);chapterSelectorRoot=0;}selectorLoadingEnd(r,true);}
+void levelBegin(Runtime&r){
+ // Native Retry also enters here for levels that never qualify for door binding.
+ PMStorySequenceDiscardHandoff();
+ difficultyLabeledID=nil;playing=true;levelID=gameplayChartID(r);lastCustom=levelID.length>0;if(chapterSelectorRoot){r.gchandle_free(chapterSelectorRoot);chapterSelectorRoot=0;}selectorLoadingEnd(r,true);}
 void levelEnd(Runtime&r){clearDifficultyPager(r);playing=false;levelID=nil;lastCustom=false;pendingSong=nil;if(chapterSelectorRoot){r.gchandle_free(chapterSelectorRoot);chapterSelectorRoot=0;}clearVisuals(r);}
 bool assetConstructor(Runtime&r,P self,P key){NSString*kind=nil,*identifier=keyID(r.string(key),&kind);if(!identifier)return false;r.put(self,"key",key);r.put(self,"refCount",1);
  if(loadingSelector&&!completingSelectorAsset&&!playing&&selectorSongIDs.count(identifier.UTF8String)&&([kind isEqualToString:@"image"]||[kind isEqualToString:@"music"])){

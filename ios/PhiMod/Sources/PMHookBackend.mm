@@ -1,5 +1,6 @@
 #import "PMDifficultyMetadata.h"
 #import "PMDoorRun.h"
+#import "PMStoryCueRun.h"
 #import "PMContentStore.h"
 #import "PMUnlockMedia.h"
 #import "PMChapterOS.h"
@@ -131,7 +132,6 @@ void logProgressSnapshot(Runtime&r,P p,const char*source,uint64_t count){
  if(pmhp::active())diagf("HP loader %s",pmhp::loadingStatus(r).c_str());
 }
 #include "PMDoorGameplay.inc"
-P currentLevel=nullptr;
 bool bindDoor(Runtime &r,P level,phimod::Options &options){
  if(!doorPlayEligible(options) || pmchallenge::variable())return false;
  P pc=r.get<P>(level,"progressControl"), start=r.get<P>(r.mainGame(),"levelStartInfo");
@@ -164,6 +164,7 @@ bool bindDoor(Runtime &r,P level,phimod::Options &options){
  double hp=0,delta[4]={};
  if(slot<0 || !PMDoorBeginExactTrack(group,slot,identifier,&hp,delta))return false;
  doorProgress=pc;
+ if(pmstory::beginExactTrack())endDoorPresentation=pmstory::endTrack;
  auto overrides=options;
  overrides.hpEnabled=true;
  overrides.hpMax=hp;
@@ -175,6 +176,7 @@ bool bindDoor(Runtime &r,P level,phimod::Options &options){
 void prepareDoor(Runtime &r,P level,phimod::Options &options){
  try{if(bindDoor(r,level,options))return;}
  catch(const std::exception &e){diagf("Door bind failed: %s",e.what());abandonBoundDoor();}
+ pmstory::cancelLaunch();
  PMDoorCancelPending();
 }
 void fault(const std::exception &e){abandonBoundDoor();diagf("fault: %s",e.what());NSLog(@"[PhiMod] Gameplay failure: %s",e.what());lastError=e.what();broken=true;guard.store(true);if(attempt)attempt->failClosed();}
@@ -239,7 +241,7 @@ void onAwake(P self,P mi){
  try{frozenOptions=PMReadOptions([[PMSettings shared] snapshot]);
   if(!broken)prepareDoor(R(),self,frozenOptions);
   diagf("LevelControl.Awake options assisted=%d hp=%d hpMax=%.1f hpD=[%.1f,%.1f,%.1f,%.1f]",frozenOptions.assisted(),frozenOptions.hpEnabled,frozenOptions.hpMax,frozenOptions.hpDelta[0],frozenOptions.hpDelta[1],frozenOptions.hpDelta[2],frozenOptions.hpDelta[3]);if(!broken){pmhp::prepare(R(),self,frozenOptions);diagf("HP prepare ok active=%d normalized=%.3f",pmhp::active(),pmhp::normalized());pmmodes::prepare(R(),self,frozenOptions);pmpractice::prepare(R(),frozenOptions);diagf("Chart modes and practice prepare ok");}}catch(const std::exception&e){diagf("LevelControl.Awake prepare failed: %s",e.what());fault(e);}
- if(broken)PMDoorCancelPending();
+ if(broken){pmstory::cancelLaunch();PMDoorCancelPending();}
  diagf("LevelControl.Awake calling original hpActive=%d",pmhp::active());
  orig<VoidFn>(h::levelAwake)(self,mi);
  try{pmcontent::difficultyIntro(R(),self);}catch(const std::exception&e){diagf("Difficulty intro: %s",e.what());}
@@ -391,6 +393,17 @@ void tickGameplay(Runtime&r,P progressControl,const char *source){
   pmhp::frame(r,attempt->hp());
  }catch(const std::exception&e){lastError=std::string("Transition pending: ")+e.what();diagf("Transition pending: %s",e.what());NSLog(@"[PhiMod] %s",lastError.c_str());}
 }
+void updateStoryPresentation(P pc){
+ if(!endDoorPresentation || pc!=doorProgress)return;
+ try{
+  auto &r=R();P info=r.get<P>(pc,"levelInformation");
+  if(!info || r.get<bool>(pc,"levelBreak") || r.get<bool>(info,"levelOver")){
+   clearDoorPresentation();return;
+  }
+  bool playing=r.get<bool>(info,"levelBegan") && r.get<bool>(pc,"isPlaying");
+  pmstory::present(playing?r.get<float>(pc,"nowTime"):NAN);
+ }catch(const std::exception &e){diagf("Story cue update: %s",e.what());clearDoorPresentation();}
+}
 void onProgressUpdate(P self,P mi){
  uint64_t count=++progressUpdateCalls;bool heartbeat=heartbeatDue(lastProgressHeartbeat,count);
  if(heartbeat)diagf("ProgressControl.Update enter n=%llu",(unsigned long long)count);
@@ -424,7 +437,8 @@ void onProgressUpdate(P self,P mi){
  // Failure fading must keep advancing when the native judge stops updating.
  if(attempt && attempt->trackLost() && !levelOverStarted && self==progress())
   tickGameplay(R(),self,"HP failure progress");
- orig<VoidFn>(h::progressUpdate)(self,mi);
+ {StoryPauseScope pause(R(),self,false,pmstory::blocksPause);orig<VoidFn>(h::progressUpdate)(self,mi);}
+ updateStoryPresentation(self);
  if(heartbeat)diagf("ProgressControl.Update original returned n=%llu",(unsigned long long)count);
  try{pmhp::loadVisuals(R(),self);}catch(const std::exception&e){diagf("HP visual poll failed: %s",e.what());}
  if(heartbeat)try{logProgressSnapshot(R(),self,"ProgressControl.Update",count);}catch(const std::exception&e){diagf("ProgressControl.Update snapshot failed: %s",e.what());}
@@ -442,6 +456,7 @@ void onJudgeUpdate(P self,P mi){
  try{auto&r=R();P pc=r.get<P>(self,"progressControl");ensureFloorArray(r,pc?r.get<P>(pc,"levelInformation"):nullptr);}catch(const std::exception&e){diagf("Judge floor buffer preparation failed: %s",e.what());}
  {
   auto &r=R();PlaybackJudgeScope rate(r);
+  StoryPauseScope pause(r,self,true,pmstory::blocksPause);
   pmcontent::judgeWithHudPause(r,self,mi,orig<VoidFn>(h::judgeUpdate));
  }
  if(heartbeat)diagf("JudgeControl.Update original returned n=%llu",(unsigned long long)count);
@@ -594,6 +609,7 @@ void renderPracticeResult(P self){
  lastError=warnings.empty()?"Practice result displayed; saves remain blocked":warnings;
 }
 P onResultStart(P self,P mi){
+  clearDoorPresentation();
   try{pmunlock::resultStarted(R(),self);}catch(const std::exception&e){diagf("Unlock result owner: %s",e.what());}
   // Keep Unity's real <Start>d__43 coroutine. It owns result-canvas setup,
   // result audio and the save/unlock ordering; only the protected data path is
@@ -691,7 +707,9 @@ template<class F>bool contentBoundary(const char*stage,F&&work){
  return false;
 }
 void onChapterStart(P self,P mi){
+ clearDoorPresentation();
  watchingDoorLaunch=false;
+ pmstory::cancelLaunch();
  PMDoorCancelPending();
  try{pmchallenge::cancelVariable(R());}catch(const std::exception&e){diagf("Challenge reset: %s",e.what());}
  // A MOD data failure must not prevent Unity's original chapter UI from starting.
@@ -777,6 +795,7 @@ void onHoldMove(P self,P mi){
 }
 template<h::Index i>void onNoteMove(P self,P mi){pmfeatures::beforeNoteMove(R(),self,false);orig<VoidFn>(i)(self,mi);pmfeatures::noteMoved(R(),self,false);try{pmcontent::noteMoved(R(),self,false);pmcontent::finishNoteGeometry(R(),self,false);}catch(const std::exception&e){diagf("RPE note visual/skin failed: %s",e.what());}if(applying())try{pmmodes::moved(R(),self);}catch(const std::exception&e){fault(e);}}
 void onNormalStart(P self,P mi){
+ pmstory::captureLaunch();
  watchingDoorLaunch=true;
  try{if(pmunlock::beforeStart(R(),self,^{try{pmcontent::selectorLoadingEnd(R(),true);}catch(const std::exception&e){diagf("Selector loading resume: %s",e.what());}orig<VoidFn>(h::normalStart)(self,mi);try{pmcontent::difficultyTransitionLabel(R(),self);}catch(const std::exception&e){diagf("Difficulty transition: %s",e.what());}}))return;}
  catch(const std::exception&e){diagf("Unlock start gate failed: %s",e.what());return;}
@@ -823,7 +842,8 @@ void onMainlineApplyMapCover(P self,P mi){
 }
 
 void onSelector(P self,P mi){
- cancelIdleDoorLaunch(self);
+ clearDoorPresentation();
+ if(cancelIdleDoorLaunch(self))pmstory::cancelLaunch();
  if(PMChapterOSVisible())return;
  if(pmchallenge::atResult || pmchallenge::cursor>=0 || pmchallenge::hpRoot)pmchallenge::cancelVariable(R());
  bool modal=false;if(!contentBoundary("Selector modal",[&]{modal=pmunlock::selectorModalUpdate(R(),self);})||modal)return;
@@ -839,7 +859,7 @@ void onSelector(P self,P mi){
   contentBoundary("Selector difficulty UI",[&]{pmcontent::selectorDifficultyUI(R(),self);});
  contentBoundary("Selector loading",[&]{pmcontent::selectorLoadingFrame(R(),self);});
 }
-void onSelectorOff(P self,P mi){cancelIdleDoorLaunch(self);try{pmcontent::difficultySelectorOff(R());pmcontent::selectorLoadingEnd(R(),false);pmscene::selectorOff(R());pmunlock::clear(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::selectorOff)(self,mi);}
+void onSelectorOff(P self,P mi){if(cancelIdleDoorLaunch(self,true))pmstory::cancelLaunch();try{pmcontent::difficultySelectorOff(R());pmcontent::selectorLoadingEnd(R(),false);pmscene::selectorOff(R());pmunlock::clear(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::selectorOff)(self,mi);}
 void onSetting(P self,P mi){if(!pmscene::settingsPreviewSuspended(R(),self))orig<VoidFn>(h::setting)(self,mi);static std::string previous;try{pmunlock::clear(R());pmscene::settingsFrame(R(),self);previous.clear();}catch(const std::exception&e){lastError=e.what();if(previous!=lastError){previous=lastError;diagf("MOD settings update failed: %s",e.what());}}}
 void onSettingTab(P self,int index,P mi){try{if(pmscene::settingsTabRequest(R(),self,index))return;}catch(const std::exception&e){lastError=e.what();diagf("MOD tab routing failed target=%d: %s",index,e.what());return;}orig<void(*)(P,int,P)>(h::settingTab)(self,index,mi);}
 void onSettingBack(P self,P mi){try{pmscene::settingsLeave(R(),"back-button");}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::settingBack)(self,mi);}
@@ -860,6 +880,7 @@ bool onChallengeAdvance(P self,P mi){
  return yielded;
 }
 void onChallengeResultStart(P self,P mi){
+ clearDoorPresentation();
  auto&r=R();if(pmchallengeresults::start(r,self))return;
  orig<VoidFn>(h::challengeResultStart)(self,mi);pmchallengeresults::afterStart(r,self);
 }
