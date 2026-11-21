@@ -20,9 +20,9 @@ class ResumeIntegrityTests(unittest.TestCase):
         self.assertIn("manifestSafePath(name)", text)
         plan = (SOURCES / "PMChapterExportPlan.h").read_text(encoding="utf-8-sig")
         self.assertIn("PMChapterExportPlan(db,main", text)
-        self.assertIn("included.count >= 2000", plan)
-        self.assertIn("chapterIDs.count >= 129", plan)
-        self.assertIn("if (limitExceeded) return nil", plan)
+        self.assertIn("included.count>2000", plan)
+        self.assertIn('@"dependencyChapters":@[]', text)
+        self.assertIn('PMTrimChapterExportRule(mainCopy,plan)', text)
         self.assertIn("validateUnlockMedia(sourceChapter", text)
 
 if __name__ == "__main__":

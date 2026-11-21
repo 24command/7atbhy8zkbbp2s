@@ -6,29 +6,24 @@
 #include <cassert>
 #include <cstdio>
 static void testChapterScope() {
- NSDictionary *root = @{@"id":@"main", @"songs":@[@"start", @"native"]};
- NSDictionary *foreign = @{@"id":@"foreign", @"songs":@[@"hard", @"easy", @"unrelated"]};
- NSDictionary *required = @{@"id":@"required", @"songs":@[@"last", @"bonus"]};
- NSDictionary *start = @{@"id":@"start", @"coverSwitch":@{@"ref":@"group"}};
- NSDictionary *hard = @{@"id":@"hard", @"groupId":@"group", @"targetChapter":@"foreign",
-                        @"unlock":@{@"chain":@{@"enabled":@YES, @"song":@"last"}}};
- NSDictionary *easy = @{@"id":@"easy", @"groupId":@"group", @"targetChapter":@"foreign"};
- NSMutableDictionary *last = [@{@"id":@"last", @"targetChapter":@"required"} mutableCopy];
- NSDictionary *db = @{@"chapters":@[root,foreign,required], @"songs":@[start,hard,easy,last,@{@"id":@"unrelated"},@{@"id":@"bonus"}]};
- NSDictionary *plan = PMChapterExportPlan(db,root,@"loose");
- assert(([plan[@"chapterIDs"] isEqual:@[@"main",@"loose"]]));
- assert(([plan[@"orders"][@"main"] isEqual:@[@"start",@"native"]]));
- assert(([plan[@"orders"][@"loose"] isEqual:@[@"hard",@"easy",@"last"]]));
- assert(([plan[@"locations"] isEqual:@{@"start":@"main",@"hard":@"loose",@"easy":@"loose",@"last":@"loose"}]));
- assert([plan[@"includedSongs"] count] == 4 && [plan[@"officialIDs"] isEqual:@[@"native"]]);
- // Discover a chapter through a song it contains. Import needs one owner for that chart.
- last[@"unlock"] = @{@"conditions":@[@{@"type":@"chapter", @"ref":@"required"}]};
- plan = PMChapterExportPlan(db,root,@"loose");
- assert(([plan[@"chapterIDs"] isEqual:@[@"main",@"required",@"loose"]]));
- assert(([plan[@"orders"][@"required"] isEqual:@[@"last",@"bonus"]]));
- assert(([plan[@"orders"][@"loose"] isEqual:@[@"hard",@"easy"]]));
- assert([plan[@"locations"][@"last"] isEqual:@"required"]);
- assert(![plan[@"includedSongs"] containsObject:@"unrelated"]);
+ NSString *hash=[@"" stringByPaddingToLength:64 withString:@"e" startingAtIndex:0];
+ NSDictionary *local=@{@"id":@"pm_local_in",@"level":@"IN",@"scoreIdentity":hash,@"targetChapter":@"pm_main"};
+ NSDictionary *copy=@{@"id":@"pm_copy",@"level":@"IN",@"scoreIdentity":hash,@"targetChapter":@"pm_other"};
+ NSDictionary *in=@{@"type":@"score",@"ref":@"pm_copy",@"slot":@2,@"value":@700000};
+ NSDictionary *out=@{@"type":@"chapter",@"ref":@"pm_other"}, *stock=@{@"type":@"chapter",@"ref":@"Maimai"};
+ NSDictionary *rule=@{@"enabled":@YES,@"mode":@"any",@"conditions":@[out,stock,in],@"chain":@{@"enabled":@YES,@"song":@"pm_out",@"slot":@2}};
+ NSDictionary *root=@{@"id":@"pm_main",@"songs":@[@"pm_local_in",@"native"],@"unlock":rule,@"coverSwitch":@{@"ref":@"pm_out"}};
+ NSDictionary *db=@{@"chapters":@[root,@{@"id":@"pm_other",@"songs":@[@"pm_copy",@"pm_out"]}],@"songs":@[local,copy,@{@"id":@"pm_out",@"groupId":@"pm_local_in",@"targetChapter":@"pm_other"}]};
+ NSDictionary *plan=PMChapterExportPlan(db,root);
+ assert(([plan[@"order"] isEqual:@[@"pm_local_in",@"native"]]));
+ assert(([plan[@"includedSongs"] isEqual:@[@"pm_local_in"]]));
+ assert([plan[@"refs"][@"pm_copy"] isEqual:@"pm_local_in"]);
+ NSMutableDictionary *output=[root mutableCopy];output[@"unlock"]=[rule mutableCopy];
+ PMTrimChapterExportRule(output,plan);
+ assert(([output[@"unlock"][@"conditions"] isEqual:@[stock,in]]));
+ assert(!output[@"unlock"][@"chain"] && !output[@"coverSwitch"] && [rule[@"conditions"] count]==3);
+ output[@"unlock"]=[@{@"enabled":@YES,@"conditions":@[out]} mutableCopy];PMTrimChapterExportRule(output,plan);
+ assert(![output[@"unlock"][@"enabled"] boolValue] && !PMUnlockValidationError(output[@"unlock"]));
 }
 int main(){@autoreleasepool{
  testChapterScope();
