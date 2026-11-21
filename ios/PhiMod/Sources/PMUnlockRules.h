@@ -86,6 +86,32 @@ inline NSArray* PMUnlockReferenceSongs(NSArray*songs, NSString*reference, int sl
  return members;
 }
 
+// A chapter may ship the very same chart under a local and a dependency ID.
+// Index only explicit score identities and the authored difficulty (SP and AT
+// share a native record slot, but are different charts).
+inline NSDictionary *PMUnlockScoreAliases(NSArray *songs) {
+ NSMutableDictionary *byIdentity=[NSMutableDictionary new], *byID=[NSMutableDictionary new];
+ NSCharacterSet *nonHex=[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdefABCDEF"].invertedSet;
+ for (NSDictionary *song in songs) {
+  NSString *identity=song[@"scoreIdentity"], *identifier=song[@"id"];
+  if (![identity isKindOfClass:NSString.class] || identity.length!=64 ||
+      [identity rangeOfCharacterFromSet:nonHex].location!=NSNotFound || !identifier.length) continue;
+  NSString *key=[identity.lowercaseString stringByAppendingFormat:@"/%@",PMDifficultyName(song[@"level"]).uppercaseString];
+  NSMutableArray *ids=byIdentity[key];
+  if (!ids) byIdentity[key]=ids=[NSMutableArray new];
+  [ids addObject:identifier];
+ }
+ for (NSArray *ids in byIdentity.allValues) if (ids.count>1)
+  for (NSString *identifier in ids) byID[identifier]=ids;
+ return byID;
+}
+
+inline NSString *PMUnlockConditionLabel(NSString *row, bool complete) {
+ // Keep angle brackets in authored song titles literal inside Unity UI.Text.
+ NSString *literal=[row stringByReplacingOccurrencesOfString:@"<" withString:@"<\u200B"];
+ return complete ? [NSString stringWithFormat:@"<color=#999999>%@（已完成）</color>",literal] : literal;
+}
+
 // songs is the index bucket for reference (chart ID or group ID).
 inline NSArray* PMUnlockRecordCandidates(NSArray*songs, NSString*reference, NSDictionary*officialSong, int slot, bool logicalSong){
  NSArray*custom=PMUnlockReferenceSongs(songs,reference,slot,logicalSong);

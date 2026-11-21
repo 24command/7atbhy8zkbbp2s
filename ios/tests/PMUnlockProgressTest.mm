@@ -30,6 +30,16 @@ int main(){@autoreleasepool{
  assert([PMUnlockRecordCandidates(merged,@"root",nil,-1,true) isEqual:merged]);
  assert(!PMUnlockRecordCandidates(nil,@"official",officialSong,3,true).count);
 
+ // The playable BLACKBOX copy and the unlock prerequisite use separate IDs.
+ NSString *hash=@"e54965c5738dcf4bee27f88d8b30bf7f82cd150da8693dbae9e0b167a78355a1";
+ NSDictionary *aliases=PMUnlockScoreAliases(@[@{@"id":@"dependency",@"level":@"IN",@"scoreIdentity":hash},
+  @{@"id":@"playable",@"level":@"IN",@"scoreIdentity":hash}, @{@"id":@"sibling",@"level":@"AT",@"scoreIdentity":hash},
+  @{@"id":@"extra",@"level":@"SP",@"scoreIdentity":hash}, @{@"id":@"unknown",@"level":@"IN"}]);
+ assert(([aliases[@"dependency"] isEqual:@[@"dependency",@"playable"]]));
+ assert([aliases[@"playable"] isEqual:aliases[@"dependency"]]);
+ assert(!aliases[@"sibling"] && !aliases[@"extra"] && !aliases[@"unknown"]);
+ assert([PMUnlockConditionLabel(@"IN",true) isEqual:@"<color=#999999>IN（已完成）</color>"]);
+ assert([PMUnlockConditionLabel(@"IN",false) isEqual:@"IN"]);
  NSDictionary*entities=@{@"root":inChart,@"variant":atChart};
  NSDictionary*db=@{@"songs":merged,@"chapters":@[@{@"id":@"destination",@"songs":@[@"root"]}],
                     @"chapterOverrides":@{@"destination":@{@"addedSongs":@[@"variant"]}},

@@ -38,7 +38,7 @@ P target(Runtime&r,uint32_t h){return h?r.gchandle_get_target(h):nullptr;}
 NSString*slotName(int slot){return @[@"EZ",@"HD",@"IN",@"AT"][std::clamp(slot,0,3)];}
 // snapshot() serializes the entire library. Reuse it for read-only unlock
 // queries until an import/edit commits a new revision.
-NSDictionary*unlockEntities=nil,*unlockSongGroups=nil,*unlockChaptersBySong=nil;
+NSDictionary*unlockEntities=nil,*unlockSongGroups=nil,*unlockChaptersBySong=nil,*unlockScoreAliases=nil;
 NSDictionary*unlockLibrary(){static NSDictionary*db=nil;static NSUInteger revision=NSUIntegerMax;NSUInteger current=PMContentStore.shared.revision;if(!db||revision!=current){
  db=[PMContentStore.shared snapshot];revision=current;NSMutableDictionary*entities=[NSMutableDictionary new],*groups=[NSMutableDictionary new],*chapterGroups=[NSMutableDictionary new];
  for(NSDictionary*song in db[@"songs"]){NSString*identifier=song[@"id"],*group=song[@"groupId"];if(!identifier.length)continue;if(!entities[identifier])entities[identifier]=song;
@@ -47,6 +47,7 @@ NSDictionary*unlockLibrary(){static NSDictionary*db=nil;static NSUInteger revisi
  for(NSDictionary*chapter in db[@"chapters"]){NSString*identifier=chapter[@"id"];if(identifier.length&&!entities[identifier])entities[identifier]=chapter;
   if([chapter[@"unlock"][@"enabled"]boolValue])for(NSString*song in chapter[@"songs"]){if(!chapterGroups[song])chapterGroups[song]=[NSMutableArray new];[chapterGroups[song]addObject:chapter];}
  }
+ unlockScoreAliases=PMUnlockScoreAliases(db[@"songs"]);
  unlockEntities=entities;unlockSongGroups=groups;unlockChaptersBySong=chapterGroups;
  }return db;}
 NSDictionary*entity(NSString*id){unlockLibrary();return id?unlockEntities[id]:nil;}
@@ -58,12 +59,16 @@ bool candidatesPass(Runtime&r,NSArray*candidates,int slot,NSString*type,double t
  for(NSDictionary*song in candidates)for(int s=slot<0?0:slot;s<=(slot<0?3:slot);++s){
   NSString*level=slotName(s);
   if(song[@"level"] && ![PMDifficultyRecordLevel(song) isEqualToString:level])continue;
-  P rec=record(r,song[@"id"],level);if(!rec)continue;
-  int score=r.get<int>(rec,"s");if(score<=0)continue;
-  if([type isEqualToString:@"score"]&&score>=threshold)return true;
-  if([type isEqualToString:@"acc"]){float acc=r.get<float>(rec,"a");if(std::isfinite(acc)&&acc+1e-6>=threshold)return true;}
-  if([type isEqualToString:@"fc"]&&(r.get<int>(rec,"c")==1||score==1000000))return true;
-  if([type isEqualToString:@"phi"]&&score==1000000)return true;
+  NSString *identifier=song[@"id"];
+  NSArray *ids=unlockScoreAliases[identifier] ?: @[identifier];
+  for (NSString *recordID in ids) {
+   P rec=record(r,recordID,level);if(!rec)continue;
+   int score=r.get<int>(rec,"s");if(score<=0)continue;
+   if([type isEqualToString:@"score"]&&score>=threshold)return true;
+   if([type isEqualToString:@"acc"]){float acc=r.get<float>(rec,"a");if(std::isfinite(acc)&&acc+1e-6>=threshold)return true;}
+   if([type isEqualToString:@"fc"]&&(r.get<int>(rec,"c")==1||score==1000000))return true;
+   if([type isEqualToString:@"phi"]&&score==1000000)return true;
+  }
  }
  return false;
 }
@@ -300,13 +305,14 @@ NSString*requirementName(NSString*ref,bool chapter){
  else for(NSString*k in @[@"mainSongs",@"extraSongs",@"sideStorySongs",@"otherSongs"])for(NSDictionary*entry in official[@"songBase"][k])if([entry[@"songsId"] isEqualToString:ref])return entry[@"songsName"]?:ref;
  return ref?:@"?";
 }
-NSString*chapterRequirements(NSDictionary*rule){
+NSString*chapterRequirements(Runtime&r,NSDictionary*rule){
  NSString*invalid=PMUnlockValidationError(rule);if(invalid)return invalid;
  NSMutableArray*rows=[NSMutableArray new];
  [rows addObject:[rule[@"mode"] isEqualToString:@"any"]?@"\u89e3\u9501\u8981\u6c42\uff08\u6ee1\u8db3\u4efb\u4e00\u9879\uff09":@"\u89e3\u9501\u8981\u6c42\uff08\u5168\u90e8\u6ee1\u8db3\uff09"];
  for(NSDictionary*c in rule[@"conditions"]){
   NSString*type=c[@"type"];double value=[c[@"value"] doubleValue];
-  if([type isEqualToString:@"rks"]){[rows addObject:[NSString stringWithFormat:@"RKS \u2265 %g",value]];continue;}
+  bool complete=recordPass(r,c);
+  if([type isEqualToString:@"rks"]){[rows addObject:PMUnlockConditionLabel([NSString stringWithFormat:@"RKS \u2265 %g",value],complete)];continue;}
   int slot=c[@"slot"]?[c[@"slot"] intValue]:-1;
   NSString*difficulty=slot<0?@"\u4efb\u610f\u96be\u5ea6":slotName(slot);
   NSString*name=requirementName(c[@"ref"],[type isEqualToString:@"chapter"]),*condition=nil;
@@ -315,7 +321,7 @@ NSString*chapterRequirements(NSDictionary*rule){
   else if([type isEqualToString:@"fc"])condition=@"Full Combo";
   else if([type isEqualToString:@"phi"])condition=@"Phi (1000000)";
   else condition=@"\u7ae0\u8282\u5185\u6bcf\u9996\u6b4c\u5206\u6570 \u2265 700000";
-  [rows addObject:[NSString stringWithFormat:@"%@ [%@] %@",name,difficulty,condition]];
+  [rows addObject:PMUnlockConditionLabel([NSString stringWithFormat:@"%@ [%@] %@",name,difficulty,condition],complete)];
  }
  return [rows componentsJoinedByString:@"\n"];
 }
@@ -327,7 +333,8 @@ void chapterReady(Runtime&r,void*selector){
   P locked=r.get<P>(card,"locked"),play=r.get<P>(card,"play");
   if(r.alive(locked)){bool lock=!open;r.call(locked,"SetActive",{"System.Boolean"},{&lock});}
   if(custom){P tip=r.get<P>(card,"unlockTip");if(r.alive(tip)){
-   NSString*requirements=open?@"":chapterRequirements(ruleFor(id));
+   NSString*requirements=open?@"":chapterRequirements(r,ruleFor(id));
+   if(!open){bool rich=true;r.call(tip,"set_supportRichText",{"System.Boolean"},{&rich});}
    // Use the game's central lock label, not a separate overlay.
    r.call(tip,"set_text",{"System.String"},{r.managedString(requirements)});
    bool show=!open;P labelObject=r.call(tip,"get_gameObject");r.call(labelObject,"SetActive",{"System.Boolean"},{&show});
@@ -342,10 +349,11 @@ bool lockUIManaged=false,lockUIBlocked=false;NSString*lockUIRequirement=nil,*loc
 void lockActive(Runtime&r,P object,bool active){if(r.alive(object)&&r.unbox<bool>(r.call(object,"get_activeSelf"))!=active)r.call(object,"SetActive",{"System.Boolean"},{&active});}
 void lockComponent(Runtime&r,P component,bool active){if(r.alive(component))lockActive(r,r.call(component,"get_gameObject"),active);}
 struct TipSize{float x,y;};struct TipColor{float r,g,b,a;};
-uint32_t lockTipRoot=0;bool lockTipFit=false,lockTipEnabled=true;int lockTipMin=0,lockTipMax=0,lockTipFont=0,lockTipWrap=0,lockTipVertical=0;TipSize lockTipSize{};TipColor lockTipColor{};
+uint32_t lockTipRoot=0;bool lockTipFit=false,lockTipEnabled=true,lockTipRich=true;int lockTipMin=0,lockTipMax=0,lockTipFont=0,lockTipWrap=0,lockTipVertical=0;TipSize lockTipSize{};TipColor lockTipColor{};
 void restoreLockTip(Runtime&r){
  if(!lockTipRoot)return;P tip=target(r,lockTipRoot);
  if(r.alive(tip)){
+  r.call(tip,"set_supportRichText",{"System.Boolean"},{&lockTipRich});
   r.call(tip,"set_resizeTextForBestFit",{"System.Boolean"},{&lockTipFit});
   r.call(tip,"set_resizeTextMinSize",{"System.Int32"},{&lockTipMin});r.call(tip,"set_resizeTextMaxSize",{"System.Int32"},{&lockTipMax});
   r.call(tip,"set_fontSize",{"System.Int32"},{&lockTipFont});r.call(tip,"set_horizontalOverflow",{"UnityEngine.HorizontalWrapMode"},{&lockTipWrap});
@@ -361,6 +369,8 @@ void fitLockTip(Runtime&r,P tip,bool blocked){
  if(target(r,lockTipRoot)!=tip){
   measuredText=nil;measuredWidth=measuredHeight=-1;
   restoreLockTip(r);
+  lockTipRich=r.unbox<bool>(r.call(tip,"get_supportRichText"));
+  if(!lockTipRich){bool rich=true;r.call(tip,"set_supportRichText",{"System.Boolean"},{&rich});}
   lockTipFit=r.unbox<bool>(r.call(tip,"get_resizeTextForBestFit"));lockTipMin=r.unbox<int>(r.call(tip,"get_resizeTextMinSize"));lockTipMax=r.unbox<int>(r.call(tip,"get_resizeTextMaxSize"));
   lockTipFont=r.unbox<int>(r.call(tip,"get_fontSize"));lockTipWrap=r.enumValue(r.call(tip,"get_horizontalOverflow"),"UnityEngine.HorizontalWrapMode");lockTipVertical=r.enumValue(r.call(tip,"get_verticalOverflow"),"UnityEngine.VerticalWrapMode");
   lockTipEnabled=r.unbox<bool>(r.call(tip,"get_enabled"));lockTipColor=r.unbox<TipColor>(r.call(tip,"get_color"));
@@ -426,7 +436,7 @@ void songLockUI(Runtime&r,P selector,double now){
   lockUIManaged=subject!=nil;lockUIBlocked=false;lockUIRequirement=nil;lockUIDetails=nil;
   if(subject){NSString*sid=subject[@"id"],*chapter=subject[@"targetChapter"];bool songOpen=opened(r,sid),chapterOpen=!entity(chapter)||opened(r,chapter);
    lockUIBlocked=!songOpen||!chapterOpen;
-   if(lockUIBlocked){NSMutableArray*tips=[NSMutableArray new];if(!songOpen)[tips addObject:chapterRequirements(ruleFor(sid))];if(!chapterOpen)[tips addObject:chapterRequirements(ruleFor(chapter))];lockUIDetails=[tips componentsJoinedByString:@"\n\n"];NSMutableArray*singleLine=[NSMutableArray new];for(NSString*tip in tips){NSArray*rows=[tip componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];NSMutableArray*parts=[NSMutableArray new];for(NSString*row in rows){NSString*part=[row stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];if(part.length)[parts addObject:part];}if(parts.count>1){NSString*heading=parts.firstObject;[parts removeObjectAtIndex:0];[singleLine addObject:[NSString stringWithFormat:@"%@：%@",heading,[parts componentsJoinedByString:@"；"]]];}else if(parts.count)[singleLine addObject:parts.firstObject];}lockUIRequirement=[singleLine componentsJoinedByString:@"；"];}
+   if(lockUIBlocked){NSMutableArray*tips=[NSMutableArray new];if(!songOpen)[tips addObject:chapterRequirements(r,ruleFor(sid))];if(!chapterOpen)[tips addObject:chapterRequirements(r,ruleFor(chapter))];lockUIDetails=[tips componentsJoinedByString:@"\n\n"];NSMutableArray*singleLine=[NSMutableArray new];for(NSString*tip in tips){NSArray*rows=[tip componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];NSMutableArray*parts=[NSMutableArray new];for(NSString*row in rows){NSString*part=[row stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];if(part.length)[parts addObject:part];}if(parts.count>1){NSString*heading=parts.firstObject;[parts removeObjectAtIndex:0];[singleLine addObject:[NSString stringWithFormat:@"%@：%@",heading,[parts componentsJoinedByString:@"；"]]];}else if(parts.count)[singleLine addObject:parts.firstObject];}lockUIRequirement=[singleLine componentsJoinedByString:@"；"];}
    // Native SetLevel refuses changes when the entire item is marked locked.
    // Keep custom groups navigable; per-chart lock UI and beforeStart enforce access.
    r.put(item,"<Unlocked>k__BackingField",true);
