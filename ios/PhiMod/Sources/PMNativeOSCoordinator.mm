@@ -31,7 +31,7 @@ BOOL (^mountMap)(void);
 BOOL (^applyCheckpoint)(NSDictionary *);
 dispatch_source_t clockSource;
 void stopClock(){if(clockSource){dispatch_source_cancel(clockSource);clockSource=nil;}}
-void clearScene(Runtime &r){stopClock(); [actions invalidate]; actions=nil; mountMap=nil; applyCheckpoint=nil; if(detailID)panel::close(r,detailID);detailID=0;if(mapID)map::close(r,mapID);mapID=0;if(visit)chrome::close(r,visit);chromeView={};rows::release();detail=nil;selected=nil;choices=nil;busy=false;}
+void clearScene(Runtime &r,uint64_t closingVisit=visit){stopClock(); [actions invalidate]; actions=nil; mountMap=nil; applyCheckpoint=nil; if(detailID)panel::close(r,detailID);detailID=0;if(mapID)map::close(r,mapID);mapID=0;if(closingVisit)chrome::close(r,closingVisit);chromeView={};rows::release();detail=nil;selected=nil;choices=nil;busy=false;}
 NSDictionary *entry(NSDictionary *card){NSString *sid=card[@"sid"]?:card[@"installedID"];if(!sid)return nil;NSMutableDictionary *e=[@{@"songID":sid} mutableCopy];if(card[@"difficulty"])e[@"difficulty"]=card[@"difficulty"];return e;}
 NSArray *options(NSDictionary *card){NSArray *replays=card[@"replaySongs"];if(replays.count)return replays;NSDictionary *e=entry(card);return e?@[e]:@[];}
 void discardHandoff(){handoffScene=0;pendingStart=nil;returnBack=false;}
@@ -249,11 +249,14 @@ void sceneUnloaded(Runtime &r,int handle,bool owned){
  // leave() already closed this graph. Keep its token until returned() can
  // compare and consume it, including when a different Single load wins.
  if(!visit || mode==Mode::returning)return;
+ // Consume the visit before cleanup can trigger any more Unity callbacks.
+ const uint64_t closingVisit=visit;
+ visit=0;
  ++generation;
  mode=Mode::idle;
- clearScene(r);
- visit=0;selector=nullptr;program=nil;chapter=nil;
+ selector=nullptr;program=nil;chapter=nil;
  discardHandoff();
+ clearScene(r,closingVisit);
  toggle::release(r);
 }
 namespace {

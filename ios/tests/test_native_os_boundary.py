@@ -74,7 +74,11 @@ namespace toggle {
     bool owns(Runtime&,P b){return b==&ownedButton;}
     void release(Runtime&){++releases;}
 }
-void clearScene(Runtime&){++closes;}
+void sceneUnloaded(Runtime&,int,bool);
+void clearScene(Runtime& r,uint64_t closingVisit){
+    assert(visit==0 && closingVisit==33);++closes;
+    sceneUnloaded(r,9,true);  // synchronous callback during cleanup
+}
 template<class F>void guardInput(F f){try{f();}catch(const std::exception&){}}
 '''
         code += definition(COORD, 'enum class Mode') + '; Mode mode=Mode::idle;\n'
