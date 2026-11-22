@@ -98,22 +98,22 @@ bool passes(Runtime&r,NSDictionary*rule){
  for(NSDictionary*c in rule[@"conditions"]){bool pass=recordPass(r,c);if(any&&pass)return true;if(!any&&!pass)return false;}
  return !any;
 }
-bool opened(Runtime&r,NSString*id){
+bool opened(Runtime&r,NSString*id,bool persist=true){
  NSDictionary*rule=ruleFor(id);if(PMUnlockValidationError(rule))return false;
  if(![rule[@"enabled"] boolValue])return true;
  if(!progress)progress=[[PMUnlockProgress alloc]initWithRoot:PMContentStore.shared.root];
  if([progress isOpen:id rule:rule])return true;
- if(!passes(r,rule))return false;
+ if(!persist||!passes(r,rule))return false;
  NSError*error=nil;if(![progress open:id rule:rule error:&error]){logf("Unlock progress save failed: %s",error.localizedDescription.UTF8String);return false;}if(!newlyOpened)newlyOpened=[NSMutableSet new];[newlyOpened addObject:id];
  return true;
 }
 // A chapter requirement applies to its members in every aggregate selector.
-bool chapterBlocked(Runtime&r,NSString*group,NSDictionary*subject){
+bool chapterBlocked(Runtime&r,NSString*group,NSDictionary*subject,bool persist=true){
  NSString*chapter=subject[@"targetChapter"];
- if(chapter.length&&entity(chapter)&&!opened(r,chapter))return true;
+ if(chapter.length&&entity(chapter)&&!opened(r,chapter,persist))return true;
  unlockLibrary();NSString*identifier=subject[@"id"];
- for(NSDictionary*c in (group?unlockChaptersBySong[group]:nil))if(!opened(r,c[@"id"]))return true;
- if(identifier.length&&![identifier isEqualToString:group])for(NSDictionary*c in unlockChaptersBySong[identifier])if(!opened(r,c[@"id"]))return true;
+ for(NSDictionary*c in (group?unlockChaptersBySong[group]:nil))if(!opened(r,c[@"id"],persist))return true;
+ if(identifier.length&&![identifier isEqualToString:group])for(NSDictionary*c in unlockChaptersBySong[identifier])if(!opened(r,c[@"id"],persist))return true;
  return false;
 }
 bool chartBlocked(Runtime&r,P item,int slot){
@@ -188,9 +188,9 @@ void enqueueReveals(Runtime&r,bool activateMenu=true){
  if(!menuTimer)menuTimer=[NSTimer scheduledTimerWithTimeInterval:.25 repeats:YES block:^(NSTimer*t){try{pumpAnimations();}catch(const std::exception&e){logf("Unlock queue failed: %s",e.what());}}];
 }
 }
-bool courseMemberOpen(Runtime &r,NSString *group,NSDictionary *chart){
+bool courseMemberOpen(Runtime &r,NSString *group,NSDictionary *chart,bool persist){
  // The queue resolves a chart ID, not the selector's current AT binding.
- return !chapterBlocked(r,group,chart) && (!chart || opened(r,chart[@"id"]));
+ return !chapterBlocked(r,group,chart,persist) && (!chart || opened(r,chart[@"id"],persist));
 }
 bool playChapterStoryMedia(NSString *path, NSString *cover, NSString *title, void (^done)(BOOL)) {
  if (!NSThread.isMainThread) return false;
@@ -200,11 +200,11 @@ bool playChapterStoryMedia(NSString *path, NSString *cover, NSString *title, voi
   if(done)done(completed);
  });
 }
-NSString*coverPath(Runtime&r,NSString*identifier){
+NSString*coverPath(Runtime&r,NSString*identifier,bool persist){
  NSString*folder=[PMContentStore.shared coverFolder:identifier];NSDictionary*subject=entity(identifier);NSString*variant=@"image";
- if(subject){BOOL locked=!opened(r,identifier),special=NO;NSDictionary*config=subject[@"coverSwitch"];NSString*mode=config[@"mode"]?:@"none";
+ if(subject){BOOL locked=!opened(r,identifier,persist),special=NO;NSDictionary*config=subject[@"coverSwitch"];NSString*mode=config[@"mode"]?:@"none";
   if(![@[@"none",@"unlock"] containsObject:mode]){NSMutableDictionary*c=[config mutableCopy];[c removeObjectForKey:@"mode"];c[@"type"]=mode;NSDictionary*rule=@{@"enabled":@YES,@"conditions":@[c]};
-   if(!PMUnlockValidationError(rule)){if(!progress)progress=[[PMUnlockProgress alloc]initWithRoot:PMContentStore.shared.root];NSString*key=[@"cover:" stringByAppendingString:identifier];special=[progress isOpen:key rule:rule];if(!special&&passes(r,rule)){NSError*error=nil;special=[progress open:key rule:rule error:&error];if(error)logf("Cover progress save failed: %s",error.localizedDescription.UTF8String);}}
+   if(!PMUnlockValidationError(rule)){if(!progress)progress=[[PMUnlockProgress alloc]initWithRoot:PMContentStore.shared.root];NSString*key=[@"cover:" stringByAppendingString:identifier];special=[progress isOpen:key rule:rule];if(persist&&!special&&passes(r,rule)){NSError*error=nil;special=[progress open:key rule:rule error:&error];if(error)logf("Cover progress save failed: %s",error.localizedDescription.UTF8String);}}
   }
   variant=special?@"image-special":locked?@"image-before":@"image-after";
  }

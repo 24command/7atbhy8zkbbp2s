@@ -34,7 +34,8 @@ struct Batch {
     Runtime &r;
     std::map<Key,std::unique_ptr<Saved>> rows;
     std::map<std::string,std::shared_ptr<Cover>> covers;
-    explicit Batch(Runtime &rt):r(rt){}
+    const NSUInteger revision;
+    explicit Batch(Runtime &rt):r(rt),revision(PMContentStore.shared.revision){}
 };
 std::unique_ptr<Batch> batch;
 
@@ -59,8 +60,11 @@ P sprite(Runtime &r,Cover &cover){
 }
 std::shared_ptr<Cover> localCover(Batch &next,NSString *identifier){
     NSString *folder=[PMContentStore.shared coverFolder:identifier];
-    NSString *path=pmunlock::coverPath(next.r,identifier);
-    if(!folder.length||!path.length||![path.stringByDeletingLastPathComponent isEqualToString:folder])return {};
+    NSString *path=pmunlock::coverPath(next.r,identifier,false);
+    if(!folder.length||!path.length)return {};
+    folder=folder.stringByResolvingSymlinksInPath.stringByStandardizingPath;
+    path=path.stringByResolvingSymlinksInPath.stringByStandardizingPath;
+    if(![path.stringByDeletingLastPathComponent isEqualToString:folder])return {};
     auto k=std::string(path.fileSystemRepresentation);auto hit=next.covers.find(k);if(hit!=next.covers.end())return hit->second;
     // The image stays available if the import is moved or replaced during the
     // scene change. Snapshot each distinct file once, in its original encoding.
@@ -75,13 +79,19 @@ std::shared_ptr<Cover> localCover(Batch &next,NSString *identifier){
 void arraySet(Runtime &r,P array,int i,P value){r.call(array,"SetValue",{"System.Object","System.Int32"},{value,&i});}
 std::unique_ptr<Saved> snapshot(Batch &next,P original,P song,int slot,NSDictionary *chart,NSString *group){
     auto &r=next.r;NSString *identifier=chart?chart[@"id"]:group;
-    auto art=localCover(next,identifier);if(!art)return {};
+    if(![identifier isKindOfClass:NSString.class]||!identifier.length)return {};
+    auto art=localCover(next,identifier);
+    if(chart&&!art)return {};
+    if(!r.get<bool>(original,"visible")||!r.unbox<bool>(r.call(original,"get_Unlocked")))return {};
     // Allocate by whitelist. SongSelectorItem itself has nine Unity scene fields.
     Root row(r,r.object_new(r.klass("SongSelectorItem"))),data(r,r.object_new(r.klass("SongsItem")));
     for(const char *field:{"songsId","songsName","songsTitle","composer","illustrator","songsKey"})r.put(data.get(),field,r.get<P>(song,field));
     r.put(data.get(),"songsId",r.managedString(identifier));
     if(chart){
-        for(auto pair:{std::pair<const char*,NSString*>{"songsName",chart[@"title"]},{"songsTitle",chart[@"title"]},{"composer",chart[@"composer"]},{"illustrator",chart[@"illustrator"]}})
+        NSString *title=chart[@"title"];
+        if(![title isKindOfClass:NSString.class]||!title.length)title=identifier;
+        r.put(data.get(),"songsKey",r.managedString(identifier));
+        for(auto pair:{std::pair<const char*,NSString*>{"songsName",title},{"songsTitle",title},{"composer",chart[@"composer"]},{"illustrator",chart[@"illustrator"]}})
             r.put(data.get(),pair.first,r.managedString(pair.second?:@""));
     }
     for(const char *field:{"difficulty","levels","charter"}){
@@ -102,8 +112,23 @@ std::unique_ptr<Saved> snapshot(Batch &next,P original,P song,int slot,NSDiction
     r.put(row.get(),"records",list.get());r.put(row.get(),"songInfo",data.get());
     r.put(row.get(),"visible",true);r.put(row.get(),"<Unlocked>k__BackingField",true);r.put(row.get(),"<PlayableLevelCount>k__BackingField",count);
     r.put(row.get(),"<SelectorTargetWidth>k__BackingField",r.get<int>(original,"<SelectorTargetWidth>k__BackingField"));
-    r.put(row.get(),"coverAssetCode",r.managedString([NSString stringWithFormat:@"PM/%@/image@%lu",identifier,(unsigned long)PMContentStore.shared.revision]));
-    r.put(row.get(),"coverBlurAssetCode",r.managedString(pmcontent::selectorThumbnailKey(identifier)));
+    if(art){
+        r.put(row.get(),"coverAssetCode",r.managedString([NSString stringWithFormat:@"PM/%@/image@%lu",identifier,(unsigned long)next.revision]));
+        r.put(row.get(),"coverBlurAssetCode",r.managedString(pmcontent::selectorThumbnailKey(identifier)));
+    }else{
+        // Preserve the native per-difficulty cover selection on the detached song.
+        bool alternate=r.get<bool>(song,"hasDifferentCover");
+        P field=r.field(r.klass("SongsItem"),"differentCover","SongsItem.DifferentDifficulty",false);
+        int mask=0;r.field_get_value(song,field,&mask);r.field_set_value(data.get(),field,&mask);
+        r.put(data.get(),"hasDifferentCover",alternate);
+        P suffix=alternate&&(mask&(1<<slot))?r.arrayAt(r.get<P>(song,"levels"),slot):r.string_new("");
+        P builder=r.klass("IdBuilder"),nativeID=r.get<P>(song,"songsId");
+        for(auto pair:{std::pair<const char*,const char*>{"coverAssetCode","BuildCoverImageId"},{"coverBlurAssetCode","BuildBlurImageId"}}){
+            P address=r.stat(builder,pair.second,{"System.String","System.String"},{nativeID,suffix});
+            if(!r.string(address).length)return {};
+            r.put(row.get(),pair.first,address);
+        }
+    }
     return std::make_unique<Saved>(r,row.get(),slot,art);
 }
 } // namespace
@@ -114,31 +139,45 @@ void release(){
         catch(const std::exception &e){PMDiagnosticsWrite(e.what());}
     }
 }
+static bool currentSelector(Runtime &r,P selector,NSString *chapter,NSUInteger revision){
+    if(pmcontent::runtime!=&r||!selector||pmcontent::target(r,pmcontent::loadingSelector)!=selector||!r.alive(selector))return false;
+    if(pmcontent::playing||r.get<bool>(selector,"exit")||pmcontent::applied!=revision||PMContentStore.shared.revision!=revision)return false;
+    P info=r.get<P>(selector,"nowChapterInfo");
+    return info&&[r.string(r.get<P>(info,"chapterCode")) isEqualToString:chapter];
+}
 bool prepare(Runtime &r,P selector,NSString *chapter,NSArray<NSDictionary *> *entries){
     if(!NSThread.isMainThread)return false;
-    release();if(![chapter isKindOfClass:NSString.class]||![chapter hasPrefix:@"pm_"]||![entries isKindOfClass:NSArray.class]||!entries.count)return false;
+    release();
+    if(![chapter isKindOfClass:NSString.class]||![chapter hasPrefix:@"pm_"]||![entries isKindOfClass:NSArray.class])return false;
     @try{try{
-        if(!selector||pmcontent::runtime!=&r||pmcontent::target(r,pmcontent::loadingSelector)!=selector)return false;
-        auto next=std::make_unique<Batch>(r);Batch *staging=next.get();NSUInteger revision=PMContentStore.shared.revision;
+        auto next=std::make_unique<Batch>(r);Batch *staging=next.get();
+        if(!currentSelector(r,selector,chapter,next->revision))return false;
         for(id entry in entries){@autoreleasepool{
-            if(![entry isKindOfClass:NSDictionary.class])return false;
-            NSString *sid=entry[@"songID"],*diff=entry[@"difficulty"];
-            if(![sid isKindOfClass:NSString.class]||!sid.length||(diff&&(![diff isKindOfClass:NSString.class]||!diff.length)))return false;
-            Key k=key(sid,diff);if(staging->rows.count(k))continue;
-            if(!pmcontent::checkedSong(r,selector,chapter,sid,diff,nil,^BOOL(P row,P song,int slot,NSDictionary *chart,NSString *group){
-                auto saved=snapshot(*staging,row,song,slot,chart,group);if(!saved)return NO;
-                staging->rows.emplace(k,std::move(saved));return YES;
-            },true))return false; // Match chapter Start's unique-sibling resolution without selecting it.
+            @try{try{
+                if(![entry isKindOfClass:NSDictionary.class])continue;
+                NSString *sid=entry[@"songID"],*diff=entry[@"difficulty"];
+                if(![sid isKindOfClass:NSString.class]||!sid.length||(diff&&(![diff isKindOfClass:NSString.class]||!diff.length)))continue;
+                Key k=key(sid,diff);if(staging->rows.count(k))continue;
+                pmcontent::checkedSong(r,selector,chapter,sid,diff,nil,^BOOL(P row,P song,int slot,NSDictionary *chart,NSString *group){
+                    auto saved=snapshot(*staging,row,song,slot,chart,group);
+                    if(!saved)return NO;
+                    staging->rows.emplace(k,std::move(saved));return YES;
+                },true);
+            }catch(const std::exception &e){PMDiagnosticsWrite(e.what());}}
+            @catch(NSException *e){PMDiagnosticsWrite(e.reason.UTF8String);}
         }}
-        if(revision!=PMContentStore.shared.revision||pmcontent::target(r,pmcontent::loadingSelector)!=selector)return false;
+        if(!currentSelector(r,selector,chapter,next->revision))return false;
         batch=std::move(next);return true;
     }catch(const std::exception &e){PMDiagnosticsWrite(e.what());}}@catch(NSException *e){PMDiagnosticsWrite(e.reason.UTF8String);}
     return false;
 }
 bool lookup(NSString *sid,NSString *difficulty,Row &out){
     out={};if(!NSThread.isMainThread||!batch||![sid isKindOfClass:NSString.class]||!sid.length||(difficulty&&![difficulty isKindOfClass:NSString.class]))return false;
-    @try{try{auto found=batch->rows.find(key(sid,difficulty));if(found==batch->rows.end())return false;
-        Saved &saved=*found->second;P art=sprite(batch->r,*saved.cover);out={saved.row.get(),saved.slot,art};return true;
+    @try{try{if(batch->revision!=PMContentStore.shared.revision)return false;
+        auto found=batch->rows.find(key(sid,difficulty));if(found==batch->rows.end())return false;
+        Saved &saved=*found->second;P art=saved.cover?sprite(batch->r,*saved.cover):nullptr;
+        if(batch->revision!=PMContentStore.shared.revision)return false;
+        out={saved.row.get(),saved.slot,art};return true;
     }catch(const std::exception &e){PMDiagnosticsWrite(e.what());}}@catch(NSException *e){PMDiagnosticsWrite(e.reason.UTF8String);}
     return false;
 }

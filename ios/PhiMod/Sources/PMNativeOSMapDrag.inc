@@ -69,7 +69,11 @@ void finishDrag(Map &m, bool place) {
 }
 void cancelDrag(Map &m) {
     finishDrag(m,false);
-    if (m.starts) { m.r.call(m.get(m.starts),"Clear"); m.r.call(m.get(m.ends),"Clear"); }
+    if (!m.starts) return;
+    for (Handle h : {m.starts,m.ends}) {
+        P events=m.get(h);
+        for (int n=m.r.count(events); n>0; --n) m.r.call(events,"Dequeue");
+    }
 }
 P rayHit(Runtime &r, P event, const char *raycast) {
     P box=r.call(event,raycast);

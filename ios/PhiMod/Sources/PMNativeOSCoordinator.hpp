@@ -5,5 +5,7 @@ namespace pmnativecoordinator {
 void ready(pmbridge::Runtime&, void *selector, NSString *chapter, PMStoryStartSong start);
 void detach(pmbridge::Runtime&);
 bool press(pmbridge::Runtime&, void *button);
+bool pointerClick(pmbridge::Runtime&, void *button, void *pointerEvent);
+void sceneUnloaded(pmbridge::Runtime&, int handle, bool owned);
 bool transitioning();
 }

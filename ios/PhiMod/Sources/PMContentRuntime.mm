@@ -968,7 +968,7 @@ static BOOL checkedSong(Runtime &r,P selector,NSString *chapter,NSString *instal
   // Checking a course is read-only: do not select rows, rebind the AT slot,
   // paint lock UI, start an intro or mutate any previously collected member.
   if(!authored&&!official)return NO;
-  if(!pmunlock::courseMemberOpen(r,group,authored))return NO;
+  if(!pmunlock::courseMemberOpen(r,group,authored,!resolveSiblings))return NO;
   return collect(item,song,slot,authored,group);
  }
  r.put(selector,"nowSong",index);r.put(selector,"targetSong",index);

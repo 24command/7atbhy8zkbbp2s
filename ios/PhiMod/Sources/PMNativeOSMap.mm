@@ -1,4 +1,5 @@
 #include "PMNativeOSMapPuzzle.hpp"
+#include "PMNativeOSMapMediaTiming.hpp"
 #include "PMIL2CPP.hpp"
 #import "PMDiagnostics.h"
 #import <ImageIO/ImageIO.h>
@@ -389,8 +390,9 @@ bool present(Runtime &r, Visit id, bool visible, bool runClock, bool input) {
         if (m.running != running) {
             m.elapsed = m.time(); m.resumed = Clock::now(); m.running = running;
         }
-        m.input = running && input;
-        if (!m.input) cancelDrag(m);
+        bool acceptInput = running && input;
+        if (m.input != acceptInput) cancelDrag(m);
+        m.input = acceptInput;
         flag(r, m.get(m.rootGroup), "set_interactable", m.input);
         flag(r, m.get(m.rootGroup), "set_blocksRaycasts", m.input);
         if (m.visible != visible) flag(r, m.get(m.root), "SetActive", visible);

@@ -848,7 +848,9 @@ void onOSSceneLoaded(SceneValue scene, int32_t mode, P mi) {
   orig<void(*)(SceneValue,int32_t,P)>(h::osSceneLoaded)(scene, mode, mi);
 }
 void onOSSceneUnloaded(SceneValue scene, P mi) {
- if (!os::sceneUnloaded(R(), scene.handle))
+ bool owned = os::sceneUnloaded(R(), scene.handle);
+ pmnativecoordinator::sceneUnloaded(R(), scene.handle, owned);
+ if (!owned)
   orig<void(*)(SceneValue,P)>(h::osSceneUnloaded)(scene, mi);
 }
 void onMainlinePhase1Start(P self,P mi){
@@ -925,6 +927,7 @@ bool dispatchModButton(P self){
 }
 void onPress(P self,P mi){if(pmnativecoordinator::press(R(),self))return;if(!dispatchModButton(self))orig<VoidFn>(h::button)(self,mi);}
 void onPointerClick(P self,P event,P mi){
+ if(pmnativecoordinator::pointerClick(R(),self,event))return;
  if(pmchallengeresults::pointerClick(R(),self,event))return;
  try{if(pmunlock::selectorButtonBlocked(R(),self))return;}catch(const std::exception&e){diagf("Selector modal click: %s",e.what());return;}
  if(pmcontent::ownsDifficultyButton(self)){try{if(R().enumValue(R().call(event,"get_button"),"UnityEngine.EventSystems.PointerEventData.InputButton")==0)pmcontent::pressDifficultyButton(R(),self);}catch(const std::exception&e){diagf("Difficulty page click: %s",e.what());}return;}
@@ -936,7 +939,10 @@ void onPointerClick(P self,P event,P mi){
  }
  orig<void(*)(P,P,P)>(h::buttonClick)(self,event,mi);
 }
-void onSubmit(P self,P event,P mi){if(!dispatchModButton(self))orig<void(*)(P,P,P)>(h::buttonSubmit)(self,event,mi);}
+void onSubmit(P self,P event,P mi){
+ if(pmnativecoordinator::press(R(),self))return;
+ if(!dispatchModButton(self))orig<void(*)(P,P,P)>(h::buttonSubmit)(self,event,mi);
+}
 void onCheck(P self,int finger,P mi,h::Index i){
  // Fullscreen positional scope for initial Tap/Flick candidate collection.
  auto fn=orig<void(*)(P,int,P)>(i);if(!applying()||!attempt->options().fullscreen){PlaybackJudgeScope rate(R());fn(self,finger,mi);return;}

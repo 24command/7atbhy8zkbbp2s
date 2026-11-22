@@ -16,7 +16,7 @@ struct Media {
     NSString *path = nil;
     Handle raw{}, fitter{}, player{}, texture{};
     int pixels{};
-    bool loop{}, playing{}, received{}, failed{};
+    bool loop{}, playing{}, received{}, failed{}, slowStartReported{};
     double started{};
     P lastVideoTexture{}; // borrowed from VideoPlayer and RawImage
     std::shared_ptr<GifVisit> gif;
@@ -56,9 +56,8 @@ void requestGif(Media &media) {
             int h = [props[(__bridge NSString *)kCGImagePropertyPixelHeight] intValue];
             if (w < 1 || h < 1 || w > 4096 || h > 4096) throw std::runtime_error("Invalid map GIF dimensions");
             NSDictionary *times = props[(__bridge NSString *)kCGImagePropertyGIFDictionary];
-            delay = [times[(__bridge NSString *)kCGImagePropertyGIFUnclampedDelayTime] doubleValue];
-            if (!(delay > 0)) delay = [times[(__bridge NSString *)kCGImagePropertyGIFDelayTime] doubleValue];
-            if (!std::isfinite(delay) || delay <= 0) delay = .1;
+            delay = playback::frameDelay([times[(__bridge NSString *)kCGImagePropertyGIFUnclampedDelayTime] doubleValue],
+                                         [times[(__bridge NSString *)kCGImagePropertyGIFDelayTime] doubleValue]);
             CGImageRef image = CGImageSourceCreateThumbnailAtIndex(decoder->source,frame,(__bridge CFDictionaryRef)@{
                 (__bridge NSString *)kCGImageSourceCreateThumbnailFromImageAlways:@YES,
                 (__bridge NSString *)kCGImageSourceThumbnailMaxPixelSize:@(pixels)});
@@ -115,6 +114,7 @@ void syncMedia(Map &m, Media &media, bool play, double t) {
             return;
         }
         media.started = t;
+        media.slowStartReported = false;
         if (player) r.call(player,"Play");
         else media.gif = std::make_shared<GifVisit>();
     }
@@ -123,9 +123,9 @@ void syncMedia(Map &m, Media &media, bool play, double t) {
     float aspect = 1;
     if (player) {
         texture = r.call(player,"get_texture");
-        if (!texture && !media.received && t-media.started > 15) {
-            PMDiagnosticsWrite("Map VideoPlayer produced no texture within 15 seconds");
-            r.call(player,"Stop"); media.failed = true; return;
+        if (!texture && !media.received && !media.slowStartReported && t-media.started > 15) {
+            PMDiagnosticsWrite([[NSString stringWithFormat:@"Map VideoPlayer still waiting for %@",media.path.lastPathComponent] UTF8String]);
+            media.slowStartReported = true;
         }
         if (!texture || texture == media.lastVideoTexture) return;
         int w = r.unbox<int>(r.call(texture,"get_width")), h = r.unbox<int>(r.call(texture,"get_height"));
@@ -140,8 +140,9 @@ void syncMedia(Map &m, Media &media, bool play, double t) {
         texture = m.get(media.texture); aspect = g.aspect;
         upload(r,texture,g.ready,false);
         g.ready = nil; g.due = t + g.delay;
-        g.finished = g.count == 1 || (g.frame+1 == g.count && !media.loop);
-        if (!g.finished) { g.frame = (g.frame+1)%g.count; requestGif(media); }
+        g.frame = playback::nextFrame(g.frame,g.count,media.loop);
+        g.finished = g.frame == g.count;
+        if (!g.finished) requestGif(media);
     }
     r.call(m.get(media.fitter),"set_aspectRatio",{"System.Single"},{&aspect});
     r.call(raw,"set_texture",{"UnityEngine.Texture"},{texture});

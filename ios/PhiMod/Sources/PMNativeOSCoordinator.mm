@@ -24,27 +24,48 @@ Mode mode=Mode::idle;
 Runtime *game=nullptr; P selector=nullptr; uint64_t generation=0,visit=0,mapID=0,detailID=0;
 PMNativeOSProgram *program; NSString *chapter; NSDictionary *detail,*pendingStart,*selected;
 NSArray<NSDictionary *> *choices; NSInteger lifeTier=0; NSUInteger revision=0;
-bool gated=false,busy=false,returnBack=false,reuseList=false; chrome::View chromeView;
+int handoffScene=0; // Only the selector scene that received this return may consume it.
+bool gated=false,busy=false,returnBack=false; chrome::View chromeView;
 PMNativeOSActions *actions;
 BOOL (^mountMap)(void);
 BOOL (^applyCheckpoint)(NSDictionary *);
 dispatch_source_t clockSource;
 void stopClock(){if(clockSource){dispatch_source_cancel(clockSource);clockSource=nil;}}
-void clearScene(Runtime &r){[actions invalidate]; actions=nil; mountMap=nil; applyCheckpoint=nil; stopClock(); if(detailID)panel::close(r,detailID);detailID=0;if(mapID)map::close(r,mapID);mapID=0;if(visit)chrome::close(r,visit);chromeView={};rows::release();detail=nil;selected=nil;choices=nil;busy=false;}
+void clearScene(Runtime &r){stopClock(); [actions invalidate]; actions=nil; mountMap=nil; applyCheckpoint=nil; if(detailID)panel::close(r,detailID);detailID=0;if(mapID)map::close(r,mapID);mapID=0;if(visit)chrome::close(r,visit);chromeView={};rows::release();detail=nil;selected=nil;choices=nil;busy=false;}
 NSDictionary *entry(NSDictionary *card){NSString *sid=card[@"sid"]?:card[@"installedID"];if(!sid)return nil;NSMutableDictionary *e=[@{@"songID":sid} mutableCopy];if(card[@"difficulty"])e[@"difficulty"]=card[@"difficulty"];return e;}
 NSArray *options(NSDictionary *card){NSArray *replays=card[@"replaySongs"];if(replays.count)return replays;NSDictionary *e=entry(card);return e?@[e]:@[];}
-void returned(Runtime&,uint64_t token,bool ok){if(visit!=token)return;if(!ok){pendingStart=nil;returnBack=false;reuseList=false;program=nil;mode=Mode::idle;}visit=0;}
+void discardHandoff(){handoffScene=0;pendingStart=nil;returnBack=false;}
+int sceneHandle(Runtime &r,P sceneValue){
+ struct SceneValue { int32_t handle; };
+ if(!sceneValue || r.object_get_class(sceneValue)!=r.type("UnityEngine.SceneManagement","Scene"))
+     throw std::runtime_error("Unexpected selector scene");
+ return r.unbox<SceneValue>(sceneValue).handle;
+}
+void returned(Runtime &r,uint64_t token,bool ok){
+ if(&r!=game || mode!=Mode::returning || token!=visit || !token)return;
+ visit=0;
+ mode=Mode::idle; // Retail/challenge selectors may never call ready().
+ program=nil;
+ if(ok){
+     try { handoffScene=sceneHandle(r,r.stat(r.type("UnityEngine.SceneManagement","SceneManager"),"GetActiveScene")); }
+     catch(const std::exception &e){PMDiagnosticsWrite(e.what());}
+ }
+ if(!handoffScene)discardHandoff();
+}
 bool leave(Runtime &r,bool back,NSDictionary *launch){
  if(mode!=Mode::detail&&mode!=Mode::map&&mode!=Mode::entering)return false;
  if(!scene::leaveToSongSelector(r,returned))return false;
- pendingStart=[launch copy];returnBack=back;reuseList=true;mode=Mode::returning;clearScene(r);return true;
+ pendingStart=[launch copy];returnBack=back;mode=Mode::returning;clearScene(r);return true;
 }
 bool presentMap(Runtime &r){mode=Mode::map;busy=false;return chrome::present(r,visit,chrome::Face::Map,true,0,!gated)&&map::present(r,mapID,true,true,true);}
 void closePanel(Runtime &r){if(detailID)panel::close(r,detailID);detailID=0;detail=nil;choices=nil;selected=nil;if(!chrome::resetDetail(r,visit)||!presentMap(r))leave(r,false,nil);}
 bool rowFor(NSDictionary *e,rows::Row &out){return e&&rows::lookup(e[@"songID"],e[@"difficulty"],out);}
 unsigned allowedSlots(){unsigned mask=0;for(NSDictionary *e in choices){rows::Row row;if(rowFor(e,row)&&row.slot>=0&&row.slot<4)mask|=1u<<row.slot;}return mask;}
 void openPanel(Runtime &r,NSDictionary *card){
- if(!card||mode!=Mode::map)return;NSArray *available=options(card);NSDictionary *first=available.firstObject;rows::Row row;if(!rowFor(first,row))return;
+ if(!card||mode!=Mode::map)return;
+ NSArray *available=options(card);NSDictionary *first=nil;rows::Row row;
+ for(NSDictionary *entry in available){if(rowFor(entry,row)){first=entry;break;}}
+ if(!first)return;
  map::present(r,mapID,false,false,false);chrome::present(r,visit,chrome::Face::Detail,false);
  panel::Speech speech{card[@"speechHeading"],card[@"caption"],[card[@"seconds"] doubleValue]};
  detailID=panel::open(r,program.nativeChapter==8?panel::Style::c8:panel::Style::c9,chromeView.detailRoot,row.row,row.slot,speech,false,row.cover);
@@ -172,7 +193,7 @@ void enter(Runtime &r){if(mode!=Mode::list||!selector||revision!=PMContentStore.
          [targets addObjectsFromArray:options(card[@"challengeDetail"]?:card)];
  }
  NSArray *entries=targets.array;
- if(entries.count&&!rows::prepare(r,selector,chapter,entries))return;
+ if(!rows::prepare(r,selector,chapter,entries))return;
  mode=Mode::entering;visit=scene::enter(r,program.nativeChapter==8?scene::Route::C8:scene::Route::C9,arrived);
  if(!visit){mode=Mode::list;rows::release();PMDiagnosticsWrite("Native chapter scene unavailable; check packaged scene resources");}
 }
@@ -186,29 +207,91 @@ bool startSelection(NSDictionary *launch,PMStoryStartSong start){
 }
 }
 void ready(Runtime &r,P owner,NSString *key,PMStoryStartSong start){
- bool returning=mode==Mode::returning&&[chapter isEqual:key]&&reuseList;NSDictionary *launch=returning?pendingStart:nil;bool back=returning&&returnBack;
- pendingStart=nil;returnBack=false;reuseList=false;selector=owner;game=&r;chapter=[key copy];uint64_t epoch=++generation;mode=Mode::loading;
- if(back){mode=Mode::idle;r.call(owner,"Back");return;}if(launch&&revision==PMContentStore.shared.revision&&startSelection(launch,start))return;
- [PMNativeOSProgram loadChapter:key completion:^(PMNativeOSProgram *p,NSError *err){if(epoch!=generation||selector!=owner)return;
+ if(transitioning() || mode==Mode::map || mode==Mode::detail)return;
+ bool returning=false;
+ if(handoffScene && [chapter isEqual:key] && revision==PMContentStore.shared.revision){
+     try { returning=handoffScene==sceneHandle(r,r.call(r.call(owner,"get_gameObject"),"get_scene")); }
+     catch(const std::exception &e){PMDiagnosticsWrite(e.what());}
+ }
+ NSDictionary *launch=returning?pendingStart:nil;
+ bool back=returning&&returnBack;
+ discardHandoff(); // Consume before Back or NormalStart can re-enter detach().
+ selector=owner;game=&r;chapter=[key copy];uint64_t epoch=++generation;
+ mode=Mode::idle;
+ if(back){r.call(owner,"Back");return;}
+ if(launch && startSelection(launch,start))return;
+ if(epoch!=generation || owner!=selector)return;
+ mode=Mode::loading;
+ [PMNativeOSProgram loadChapter:key completion:^(PMNativeOSProgram *p,NSError *err){if(epoch!=generation||selector!=owner||mode!=Mode::loading)return;
   if(!p){mode=Mode::idle;PMDiagnosticsWrite(err.localizedDescription.UTF8String);return;}program=p;revision=PMContentStore.shared.revision;lifeTier=p.selectedLifeTier;gated=p.listSwitchHidden;mode=Mode::list;
   if(toggle::bind(*game,owner,key.UTF8String))toggle::show(*game,gated?toggle::Face::Hidden:toggle::Face::List,!gated);
-  if(!returning&&(gated||!p.listFirst))enter(*game);
+  if(!returning&&(gated||!p.listFirst||PMChapterOSHasRoutedCheckpoint(key)))enter(*game);
  }];
 }
-void detach(Runtime &r){selector=nullptr;toggle::release(r);if(mode==Mode::entering||mode==Mode::returning||mode==Mode::map||mode==Mode::detail)return;++generation;program=nil;mode=Mode::idle;}
-bool transitioning(){return mode==Mode::entering;}
-bool press(Runtime &r,P b){
- if(mode==Mode::idle||mode==Mode::loading)return false;
- if(mode==Mode::list){auto intent=toggle::press(r,b);if(intent==toggle::Press::OpenOS)enter(r);return intent!=toggle::Press::Pass;}
- if(mode==Mode::entering||mode==Mode::returning)return true;
- if(busy)return true;
- if(mode==Mode::map && map::press(r,b))return true;
+void detach(Runtime &r){
+ if(&r!=game)return;
+ selector=nullptr;
+ toggle::release(r);
+ // Selector teardown is expected during a Single load. Keep the scene's
+ // generation and any scene-scoped return until the corresponding unload.
+ if(transitioning() || mode==Mode::map || mode==Mode::detail)return;
+ ++generation;
+ program=nil;
+ mode=Mode::idle;
+}
+bool transitioning(){return mode==Mode::entering || mode==Mode::returning;}
+void sceneUnloaded(Runtime &r,int handle,bool owned){
+ if(&r!=game)return;
+ if(!owned){
+     if(handle && handle==handoffScene)discardHandoff();
+     return;
+ }
+ // leave() already closed this graph. Keep its token until returned() can
+ // compare and consume it, including when a different Single load wins.
+ if(!visit || mode==Mode::returning)return;
+ ++generation;
+ mode=Mode::idle;
+ clearScene(r);
+ visit=0;selector=nullptr;program=nil;chapter=nil;
+ discardHandoff();
+ toggle::release(r);
+}
+namespace {
+bool claims(Runtime &r,P button){
+ if(&r!=game || mode==Mode::idle || mode==Mode::loading)return false;
+ return mode!=Mode::list || toggle::owns(r,button);
+}
+void dispatchOwned(Runtime &r,P b){
+ if(mode==Mode::list){auto intent=toggle::press(r,b);if(intent==toggle::Press::OpenOS)enter(r);return;}
+ if(mode==Mode::entering||mode==Mode::returning)return;
+ if(busy)return;
+ if(mode==Mode::map && map::press(r,b))return;
  auto action=chrome::press(r,b);switch(action.intent){
  case chrome::Intent::Back:if(mode==Mode::detail)closePanel(r);else leave(r,true,nil);break;
  case chrome::Intent::List:if(!gated)leave(r,false,nil);break;
  case chrome::Intent::Start:if(detail&&selected)leave(r,false,@{@"detail":detail,@"entry":selected});break;
  case chrome::Intent::Slot:for(NSDictionary *e in choices){rows::Row row;if(rowFor(e,row)&&row.slot==action.slot&&panel::update(r,detailID,row.row,row.slot,row.cover)){selected=e;chrome::present(r,visit,chrome::Face::Detail,true,allowedSlots());break;}}break;
  default:break;
- }return true;
+ }
 }
+template<class F> void guardInput(F work){
+ @try {
+     try { work(); }
+     catch(const std::exception &e){PMDiagnosticsWrite(e.what());}
+ } @catch(NSException *e){PMDiagnosticsWrite(e.reason.UTF8String);}
+}
+bool dispatch(Runtime &r,P button,P event,bool pointer){
+ if(!claims(r,button))return false;
+ // Claim before invoking managed code. Even if the action leaves the scene,
+ // the outer hook must consume this event and skip the nested Button.Press.
+ guardInput([&]{
+     if(!pointer || (event && r.enumValue(r.call(event,"get_button"),
+         "UnityEngine.EventSystems.PointerEventData.InputButton")==0))
+         dispatchOwned(r,button);
+ });
+ return true;
+}
+}
+bool press(Runtime &r,P button){return dispatch(r,button,nullptr,false);}
+bool pointerClick(Runtime &r,P button,P event){return dispatch(r,button,event,true);}
 }

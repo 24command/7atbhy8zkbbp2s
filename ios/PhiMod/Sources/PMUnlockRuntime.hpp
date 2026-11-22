@@ -5,12 +5,12 @@ namespace pmunlock {
 bool playChapterStoryMedia(NSString *path, NSString *cover, NSString *title, void (^done)(BOOL));
 void difficultyChanged(pmbridge::Runtime&);
 void attach(pmbridge::Runtime&);void validate(pmbridge::Runtime&);void mainlinePhase1Start(pmbridge::Runtime&,void*);bool mainlinePhase1ToPhase2(pmbridge::Runtime&,void*);bool mainlineApplyMapCover(pmbridge::Runtime&,void*);
-NSString* coverPath(pmbridge::Runtime&,NSString* identifier);
+NSString* coverPath(pmbridge::Runtime&,NSString* identifier,bool persist=true);
 bool beforeStart(pmbridge::Runtime&,void* selector,void (^resume)(void));
 void songInfo(pmbridge::Runtime&,void* song,int slot,void* value);
 void itemInfo(pmbridge::Runtime&,void* item,int slot,void* value);
 void chapterReady(pmbridge::Runtime&,void* selector);
-bool courseMemberOpen(pmbridge::Runtime&,NSString *group,NSDictionary *exactChart);
+bool courseMemberOpen(pmbridge::Runtime&,NSString *group,NSDictionary *exactChart,bool persist=true);
 bool selectorAccess(pmbridge::Runtime&,void*selector);
 bool blockChallengeButton(pmbridge::Runtime&,void*button);
 bool ownsRequirementButton(void*button);
