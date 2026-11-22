@@ -112,13 +112,25 @@ int main() {
         observeDoorLoss(&pc, session, accepted, before);
     }
     assert(!canPause() && !doorProgress && lostDoorProgress == &pc && ends == 3);
-    // Lock the entire attempt, even with no cue presentation or timed interval.
-    doorProgress=&pc;doorNoPause=true;lostDoorProgress=nullptr;endDoorPresentation=nullptr;
-    pc.values["nowTime"]=600;pc.values["levelBreak"]=0;info.values["canPause"]=1;
-    {StoryPauseScope gate(R(),&judge,true,blocked);assert(!canPause());} assert(canPause());
-    {StoryPauseScope gate(R(),&pc,false,blocked);assert(!canPause());abandonBoundDoor();} assert(canPause()&&!doorNoPause);
-    {StoryPauseScope gate(R(),&pc,false,blocked);assert(canPause());}
-    doorProgress=&pc;doorNoPause=true;finishBoundDoor(YES);assert(!doorNoPause);
+    // Challenge ownership spans the intro, native updates and lethal fade.
+    doorProgress=pauseLockedDoor=&pc;lostDoorProgress=nullptr;endDoorPresentation=nullptr;
+    pc.values["isPlaying"]=0;info.values["levelBegan"]=0;info.values["canPause"]=1;
+    judge.values["pauseTime"]=1;
+    {StoryPauseScope gate(R(),&judge,true,blocked);}
+    assert(!canPause() && !judge.values.at("pauseTime"));
+    pc.values["isPlaying"]=1;info.values["levelBegan"]=1;
+    pc.values["leave"]=1; // Focus callback while already locked.
+    {StoryPauseScope gate(R(),&pc,false,blocked);}
+    assert(!canPause() && !pc.values.at("leave"));
+    lostDoorProgress=&pc;finishBoundDoor(NO);
+    info.values["canPause"]=1;judge.values["pauseTime"]=1;
+    {StoryPauseScope gate(R(),&judge,true,blocked);}
+    assert(!canPause() && !judge.values.at("pauseTime"));
+    Object replayInfo=info,replayPC=pc;replayPC.refs["levelInformation"]=&replayInfo;
+    replayInfo.values["canPause"]=1;
+    {StoryPauseScope gate(R(),&replayPC,false,blocked);}
+    assert(replayInfo.values.at("canPause"));
+    pauseLockedDoor=nullptr;lostDoorProgress=nullptr;info.values["canPause"]=1;
     // In a native course levelBreak is set for the normal challenge transition.
     pc.values["levelBreak"]=1;
     {StoryPauseScope gate(R(),&pc,false,blocked,&pc);assert(!canPause());} assert(canPause());

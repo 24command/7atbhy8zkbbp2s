@@ -26,6 +26,7 @@ struct Options {
  float playbackRate=1,practiceStart=0,practiceEnd=-1,practicePosition=0;
  float hpMax=200; std::array<float,4> hpDelta{1,-4,-16,-25};
  float hpRed=.3f,hpBlue=.6f;
+ bool allowsDoorChallenge() const { return !autoplay && !practiceMode && std::fabs(playbackRate-1.f)<=.0001f; }
  bool assisted() const { return judge||autoplay||noise||clearNoise||fullscreen||accuracyDisplay||noComboScore||unified!=0||hpEnabled||challenge!=0||practiceMode||std::fabs(playbackRate-1.f)>.0001f; }
  bool requiresSaveProtection() const { return judge||autoplay||clearNoise||fullscreen||noComboScore||unified!=0||practiceMode||std::fabs(playbackRate-1.f)>.0001f; }
  void validate() const {

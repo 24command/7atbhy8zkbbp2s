@@ -168,7 +168,8 @@ bool bindDoor(Runtime &r,P level,phimod::Options &options){
  if(applyChapterReplay(PMDoorConsumeReplay(group,slot,identifier),options))return true;
  double hp=0,delta[4]={};
  if(slot<0 || !PMDoorBeginExactTrack(group,slot,identifier,&hp,delta))return false;
- doorProgress=pc;doorNoPause=PMDoorPlayingNoPause();
+ doorProgress=pc;
+ if(PMDoorPlayingNoPause())pauseLockedDoor=pc;
  if(pmstory::beginExactTrack())endDoorPresentation=pmstory::endTrack;
  auto overrides=options;
  overrides.hpEnabled=true;
@@ -224,6 +225,7 @@ void begin(P p){
  diagf("ProgressControl.Start armed baseline P=%.4f G=%.4f B=%.4f",baseline.perfect,baseline.good,baseline.bad);
 }
 void onAwake(P self,P mi){
+ pauseLockedDoor=nullptr;
  abandonBoundDoor();
  watchingDoorLaunch=false;
  currentLevel=self;
@@ -256,6 +258,7 @@ void onAwake(P self,P mi){
 void onDestroy(P self,P mi){
  if(currentLevel && self!=currentLevel){orig<VoidFn>(h::levelDestroy)(self,mi);return;}
  currentLevel=nullptr;
+ pauseLockedDoor=nullptr;
  lostDoorProgress=nullptr;
  abandonBoundDoor();
  diagf("LevelControl.OnDestroy enter");
@@ -274,6 +277,16 @@ void onProgressStart(P self,P mi){
  diagf("ProgressControl.Start enter");
  try{pmpractice::begin(R(),self);diagf("Practice clock/pitch armed before ProgressControl.Start");}catch(const std::exception&e){diagf("Practice pre-start setup failed; original audio path retained: %s",e.what());try{pmpractice::clear(R());}catch(...){}}
  orig<VoidFn>(h::progressStart)(self,mi);
+ if(self==pauseLockedDoor){
+  try{
+   auto &r=R();
+   StoryPauseScope lock(r,self,false,pmstory::blocksPause);
+   P hud=r.get<P>(currentLevel,"levelUICont");
+   P icon=hud?r.get<P>(hud,"pause"):nullptr;
+   if(r.alive(icon)){bool visible=false;r.call(icon,"SetActive",{"System.Boolean"},{&visible});}
+   diagf("Chapter challenge pause locked");
+  }catch(const std::exception &e){diagf("Chapter challenge pause HUD: %s",e.what());}
+ }
  if(pmsecretcourse::active())try{pmsecretcourse::level(R(),self);}catch(const std::exception&e){diagf("Secret course entry: %s",e.what());pmsecretcourse::menu(R());}
  diagf("ProgressControl.Start original returned");
  try{begin(self);pmcontent::difficultyGameplayLabel(R(),self);}catch(const std::exception&e){fault(e);}

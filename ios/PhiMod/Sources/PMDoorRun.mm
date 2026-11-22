@@ -4,6 +4,8 @@
 extern NSString *PMDoorRunTestRoot(void);
 #else
 #import "PMContentStore.h"
+#import "PMSettings.h"
+#include "PMOptions.hpp"
 #endif
 #import "PMDiagnostics.h"
 #import "PMOSAuthorProgress.h"
@@ -51,6 +53,14 @@ BOOL PMDoorBeginExactTrack(NSString *group,int slot,NSString *chart,double *hp,d
 BOOL PMDoorBeginTrack(NSString *group,int slot,double *hp,double delta[4]){return PMDoorBeginExactTrack(group,slot,group,hp,delta);}
 BOOL PMDoorSetPendingNoPause(BOOL value){
  if(!pending)return NO;
+#ifndef PMDOOR_RUN_HOST_TEST
+ // Level.Awake excludes assisted attempts. Reject this launch before NormalStart
+ // so it cannot silently start a regular, pausable song instead of the challenge.
+ if(value && !PMReadOptions(PMSettings.shared.snapshot).allowsDoorChallenge()){
+  PMDiagnosticsWrite("Chapter challenge requires manual play at normal speed outside practice mode");
+  return NO;
+ }
+#endif
  NSMutableDictionary *run=[pending mutableCopy];run[@"noPause"]=@(value);pending=[run copy];return YES;
 }
 BOOL PMDoorPlayingNoPause(){return [playing[@"noPause"] boolValue];}

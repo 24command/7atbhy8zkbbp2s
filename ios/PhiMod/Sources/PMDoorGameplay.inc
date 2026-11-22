@@ -1,6 +1,8 @@
 // Unity owns these objects for the scene lifetime. Use them only for identity.
 P doorProgress=nullptr, lostDoorProgress=nullptr;
-bool watchingDoorLaunch=false,doorNoPause=false;
+// Scene ownership outlives the score binding, including the HP failure fade.
+P pauseLockedDoor=nullptr;
+bool watchingDoorLaunch=false;
 
 // Apply only to the per-attempt copy, and only after consuming an exact replay.
 static inline bool applyChapterReplay(bool matched,phimod::Options &attemptOptions){
@@ -9,7 +11,7 @@ static inline bool applyChapterReplay(bool matched,phimod::Options &attemptOptio
 }
 
 bool doorPlayEligible(const phimod::Options &options){
- return !options.autoplay && !options.practiceMode && std::fabs(options.playbackRate-1.f)<=.0001f;
+ return options.allowsDoorChallenge();
 }
 
 // Owned by the exact door binding. Release presentation synchronously, including
@@ -23,7 +25,7 @@ void clearDoorPresentation(){
  end();
 }
 void releaseDoorBinding(){
- doorProgress=nullptr;doorNoPause=false;
+ doorProgress=nullptr;
  clearDoorPresentation();
 }
 void abandonBoundDoor(){
@@ -75,7 +77,7 @@ bool cancelIdleDoorLaunch(P selector,bool disabling=false){
 
 // The 4.0.4 gesture path (JudgeControl.Update -> CheckPause) and the
 // app pause/focus path (ProgressControl.Update -> Play(false)) both read
-// LevelInformation.canPause. Mask only across those native calls.
+// LevelInformation.canPause. Only timed cues temporarily borrow that flag.
 template<class Bridge> class StoryPauseScope {
  Bridge &r;
  P levelOwner=nullptr,owner=nullptr,info=nullptr;
@@ -83,11 +85,20 @@ template<class Bridge> class StoryPauseScope {
 public:
  StoryPauseScope(const StoryPauseScope &)=delete;
  StoryPauseScope(Bridge &runtime,P self,bool judge,bool (*blocks)(double),P courseOwner=nullptr):r(runtime){
-  if(!endDoorPresentation&&!doorNoPause&&!courseOwner)return;
+  if(!endDoorPresentation&&!pauseLockedDoor&&!courseOwner)return;
   try{
    P pc=judge?r.template get<P>(self,"progressControl"):self;
-   if(!pc||(pc!=doorProgress&&pc!=courseOwner))return;
-   bool whole=pc==courseOwner||doorNoPause;
+   if(!pc)return;
+   if(pc==pauseLockedDoor){
+    // Both stock pause inputs may run before levelBegan, or after scoring ends.
+    P level=r.template get<P>(pc,"levelInformation");
+    if(level && r.template get<bool>(level,"canPause"))r.put(level,"canPause",false);
+    if(judge && r.template get<float>(self,"pauseTime")>0)r.put(self,"pauseTime",0.f);
+    if(!judge && r.template get<bool>(pc,"leave"))r.put(pc,"leave",false);
+    return;
+   }
+   if(pc!=doorProgress&&pc!=courseOwner)return;
+   bool whole=pc==courseOwner;
    P level=r.template get<P>(pc,"levelInformation");
    if(!level || (pc!=courseOwner&&r.template get<bool>(pc,"levelBreak")) || r.template get<bool>(level,"levelOver")){
     clearDoorPresentation();return;
