@@ -268,7 +268,6 @@ void bootstrap(Chrome &c) {
     if (c.detail) move(r,c.detail,c.canvas);
     if (menu) move(r,menu,c.canvas);
     move(r,back,c.canvas);
-    if (c.detail) freshDetail(c);
     // Only Camera survives on the stock main camera object. Remove all camera
     // tweens, postprocessing and audio scripts while the object is still cold.
     parkChildren(c,camera); move(r,camera,c.stage);

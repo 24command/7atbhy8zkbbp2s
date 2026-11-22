@@ -58,18 +58,20 @@ bool leave(Runtime &r,bool back,NSDictionary *launch){
  pendingStart=[launch copy];returnBack=back;mode=Mode::returning;clearScene(r);return true;
 }
 bool presentMap(Runtime &r){mode=Mode::map;busy=false;return chrome::present(r,visit,chrome::Face::Map,true,0,!gated)&&map::present(r,mapID,true,true,true);}
-void closePanel(Runtime &r){if(detailID)panel::close(r,detailID);detailID=0;detail=nil;choices=nil;selected=nil;if(!chrome::resetDetail(r,visit)||!presentMap(r))leave(r,false,nil);}
+void closePanel(Runtime &r){if(detailID)panel::close(r,detailID);detailID=0;detail=nil;choices=nil;selected=nil;if(!presentMap(r))leave(r,false,nil);}
 bool rowFor(NSDictionary *e,rows::Row &out){return e&&rows::lookup(e[@"songID"],e[@"difficulty"],out);}
 unsigned allowedSlots(){unsigned mask=0;for(NSDictionary *e in choices){rows::Row row;if(rowFor(e,row)&&row.slot>=0&&row.slot<4)mask|=1u<<row.slot;}return mask;}
 void openPanel(Runtime &r,NSDictionary *card){
  if(!card||mode!=Mode::map)return;
  NSArray *available=options(card);NSDictionary *first=nil;rows::Row row;
  for(NSDictionary *entry in available){if(rowFor(entry,row)){first=entry;break;}}
- if(!first)return;
+ if(!first){PMDiagnosticsWrite("Chapter OS: selected song has no available difficulty");return;}
+ // The detail copy belongs to this selection. Its creation must not block entry to the map.
+ if(!chrome::resetDetail(r,visit)){presentMap(r);return;}
  map::present(r,mapID,false,false,false);chrome::present(r,visit,chrome::Face::Detail,false);
  panel::Speech speech{card[@"speechHeading"],card[@"caption"],[card[@"seconds"] doubleValue]};
  detailID=panel::open(r,program.nativeChapter==8?panel::Style::c8:panel::Style::c9,chromeView.detailRoot,row.row,row.slot,speech,false,row.cover);
- if(!detailID){if(!chrome::resetDetail(r,visit)||!presentMap(r))leave(r,false,nil);return;}
+ if(!detailID){if(!presentMap(r))leave(r,false,nil);return;}
  detail=card;selected=first;choices=available;mode=Mode::detail;
  if(!chrome::present(r,visit,chrome::Face::Detail,true,allowedSlots()))closePanel(r);
 }
@@ -140,7 +142,11 @@ void activate(uint64_t mapVisit, int index) {
 }
 void arrived(Runtime &r,uint64_t token,scene::Route,P root){
  if(mode!=Mode::entering||token!=visit)return;
- if(!root||!chrome::open(r,visit,program.nativeChapter==8?scene::Route::C8:scene::Route::C9,root,chromeView)){if(!leave(r,false,nil)){clearScene(r);mode=Mode::idle;}return;}
+ if(!root||!chrome::open(r,visit,program.nativeChapter==8?scene::Route::C8:scene::Route::C9,root,chromeView)){
+  PMDiagnosticsWrite(root?"Chapter OS: native chapter controls unavailable":"Chapter OS: loaded scene host unavailable");
+  if(!leave(r,false,nil)){clearScene(r);mode=Mode::idle;}
+  return;
+ }
  uint64_t epoch=generation;
  actions=[[PMNativeOSActions alloc] initWithProgram:program current:^BOOL{
      return visit==token && generation==epoch && mode==Mode::map;
@@ -154,6 +160,7 @@ void arrived(Runtime &r,uint64_t token,scene::Route,P root){
      return YES;
  };
  if (!mountMap()) { leave(r,false,nil); return; }
+ PMDiagnosticsWrite("Chapter OS: map ready");
  applyCheckpoint=^BOOL(NSDictionary *record){
      if (visit!=token || generation!=epoch || mode!=Mode::map || ![record[@"chapter"] isEqual:chapter] ||
          ![record[@"scriptHash"] isEqual:program.scriptHash]) return NO;
@@ -180,7 +187,10 @@ void arrived(Runtime &r,uint64_t token,scene::Route,P root){
  dispatch_source_set_timer(clockSource,DISPATCH_TIME_NOW,NSEC_PER_SEC/30,NSEC_PER_MSEC*3);
  dispatch_source_set_event_handler(clockSource,^{if(visit==token && mode==Mode::map)map::tick(*game,mapID);});dispatch_resume(clockSource);
 }
-void enter(Runtime &r){if(mode!=Mode::list||!selector||revision!=PMContentStore.shared.revision)return;
+void enter(Runtime &r){
+ if(mode!=Mode::list||!selector)return;
+ if(revision!=PMContentStore.shared.revision){PMDiagnosticsWrite("Chapter OS: chapter library changed before entry");return;}
+ PMDiagnosticsWrite([NSString stringWithFormat:@"Chapter OS: entering %@ with chapter %d layout",chapter,(int)program.nativeChapter].UTF8String);
  NSMutableOrderedSet *targets=[NSMutableOrderedSet orderedSet];
  if (program.nodes.count) {
      // A Lua callback may return a song that has no static map node.
@@ -193,7 +203,9 @@ void enter(Runtime &r){if(mode!=Mode::list||!selector||revision!=PMContentStore.
          [targets addObjectsFromArray:options(card[@"challengeDetail"]?:card)];
  }
  NSArray *entries=targets.array;
- if(!rows::prepare(r,selector,chapter,entries))return;
+ if(!rows::prepare(r,selector,chapter,entries)){
+   PMDiagnosticsWrite("Chapter OS: selector changed before songs could be captured");return;
+ }
  mode=Mode::entering;visit=scene::enter(r,program.nativeChapter==8?scene::Route::C8:scene::Route::C9,arrived);
  if(!visit){mode=Mode::list;rows::release();PMDiagnosticsWrite("Native chapter scene unavailable; check packaged scene resources");}
 }
@@ -265,7 +277,10 @@ bool claims(Runtime &r,P button){
  return mode!=Mode::list || toggle::owns(r,button);
 }
 void dispatchOwned(Runtime &r,P b){
- if(mode==Mode::list){auto intent=toggle::press(r,b);if(intent==toggle::Press::OpenOS)enter(r);return;}
+ if(mode==Mode::list){
+  if(toggle::press(r,b)==toggle::Press::OpenOS){PMDiagnosticsWrite("Chapter OS: list switch pressed");enter(r);}
+  return;
+ }
  if(mode==Mode::entering||mode==Mode::returning)return;
  if(busy)return;
  if(mode==Mode::map && map::press(r,b))return;

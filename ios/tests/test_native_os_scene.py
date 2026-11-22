@@ -38,6 +38,10 @@ class SceneHostContracts(unittest.TestCase):
         self.assertIn('Assets/Phigros2/SongSelector/SongSelector', source)
         self.assertIn('"/PhiModStockOSHost"', source)
         self.assertIn('int single = 0;', source)
+        self.assertIn('requestSingle(r, d->index)', source)
+        self.assertIn('requestSingle(r, 7)', source)
+        self.assertIn('LoadSceneAsyncNameIndexInternal', source)
+        self.assertNotIn('CanStreamedLevelBeLoaded', source)
         self.assertIn('sceneHandle(r, r.call(found, "get_scene")) == handle', source)
         self.assertIn('current.handle != handle', source)
 

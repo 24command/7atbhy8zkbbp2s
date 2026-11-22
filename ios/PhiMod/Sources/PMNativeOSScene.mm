@@ -59,13 +59,23 @@ void clear(Runtime &r) {
     if (current.root) r.gchandle_free(current.root);
     current = {};
 }
-bool requestSingle(Runtime &r, const char *path) {
-    P name = r.string_new(path);
-    if (!r.unbox<bool>(r.stat(r.type("UnityEngine", "Application"), "CanStreamedLevelBeLoaded",
-                              {"System.String"}, {name}))) return false;
-    int single = 0;
-    return r.stat(r.type(sceneNS, "SceneManager"), "LoadSceneAsync",
-                  {"System.String", "UnityEngine.SceneManagement.LoadSceneMode"}, {name, &single}) != nullptr;
+bool requestSingle(Runtime &r, int index) {
+    P manager = r.type(sceneNS, "SceneManager");
+    int count = r.unbox<int>(r.stat(manager, "get_sceneCountInBuildSettings"));
+    if (index < 0 || index >= count) {
+        PMDiagnosticsWrite([NSString stringWithFormat:@"Chapter OS: build index %d unavailable (%d scenes)",index,count].UTF8String);
+        return false;
+    }
+    // The 4.0.4 player retains the name/index implementation used by its public
+    // overloads. Load the exact packaged scene from BuildSettings in Single mode.
+    struct { int single = 0; int localPhysics = 0; } parameters;
+    uint32_t alignment=0;
+    if(r.class_value_size(r.type(sceneNS,"LoadSceneParameters"),&alignment)!=sizeof(parameters))
+        throw std::runtime_error("Chapter OS: unexpected LoadSceneParameters layout");
+    bool synchronous = false;
+    return r.stat(manager,"LoadSceneAsyncNameIndexInternal",{"System.String","System.Int32",
+                  "UnityEngine.SceneManagement.LoadSceneParameters","System.Boolean"},
+                  {nullptr,&index,&parameters,&synchronous}) != nullptr;
 }
 void notify(Runtime &r, Arrived cb, uint64_t id, Route route, P root) {
     @try {
@@ -83,7 +93,7 @@ uint64_t enter(Runtime &r, Route route, Arrived cb) {
     if (++sequence == 0) ++sequence;
     uint64_t id = sequence;
     current = {d, id, cb};
-    try { if (requestSingle(r, d->path)) return id; }
+    try { if (requestSingle(r, d->index)) return id; }
     catch (const std::exception &e) { PMDiagnosticsWrite(e.what()); }
     if (current.id == id) clear(r);
     return 0;
@@ -151,7 +161,7 @@ bool leaveToSongSelector(Runtime &r, Returned cb) {
         if (activeHandle(r) != current.handle) return false;
         current.leaving = true;
         returning = {current.id, cb};
-        if (requestSingle(r, selector)) return true;
+        if (requestSingle(r, 7)) return true;
     } catch (const std::exception &e) { PMDiagnosticsWrite(e.what()); }
     returning = {};
     current.leaving = false;

@@ -663,6 +663,8 @@ void completeSelectorAsset(Runtime&r,P asset){
 }
 }
 static bool chapterOSAwaitingSelector=false;
+static P observedOSChapter=nullptr; // identity only, held by the live selector
+static NSUInteger observedOSRevision=NSUIntegerMax;
 static BOOL startCheckpointSong(Runtime&,P,NSString *chapter,NSString *installedID,NSString *difficulty,PMChapterDoorArm arm);
 static void beginChapterOS(Runtime&r,P selector){
  if(pendingSong.length)return;
@@ -689,7 +691,14 @@ void selectorLoadingFrame(Runtime&r,P selector){
  if(target(r,loadingSelector)!=selector||r.get<bool>(selector,"exit"))return;
  // A visible OS suspends native Update. Let the cold selector settle before
  // presenting it, including when the parent immediately consumes a relaunch.
- if(chapterOSAwaitingSelector&&!r.get<bool>(selector,"isMoving")&&r.get<P>(selector,"nowChapterInfo")){
+ P chapterInfo=r.get<P>(selector,"nowChapterInfo");
+ if(chapterInfo && (observedOSChapter!=chapterInfo || observedOSRevision!=applied)){
+  if(observedOSChapter)pmnativecoordinator::detach(r);
+  observedOSChapter=chapterInfo;
+  observedOSRevision=applied;
+  chapterOSAwaitingSelector=!pendingSong.length;
+ }
+ if(chapterOSAwaitingSelector&&!r.get<bool>(selector,"isMoving")&&chapterInfo){
   int index=r.get<int>(selector,"nowSong");
   if(index>=0&&index<r.count(r.call(selector,"get_SongItems"))){
    chapterOSAwaitingSelector=false;
@@ -734,6 +743,8 @@ static void releaseSelectorLoading(Runtime&r,bool finishSelected){
  // NormalStart releases loadingSelector on the successful path before OnDisable.
  if(!finishSelected&&loadingSelector)PMDoorCancelPending();
  chapterOSAwaitingSelector=false;
+ observedOSChapter=nullptr;
+ observedOSRevision=NSUIntegerMax;
  pmnativecoordinator::detach(r);
  if(finishSelected&&loadingSelector)try{P owner=target(r,loadingSelector);if(r.alive(owner))observeSelector(r,owner);}catch(const std::exception&e){log([NSString stringWithFormat:@"Selector already leaving: %s",e.what()]);}
  deferredDifficultySort.clear();

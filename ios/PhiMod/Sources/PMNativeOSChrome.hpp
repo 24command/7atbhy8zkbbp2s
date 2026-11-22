@@ -28,8 +28,7 @@ bool open(Runtime&, uint64_t visit, Route, void *sceneRoot, View &out);
 // preserves the last setting. A new visit starts with list access allowed.
 bool present(Runtime&, uint64_t visit, Face, bool input, unsigned slotMask=0);
 bool present(Runtime&, uint64_t visit, Face, bool input, unsigned slotMask, bool allowList);
-// After detail::close and before reopening detail in the same scene, replace
-// the disposable copy. View.detailRoot stays stable. Re-present afterwards.
+// Prepare a fresh detail copy when a song is selected. View.detailRoot stays stable.
 bool resetDetail(Runtime&, uint64_t visit);
 // At Button.Press, consume everything except Pass, including gated controls.
 Press press(Runtime&, void *button);
