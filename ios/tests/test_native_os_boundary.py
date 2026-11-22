@@ -44,6 +44,24 @@ class BoundaryTests(unittest.TestCase):
                           'chrome::close(', 'rows::release()'):
             self.assertIn(operation, clear)
 
+    def test_default_entry_before_first_render(self):
+        hook = definition(HOOK, 'void onOSSceneLoaded(')
+        self.assertIn('mode==0 && !pmnativecoordinator::transitioning()', hook)
+        self.assertIn('if(os::isSongSelector(R(),scene.handle))', hook)
+        preload = definition(COORD, 'void selectorLoaded(')
+        cover = preload.index('coverSelector(')
+        for decision in ('initWithChapter:', 'if(!bridge.program)', 'bridge.program.listFirst',
+                         'bridge.program.listSwitchHidden', 'PMChapterOSHasRoutedCheckpoint'):
+            self.assertLess(preload.index(decision), cover)
+        self.assertIn('bridge.ticket==ticket && bridge.cover', preload)
+        ready = definition(COORD, 'void ready(')
+        self.assertIn('if(staged)loaded(bridge.program,nil);', ready)
+        self.assertLess(ready.index('if(returning)return;'), ready.index('requestedEntry=epoch'))
+        self.assertNotIn('"Back"', ready)
+        leave = definition(COORD, 'bool leave(')
+        self.assertIn('back ? scene::leaveToChapter(r,returned) : scene::leaveToSongSelector(r,returned)', leave)
+        self.assertLess(leave.index('return false;', leave.index('scene::leaveToChapter')), leave.index('clearScene(r)'))
+
     def test_dispatch_and_scene_lifetime(self):
         # Compile the production entry points with simulated Unity calls. No Apple SDK required.
         cxx = os.getenv('CXX') or shutil.which('clang++') or shutil.which('g++')
@@ -80,7 +98,10 @@ P selector=nullptr, program=nullptr, chapter=nullptr, pendingStart=nullptr;
 uint64_t generation=3,visit=0,requestedEntry=0;
 int entries=0;
 
-bool returnBack=false;
+struct { uint32_t cover=0; int handle=0; Runtime *runtime=nullptr; } bridge;
+void releaseEntryCover(Runtime&){bridge.cover=0;}
+void resetEntryBridge(Runtime&r){releaseEntryCover(r);bridge.handle=0;}
+
 namespace toggle {
     bool owns(Runtime&,P b){return b==&ownedButton;}
     void release(Runtime&){++releases;}
@@ -105,10 +126,10 @@ namespace scene { P activeRoot(Runtime &r){return &r;} }
 bool leave(Runtime&,bool,P){++leaves;if(refuse)return false;mode=Mode::returning;return true;}
 bool presentMap(Runtime&){++restores;mode=Mode::map;return true;}
 void destroyCut(Runtime&,P){++destroys;}
-template<class F>void cutChecked(F f){f();}
+template<class F>bool cutChecked(F f){try{f();return true;}catch(...){return false;}}
 '''
         code += 'void dispatchOwned(Runtime&,P){++actions;mode=Mode::idle;}\n'
-        for method in ('bool selectorReady(', 'void selectorFrame(', 'void discardHandoff(', 'void returned(', 'bool transitioning(', 'void detach(',
+        for method in ('bool selectorReady(', 'void abortSelectorEntry(', 'void selectorFrame(', 'void discardHandoff(', 'void returned(', 'bool transitioning(', 'void detach(',
                        'void sceneUnloaded(', 'bool claims(', 'bool dispatch(', 'bool press(', 'bool pointerClick('):
             code += definition(COORD, method) + '\n'
         for method in ('struct ManualCut', 'enum class CutStep', 'CutStep advanceCut(', 'void finishCut('):
@@ -122,6 +143,13 @@ int main(){
     r.lockTouch=false;r.moving=true;selectorFrame(r,button);assert(!entries);
     r.moving=false;selectorFrame(r,event);assert(!entries);
     selectorFrame(r,button);selectorFrame(r,button);assert(entries==1 && !requestedEntry);
+    // An unready selector stays covered, even before ready() can claim it.
+    mode=Mode::loading;bridge={1,17,&r};assert(claims(r,&retailButton));
+    mode=Mode::list;requestedEntry=generation;r.lockTouch=true;selectorFrame(r,button);
+    assert(bridge.cover && requestedEntry);r.lockTouch=false;
+    selectorFrame(r,button);assert(!bridge.cover && !requestedEntry); // rejected entry
+    bridge.cover=1;mode=Mode::entering;abortSelectorEntry(r);assert(bridge.cover);
+    sceneUnloaded(r,88,false);assert(bridge.cover);sceneUnloaded(r,17,false);assert(!bridge.cover);
     for(auto passive:{Mode::idle,Mode::loading}){
         mode=passive; assert(!pointerClick(r,button,event));assert(!press(r,button));
     }
@@ -137,12 +165,12 @@ int main(){
     mode=Mode::detail;visit=33;sceneUnloaded(other,9,true);sceneUnloaded(r,9,false);
     assert(visit==33 && closes==0);sceneUnloaded(r,9,true);sceneUnloaded(r,9,true);
     assert(closes==1 && releases==1 && generation==4 && !visit && !claims(r,button));
-    mode=Mode::returning;visit=34;pendingStart=button;returnBack=true;
+    mode=Mode::returning;visit=34;pendingStart=button;
     sceneUnloaded(r,9,true);assert(visit==34 && closes==1 && transitioning());
     returned(r,33,true);assert(visit==34 && transitioning());
     returned(r,34,true);assert(!visit && !claims(r,button) && handoffScene==17);
     detach(r);sceneUnloaded(r,98,false);assert(handoffScene==17 && pendingStart==button);
-    sceneUnloaded(r,17,false);assert(!handoffScene && !pendingStart && !returnBack);
+    sceneUnloaded(r,17,false);assert(!handoffScene && !pendingStart);
     mode=Mode::returning;visit=35;pendingStart=button;returned(r,35,false);
     assert(!claims(r,button) && !pendingStart && !handoffScene);
     // Both manual directions claim retail input, wait through equality, and

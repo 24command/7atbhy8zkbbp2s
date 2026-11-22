@@ -21,7 +21,7 @@
 #import "PMChapterSecretCourse.h"
 #include "PMSecretCourseRuntime.hpp"
 #include "PMChallengeRun.hpp"
-#import "PMStorySequence.h"
+#import "PMStorySequence.hpp"
 #import "PMCoverImage.h"
 #import "PMChapterCover.h"
 #import <ImageIO/ImageIO.h>
@@ -671,15 +671,21 @@ static void beginChapterOS(Runtime&r,P selector){
  P chapter=r.get<P>(selector,"nowChapterInfo");if(!chapter)return;
  NSString *key=r.string(r.get<P>(chapter,"chapterCode"));
  if(![key hasPrefix:@"pm_"]){PMStorySequenceDiscardHandoff();return;}
- P challenge=r.get<P>(selector,"challengeSongSelectorControl");if(r.alive(challenge)){P button=r.get<P>(challenge,"selectButton");if(r.alive(button)&&r.unbox<bool>(r.call(r.call(button,"get_gameObject"),"get_activeInHierarchy"))){PMStorySequenceDiscardHandoff();return;}}
+ P challenge=r.get<P>(selector,"challengeSongSelectorControl");if(r.alive(challenge)){P button=r.get<P>(challenge,"selectButton");if(r.alive(button)&&r.unbox<bool>(r.call(r.call(button,"get_gameObject"),"get_activeInHierarchy"))){pmnativecoordinator::abortSelectorEntry(r);PMStorySequenceDiscardHandoff();return;}}
  PMStoryStartSong launch=^BOOL(NSString *installedID,NSString *difficulty,PMChapterDoorArm arm){
   try{
    if(!NSThread.isMainThread||!runtime||target(*runtime,loadingSelector)!=selector)return NO;
    return startCheckpointSong(*runtime,selector,key,installedID,difficulty,arm);
   }catch(const std::exception&e){log([NSString stringWithFormat:@"Chapter OS start: %s",e.what()]);return NO;}
  };
- if(PMStorySequenceSelectorReady(key,launch))return;
+ if(PMStorySequenceSelectorReady(key,launch)){pmnativecoordinator::abortSelectorEntry(r);return;}
  if([PMContentStore.shared hasChapterScript:key])pmnativecoordinator::ready(r,selector,key,launch);
+}
+void selectorSceneLoaded(Runtime &r,int handle){
+ if(pendingSong.length || !pmstorysequence::handoff.holds(nil))return;
+ NSString *key=r.string(r.staticValue<P>(r.klass("GameInformation"),"nowChapterCode","System.String"));
+ if([key hasPrefix:@"pm_"] && [PMContentStore.shared hasChapterScript:key])
+     pmnativecoordinator::selectorLoaded(r,handle,key);
 }
 void selectorLoadingBegin(Runtime&r,P selector){
  if(playing||r.get<bool>(selector,"exit"))return;

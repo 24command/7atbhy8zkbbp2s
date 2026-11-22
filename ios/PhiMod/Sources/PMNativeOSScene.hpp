@@ -14,9 +14,12 @@ using Arrived = void (*)(Runtime&, uint64_t visit, Route, void *root);
 uint64_t enter(Runtime&, Route, Arrived);
 void *activeRoot(Runtime&);
 // Optional notification once the return operation finishes and the selector is active.
-// False means another Single destination interrupted the accepted return.
+// False means there is no selector handoff (chapter Back or an interrupted load).
 using Returned = void (*)(Runtime&, uint64_t visit, bool atSongSelector);
 bool leaveToSongSelector(Runtime&, Returned = nullptr);
+// Stock C8/C9 Back sets nextScene to ChapterSelector and loads Loading.
+bool leaveToChapter(Runtime&, Returned);
+bool isSongSelector(Runtime&, int handle);
 
 // PMHookBackend only. Installed after publishing all offline entry gates.
 void hooksInstalled();

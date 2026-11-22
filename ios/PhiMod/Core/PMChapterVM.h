@@ -9,7 +9,15 @@ extern "C" {
 typedef struct {int song,speech; double seconds;char speechHeading[192];char title[256], caption[1024];int challenge;} PMOSCard;
 enum {PMOSFrame, PMOSImage, PMOSHotspot};
 enum { PMOSMaxNodes = 256, PMOSMaxScreens = 32, PMOSScreenNameSize = 64 };
-typedef struct {double x,y,w,h,start,duration,fade;int kind,parent,depth,cover,open,screen,dest,fill,loop,handler,hidden;unsigned rgba;char id[64],src[256],label[256],to[64];int challenge; char dropTarget[64]; int dropIndex, alphaHit;} PMOSNode;
+/* Optional layout motion. Times use the screen clock. bob is measured in node
+   heights. tapScale is the peak multiplier and tapFlash the peak white opacity.
+   A click uses the closest tapTime-bearing frame/node in its ancestry. */
+typedef struct { double enter, bob, bobPeriod, tapTime, tapScale, tapFlash; } PMOSMotion;
+typedef struct {double x,y,w,h,start,duration,fade;int kind,parent,depth,cover,open,screen,dest,fill,loop,handler,hidden;unsigned rgba;char id[64],src[256],label[256],to[64];int challenge; char dropTarget[64]; int dropIndex, alphaHit;
+    PMOSMotion motion;
+    char tapFace[64]; /* Optional descendant ID. Empty flashes the whole node. */
+    int tapFaceIndex;
+} PMOSNode;
 enum { PMOSProgressKeyMax = 64, PMOSProgressAccessLimit = 128 };
 enum { PMOSMaxChallenges = 32, PMOSMaxChallengeTiers = 16,
        PMOSChallengeIdMax = PMOSProgressKeyMax - (sizeof("door..clear") - 1) };

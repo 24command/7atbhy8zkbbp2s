@@ -39,11 +39,47 @@ class SceneHostContracts(unittest.TestCase):
         self.assertIn('"/PhiModStockOSHost"', source)
         self.assertIn('int single = 0;', source)
         self.assertIn('requestSingle(r, d->index)', source)
-        self.assertIn('requestSingle(r, 7)', source)
+        self.assertIn('requestSingle(r, toSelector ? 7 : 5)', source)
+        self.assertIn('r.string_new("ChapterSelector")', source)
+        self.assertIn('trip.toSelector && activeHandle(r) == handle', source)
         self.assertIn('LoadSceneAsyncNameIndexInternal', source)
         self.assertNotIn('CanStreamedLevelBeLoaded', source)
         self.assertIn('sceneHandle(r, r.call(found, "get_scene")) == handle', source)
         self.assertIn('current.handle != handle', source)
+
+    @unittest.skipUnless(os.getenv('PHIGROS_404_ANALYSIS'), 'requires stock 4.0.4 player')
+    def test_stock_chapter_entry_and_back_destinations(self):
+        base = Path(os.environ['PHIGROS_404_ANALYSIS'])
+        literals = {int(row['address'], 16): row['value'] for row in
+                    json.loads((base / 'stringliteral.json').read_text('utf-8-sig'))}
+        methods = {row['Address']: row['Name'] for row in
+                   json.loads((base / 'script.json').read_text('utf-8-sig'))['ScriptMethod']}
+        with (base / 'UnityFramework').open('rb') as player:
+            def word(pc):
+                player.seek(pc)
+                return struct.unpack('<I', player.read(4))[0]
+
+            def literal(pc):
+                # ADRP + ADD resolves the metadata literal slot in this player.
+                page, add = word(pc), word(pc + 4)
+                self.assertEqual(page & 0x9f000000, 0x90000000)
+                self.assertEqual(add & 0xffc00000, 0x91000000)
+                displacement = ((page >> 5 & 0x7ffff) << 2) | (page >> 29 & 3)
+                return literals[(pc & ~4095) + (displacement << 12) + (add >> 10 & 4095)]
+
+            for pc, target in ((0x155ef18, 'SaturnOSLaunchControl$$ToChapter8'),
+                               (0x155eff0, 'Phigros2.Chapter9.LaunchControl$$ToChapter9'),
+                               (0x155f004, 'ChapterSelector$$StartNextScene')):
+                instruction = word(pc)
+                self.assertIn(instruction >> 26, (5, 37))  # B or BL
+                offset = instruction & 0x3ffffff
+                if offset & 0x2000000:
+                    offset -= 0x4000000
+                self.assertEqual(methods[pc + 4 * offset], target)
+            self.assertEqual(literal(0x155eff4), 'SongSelector')  # ordinary branch
+            for chapter, loading in ((0x1538080, 0x153809c), (0x14f3cb8, 0x14f3cf0),
+                                     (0x1516d4c, 0x1516d84)):
+                self.assertEqual((literal(chapter), literal(loading)), ('ChapterSelector', 'Loading'))
 
     def test_controller_gates_cover_start_and_teardown(self):
         manifest = json.loads((IOS / 'tools/gameplay_hook_manifest.json').read_text())
@@ -76,6 +112,8 @@ class SceneHostContracts(unittest.TestCase):
             new, new_tail = donors.scene_paths(settings(after))
             self.assertEqual((new[:38], new_tail), (old, old_tail))
             self.assertEqual(len(new), 42)
+            self.assertEqual(old[5:7], ['Assets/Phigros2/Loading/Loading.unity',
+                                        'Assets/Phigros2/ChapterSelector/ChapterSelector.unity'])
             self.assertEqual(old[7], 'Assets/Phigros2/SongSelector/SongSelector.unity')
             self.assertIn('level7', [n.split('/')[-1] for n in ipa.namelist()])
             scripts = donors.SerializedFile(read('globalgamemanagers.assets'))

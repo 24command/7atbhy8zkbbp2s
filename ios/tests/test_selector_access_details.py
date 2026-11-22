@@ -65,7 +65,7 @@ class SelectorDetails(unittest.TestCase):
   hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf8')
   selector=hook.split('void onSelector(',1)[1].split('void onSelectorOff(',1)[0]
   self.assertLess(selector.index('selectorModalUpdate'),selector.index('orig<VoidFn>'))
-  self.assertIn('||modal)return;',selector)
+  self.assertIn('||modal){pmnativecoordinator::abortSelectorEntry(R());return;}',selector)
   self.assertIn('selectorButtonBlocked(R(),self)',hook.split('bool dispatchModButton(',1)[1].split('void onPress(',1)[0])
   runtime=(ROOT/'PhiMod/Sources/PMUnlockRuntime.mm').read_text(encoding='utf8')
   self.assertIn('selectorModalFrame(true,modal,pointerDown)',runtime)

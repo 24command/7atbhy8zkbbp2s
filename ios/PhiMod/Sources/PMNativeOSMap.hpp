@@ -1,6 +1,7 @@
 #pragma once
 #include "../Core/PMChapterVM.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 namespace pmnativeosmap {
@@ -24,6 +25,57 @@ struct Sample { bool active; float local, inherited; };
 inline Sample sample(float opacity, bool onScreen, bool manual, bool parentActive, float parentAlpha) {
     if (opacity < 0 || !onScreen || !manual || !parentActive) return {false, 0, 0};
     return {true, opacity, opacity * parentAlpha};
+}
+// Screen-clock samples are absolute. Repeated ticks never accumulate offsets.
+struct Pose { float scale = 1, lift = 0, white = 0; };
+inline Pose motion(const PMOSMotion &m, double age, float pulse) {
+    Pose p;
+    age = std::max(0., age);
+    if (age < m.enter) {
+        double u = age / m.enter - 1;
+        // Ease-out back, starting at 0.68 and settling exactly at authored size.
+        p.scale = float(1 + .32 * u * u * (3.5 * u + 2.5));
+    }
+    if (m.bob > 0 && m.bobPeriod > 0)
+        p.lift = float(m.bob * std::sin(6.283185307179586 * (std::fmod(age, m.bobPeriod) / m.bobPeriod)));
+    p.scale *= 1 + pulse * float(m.tapScale - 1);
+    p.white = pulse * float(m.tapFlash);
+    return p;
+}
+inline Anchors lifted(Anchors a, float lift) {
+    float dy = (a.high.y - a.low.y) * lift;
+    a.low.y += dy;
+    a.high.y += dy;
+    return a;
+}
+// One outstanding activation per visit. The clicked node keeps its original
+// action index even when an ancestor supplies the visual feedback.
+struct PendingTap {
+    int node = -1, owner = -1;
+    double start = 0, duration = 0;
+    bool busy() const { return node >= 0; }
+    void cancel() { *this = {}; }
+    bool begin(int index, int group, double now, double seconds) {
+        if (busy() || seconds <= 0) return false;
+        node = index; owner = group; start = now; duration = seconds;
+        return true;
+    }
+    float pulse(double now) const {
+        if (!busy()) return 0;
+        double u = std::clamp((now - start) / duration, 0., 1.);
+        return float(std::min(1., std::min(.25 + 3.75*u, (1-u)*3)));
+    }
+    int take(double now, bool eligible) {
+        if (!busy()) return -1;
+        if (!eligible) { cancel(); return -1; }
+        if (now - start < duration) return -1;
+        int result = node;
+        cancel();
+        return result;
+    }
+};
+inline int feedbackOwner(const PMOSNode &n, int index, int inherited) {
+    return n.motion.tapTime > 0 ? index : inherited;
 }
 inline bool actionable(const PMOSNode &n) { return n.handler || n.open || n.dest >= 0; }
 }

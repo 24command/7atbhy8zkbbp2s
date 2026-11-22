@@ -26,7 +26,7 @@ PMNativeOSProgram *program; NSString *chapter; NSDictionary *detail,*pendingStar
 NSArray<NSDictionary *> *choices; NSInteger lifeTier=0; NSUInteger revision=0;
 uint64_t requestedEntry=0;
 int handoffScene=0; // Only the selector scene that received this return may consume it.
-bool gated=false,busy=false,returnBack=false; chrome::View chromeView;
+bool gated=false,busy=false; chrome::View chromeView;
 PMNativeOSActions *actions;
 BOOL (^mountMap)(void);
 BOOL (^applyCheckpoint)(NSDictionary *);
@@ -35,13 +35,14 @@ void stopClock(){if(clockSource){dispatch_source_cancel(clockSource);clockSource
 void clearScene(Runtime &r,uint64_t closingVisit=visit){stopClock(); [actions invalidate]; actions=nil; mountMap=nil; applyCheckpoint=nil; if(detailID)panel::close(r,detailID);detailID=0;if(mapID)map::close(r,mapID);mapID=0;if(closingVisit)chrome::close(r,closingVisit);chromeView={};rows::release();detail=nil;selected=nil;choices=nil;busy=false;}
 NSDictionary *entry(NSDictionary *card){NSString *sid=card[@"sid"]?:card[@"installedID"];if(!sid)return nil;NSMutableDictionary *e=[@{@"songID":sid} mutableCopy];if(card[@"difficulty"])e[@"difficulty"]=card[@"difficulty"];return e;}
 NSArray *options(NSDictionary *card){NSArray *replays=card[@"replaySongs"];if(replays.count)return replays;NSDictionary *e=entry(card);return e?@[e]:@[];}
-void discardHandoff(){handoffScene=0;pendingStart=nil;returnBack=false;}
+void discardHandoff(){handoffScene=0;pendingStart=nil;}
 int sceneHandle(Runtime &r,P sceneValue){
  struct SceneValue { int32_t handle; };
  if(!sceneValue || r.object_get_class(sceneValue)!=r.type("UnityEngine.SceneManagement","Scene"))
      throw std::runtime_error("Unexpected selector scene");
  return r.unbox<SceneValue>(sceneValue).handle;
 }
+#include "PMNativeOSSelectorEntry.inc"
 void returned(Runtime &r,uint64_t token,bool ok){
  if(&r!=game || mode!=Mode::returning || token!=visit || !token)return;
  visit=0;
@@ -55,8 +56,8 @@ void returned(Runtime &r,uint64_t token,bool ok){
 }
 bool leave(Runtime &r,bool back,NSDictionary *launch){
  if(mode!=Mode::detail&&mode!=Mode::map&&mode!=Mode::mapCut&&mode!=Mode::entering)return false;
- if(!scene::leaveToSongSelector(r,returned))return false;
- pendingStart=[launch copy];returnBack=back;mode=Mode::returning;clearScene(r);return true;
+ if(!(back ? scene::leaveToChapter(r,returned) : scene::leaveToSongSelector(r,returned)))return false;
+ pendingStart=[launch copy];mode=Mode::returning;clearScene(r);return true;
 }
 bool presentMap(Runtime &r){mode=Mode::map;busy=false;return chrome::present(r,visit,chrome::Face::Map,true,0,!gated)&&map::present(r,mapID,true,true,true);}
 void closePanel(Runtime &r){if(detailID)panel::close(r,detailID);detailID=0;detail=nil;choices=nil;selected=nil;if(!presentMap(r))leave(r,false,nil);}
@@ -148,6 +149,7 @@ void arrived(Runtime &r,uint64_t token,scene::Route,P root){
   if(!leave(r,false,nil)){
    clearScene(r);visit=0;
    mode=selector && r.alive(selector) ? Mode::list : Mode::idle;
+   abortSelectorEntry(r);
   }
   return;
  }
@@ -243,6 +245,32 @@ bool startSelection(NSDictionary *launch,PMStoryStartSong start){
  if(!PMDoorSetPendingNoPause([card[@"noPause"] boolValue])||!PMStorySequenceArm(key,card[@"nextSongs"])){PMDoorCancelPending();return NO;}PMStoryCueArm(card[@"cues"]);return YES;});
 }
 }
+void selectorLoaded(Runtime &r,int handle,NSString *key){
+ if(!handle || bridge.handle==handle || transitioning() || mode==Mode::map || mode==Mode::detail)return;
+ resetEntryBridge(r);
+ bridge.handle=handle;
+ bridge.chapter=[key copy];
+ bridge.revision=PMContentStore.shared.revision;
+ NSError *err=nil;
+ bridge.program=[[PMNativeOSProgram alloc] initWithChapter:key error:&err];
+ if(!bridge.program){PMDiagnosticsWrite(err.localizedDescription.UTF8String);return;}
+ if(bridge.program.listFirst && !bridge.program.listSwitchHidden && !PMChapterOSHasRoutedCheckpoint(key))return;
+ // Cover only a confirmed automatic route. The selector must stay alive to
+ // populate its stock rows and perform the usual unlock and loading checks.
+ if(!coverSelector(r,handle))return;
+ const auto ticket=bridge.ticket;
+ dispatch_after(dispatch_time(DISPATCH_TIME_NOW,8*NSEC_PER_SEC),dispatch_get_main_queue(),^{
+     if(bridge.ticket==ticket && bridge.cover && mode!=Mode::entering){
+         PMDiagnosticsWrite("Chapter OS: selector readiness timed out");
+         abortSelectorEntry(*bridge.runtime);
+     }
+ });
+}
+void abortSelectorEntry(Runtime &r){
+ if(!bridge.cover || mode==Mode::entering)return;
+ requestedEntry=0;
+ releaseEntryCover(r);
+}
 void ready(Runtime &r,P owner,NSString *key,PMStoryStartSong start){
  if(transitioning() || mode==Mode::map || mode==Mode::detail)return;
  bool returning=false;
@@ -251,27 +279,36 @@ void ready(Runtime &r,P owner,NSString *key,PMStoryStartSong start){
      catch(const std::exception &e){PMDiagnosticsWrite(e.what());}
  }
  NSDictionary *launch=returning?pendingStart:nil;
- bool back=returning&&returnBack;
- discardHandoff(); // Consume before Back or NormalStart can re-enter detach().
+ discardHandoff(); // Consume before NormalStart can re-enter detach().
  selector=owner;game=&r;chapter=[key copy];uint64_t epoch=++generation;
  mode=Mode::idle;
- if(back){r.call(owner,"Back");return;}
  if(launch && startSelection(launch,start))return;
  if(epoch!=generation || owner!=selector)return;
  mode=Mode::loading;
- [PMNativeOSProgram loadChapter:key completion:^(PMNativeOSProgram *p,NSError *err){if(epoch!=generation||selector!=owner||mode!=Mode::loading)return;
-  if(!p){mode=Mode::idle;PMDiagnosticsWrite(err.localizedDescription.UTF8String);return;}program=p;revision=PMContentStore.shared.revision;lifeTier=p.selectedLifeTier;gated=p.listSwitchHidden;mode=Mode::list;
+ const bool staged=bridge.handle && bridge.handle==sceneHandle(r,r.call(r.call(owner,"get_gameObject"),"get_scene")) &&
+                   [bridge.chapter isEqual:key] && bridge.revision==PMContentStore.shared.revision;
+ if(!staged)abortSelectorEntry(r);
+ PMNativeOSLoadCompletion loaded=^(PMNativeOSProgram *p,NSError *err){if(epoch!=generation||selector!=owner||mode!=Mode::loading)return;
+  if(!p){mode=Mode::idle;if(err)PMDiagnosticsWrite(err.localizedDescription.UTF8String);return;}program=p;revision=PMContentStore.shared.revision;lifeTier=p.selectedLifeTier;gated=p.listSwitchHidden;mode=Mode::list;
   if(toggle::bind(*game,owner,key.UTF8String))toggle::show(*game,gated?toggle::Face::Hidden:toggle::Face::List,!gated);
-  if(!returning&&(gated||!p.listFirst||PMChapterOSHasRoutedCheckpoint(key)))requestedEntry=epoch;
- }];
+  if(returning)return;
+  if(staged){if(bridge.cover)requestedEntry=epoch;return;}
+  // A live selector can change chapters without a scene load. Preserve its
+  // existing routing once the new declaration has been validated.
+  if(gated || !p.listFirst || PMChapterOSHasRoutedCheckpoint(key))requestedEntry=epoch;
+ };
+ if(staged)loaded(bridge.program,nil);
+ else [PMNativeOSProgram loadChapter:key completion:loaded];
 }
 void selectorFrame(Runtime &r,P owner){
  if(!requestedEntry || requestedEntry!=generation || (mode!=Mode::list && mode!=Mode::listPending) || selector!=owner)return;
  // 4.0.4 SongSelector.Update uses these same two Loading flags before input.
  // Leave the stock transition in charge until it finishes unlocking the selector.
- if(!selectorReady(r,owner))return;
- requestedEntry=0;
- enter(r);
+ if(!cutChecked([&]{
+     if(!selectorReady(r,owner))return;
+     requestedEntry=0;
+     enter(r);
+ }) || !requestedEntry)abortSelectorEntry(r);
 }
 void detach(Runtime &r){
  if(&r!=game)return;
@@ -287,6 +324,7 @@ void detach(Runtime &r){
 }
 bool transitioning(){return mode==Mode::listCut || mode==Mode::mapCut || mode==Mode::entering || mode==Mode::returning;}
 void sceneUnloaded(Runtime &r,int handle,bool owned){
+ if(handle && handle==bridge.handle)resetEntryBridge(r);
  if(&r!=game)return;
  if(!owned){
      if(handle && handle==handoffScene)discardHandoff();
@@ -307,10 +345,12 @@ void sceneUnloaded(Runtime &r,int handle,bool owned){
 }
 namespace {
 bool claims(Runtime &r,P button){
+ if(bridge.cover && bridge.runtime==&r)return true;
  if(&r!=game || mode==Mode::idle || mode==Mode::loading)return false;
  return mode!=Mode::list || toggle::owns(r,button);
 }
 void dispatchOwned(Runtime &r,P b){
+ if(bridge.cover)return;
  if(mode==Mode::list){
   if(toggle::press(r,b)==toggle::Press::OpenOS){PMDiagnosticsWrite("Chapter OS: list switch pressed");mode=Mode::listPending;requestedEntry=generation;}
   return;

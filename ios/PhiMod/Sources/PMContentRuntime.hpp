@@ -9,6 +9,7 @@ bool shortSourceHold(pmbridge::Runtime&,void*note);
 bool customLevel();bool isMainlineChapter(NSString*);bool isMainlineSong(NSString*);void levelBegin(pmbridge::Runtime&);void levelEnd(pmbridge::Runtime&);
 bool assetConstructor(pmbridge::Runtime&,void*self,void*key);bool assetRelease(pmbridge::Runtime&,void*self,bool force=false);
 void levelInfo(pmbridge::Runtime&,void*song,int slot,void*info);
+void selectorSceneLoaded(pmbridge::Runtime&, int handle);
 void selectorLoadingBegin(pmbridge::Runtime&,void*selector);
 void selectorLoadingFrame(pmbridge::Runtime&,void*selector);
 NSString*selectorThumbnailKey(NSString*identifier);

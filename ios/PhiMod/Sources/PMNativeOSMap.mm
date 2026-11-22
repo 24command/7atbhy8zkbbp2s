@@ -1,8 +1,10 @@
 #include "PMNativeOSMapPuzzle.hpp"
+#include "PMNativeOSMapFlash.hpp"
 #include "PMNativeOSMapMediaTiming.hpp"
 #include "PMIL2CPP.hpp"
 #import "PMDiagnostics.h"
 #import <ImageIO/ImageIO.h>
+#import <UIKit/UIKit.h>
 #include <chrono>
 #include <memory>
 
@@ -15,28 +17,35 @@ using Handle = uint32_t;
 struct Media;
 struct Item {
     std::shared_ptr<Media> media;
-    layout::Anchors home{}, authored{}, placedBounds{};
+    layout::Anchors home{}, authored{}, slot{}, placedBounds{};
+    PMOSMotion motion{};
+    layout::Pose pose;
+    Handle flash{}, pictureRect{}, silhouette{};
+    int feedbackOwner = -1;
+    bool locked = false;
     int drop = -1, originalSibling = -1;
     bool placed = false;
     Handle hitObject{};
     Handle object{}, rect{}, group{}, button{};
     int screen{}, parent{};
-    double start{}, duration{}, fade{};
+    double start{}, duration{}, fade{}, manualSince{}, shownSince{};
     bool manual{}, active = true;
     float alpha = 1, inheritedAlpha = 1;
 };
 struct Map {
     explicit Map(Runtime &runtime): r(runtime) {}
     Runtime &r;
+    id<NSObject> resignObserver = nil;
     Visit id{};
     Activate activate = nil;
+    layout::PendingTap tap;
     Handle root{}, rootGroup{}, orphan{};
     std::vector<Handle> handles, assets;
     std::vector<Item> items;
     int layer{}, screens{}, page{};
     Handle rootRect{}, pointer{}, starts{}, ends{};
     int drag = -1;
-    Point grab{}, dragSize{};
+    Point grab{}, dragSize{}, pieceSize{};
     bool visible{}, running{}, input{};
     Clock::time_point resumed;
     double elapsed{};
@@ -75,6 +84,7 @@ template<class Work> bool checked(Work work, NSString **reason = nullptr) {
     return false;
 }
 void dispose(Map &m) {
+    if (m.resignObserver) [NSNotificationCenter.defaultCenter removeObserver:m.resignObserver];
     if (m.root) checked([&]{ if (m.r.alive(m.get(m.root))) flag(m.r, m.get(m.root), "SetActive", false); });
     if (m.orphan && m.orphan != m.root) checked([&]{ destroy(m, m.orphan); });
     checked([&]{ destroy(m, m.root); });
@@ -121,7 +131,7 @@ NSData *encodeImage(CGImageRef image) {
     if (!ok || !data.length || data.length > INT32_MAX) throw std::runtime_error("Map thumbnail encode failed");
     return data;
 }
-NSData *thumbnail(NSString *path, int pixels, float &aspect) {
+CGImageRef createThumbnail(NSString *path, int pixels) {
     NSURL *url = [NSURL fileURLWithPath:path];
     CGImageSourceRef src = CGImageSourceCreateWithURL((__bridge CFURLRef)url, nullptr);
     if (!src) throw std::runtime_error("Map image could not be opened");
@@ -131,12 +141,9 @@ NSData *thumbnail(NSString *path, int pixels, float &aspect) {
     CGImageRef image = CGImageSourceCreateThumbnailAtIndex(src, 0, (__bridge CFDictionaryRef)opts);
     CFRelease(src);
     if (!image) throw std::runtime_error("Map thumbnail decode failed");
-    aspect = float(CGImageGetWidth(image)) / float(CGImageGetHeight(image));
-    NSData *data = nil;
-    @try { data = encodeImage(image); } @finally { CGImageRelease(image); }
-    return data;
+    return image;
 }
-struct Art { Handle sprite; float aspect; };
+struct Art { Handle sprite, silhouette; float aspect; };
 Handle newTexture(Map &m) {
     Runtime &r = m.r;
     P tex = r.object_new(r.type("UnityEngine", "Texture2D"));
@@ -159,10 +166,9 @@ void upload(Runtime &r, P tex, NSData *data, bool discardCPU) {
         {"UnityEngine.Texture2D", "System.Byte[]", "System.Boolean"}, {tex,bytes,&discardCPU})))
         throw std::runtime_error("Unity rejected map image");
 }
-Art loadArt(Map &m, NSString *path, int pixels, bool readable) {
+Handle loadSprite(Map &m, CGImageRef image, bool readable) {
     Runtime &r = m.r;
-    float aspect;
-    NSData *data = thumbnail(path, pixels, aspect);
+    NSData *data = encodeImage(image);
     P tex = m.get(newTexture(m));
     upload(r, tex, data, !readable);
     float rect[] = {0,0,float(r.unbox<int>(r.call(tex,"get_width"))),float(r.unbox<int>(r.call(tex,"get_height")))};
@@ -170,12 +176,47 @@ Art loadArt(Map &m, NSString *path, int pixels, bool readable) {
     P sprite = r.stat(r.type("UnityEngine", "Sprite"), "Create", {"UnityEngine.Texture2D", "UnityEngine.Rect", "UnityEngine.Vector2", "System.Single"}, {tex,rect,&pivot,&ppu});
     Handle handle = m.keep(sprite);
     m.assets.push_back(handle);
-    return {handle, aspect};
+    return handle;
+}
+Art loadArt(Map &m, NSString *path, int pixels, bool readable, bool needsSilhouette) {
+    CGImageRef image = createThumbnail(path, pixels);
+    CGImageRef silhouette = nullptr;
+    Art art{};
+    @try {
+        art.aspect = float(CGImageGetWidth(image)) / float(CGImageGetHeight(image));
+        art.sprite = loadSprite(m, image, readable);
+        if (needsSilhouette) {
+            silhouette = createFlashSilhouette(image);
+            if (!silhouette) throw std::runtime_error("Map flash silhouette creation failed");
+            art.silhouette = loadSprite(m, silhouette, false);
+        }
+    } @finally {
+        if (silhouette) CGImageRelease(silhouette);
+        CGImageRelease(image);
+    }
+    return art;
 }
 #include "PMNativeOSMapMedia.inc"
+void setSlot(Map &m, Item &item, layout::Anchors base) {
+    item.slot = base;
+    stretch(m.r, m.get(item.rect), layout::lifted(base, item.pose.lift));
+}
+void applyPose(Map &m, Item &item, layout::Pose pose) {
+    if (item.pose.scale != pose.scale) {
+        float scale[] = {pose.scale, pose.scale, 1};
+        m.r.call(m.get(item.rect), "set_localScale", {"UnityEngine.Vector3"}, {scale});
+    }
+    if (item.pose.lift != pose.lift)
+        stretch(m.r, m.get(item.rect), layout::lifted(item.slot, pose.lift));
+    if (item.flash && item.pose.white != pose.white) {
+        float white[] = {1,1,1,pose.white};
+        m.r.call(m.get(item.flash), "set_color", {"UnityEngine.Color"}, {white});
+    }
+    item.pose = pose;
+}
 #include "PMNativeOSMapDrag.inc"
 
-int preflight(const PMOSPage &page, NSArray<NSDictionary *> *models) {
+int preflight(const PMOSPage &page, NSArray<NSDictionary *> *models, NSMutableSet<NSString *> *maskPaths) {
     if (page.nodes <= 0 || page.nodes > PMOSMaxNodes || models.count != NSUInteger(page.nodes) ||
         page.screens <= 0 || page.screens > PMOSMaxScreens) throw std::runtime_error("Map declaration/model count mismatch");
     NSMutableSet<NSString *> *paths = [NSMutableSet set];
@@ -196,7 +237,17 @@ int preflight(const PMOSPage &page, NSArray<NSDictionary *> *models) {
         if (isAnimated(path)) ++animatedNodes;
         else [paths addObject:path];
     }
-    return std::min(1536, int(std::sqrt(4.*1024*1024 / std::max<NSUInteger>(1, paths.count + animatedNodes))));
+    // Each distinct named still contributes one extra texture to the same pixel budget.
+    for (int i = 0; i < page.nodes; ++i) {
+        const auto &n = page.elements[i];
+        if (!n.tapFace[0] || !n.motion.tapTime || !n.motion.tapFlash) continue;
+        if (n.tapFaceIndex <= i || n.tapFaceIndex >= page.nodes)
+            throw std::runtime_error("Invalid map flash face");
+        if (page.elements[n.tapFaceIndex].kind != PMOSImage) continue;
+        NSString *path = models[n.tapFaceIndex][@"path"];
+        if (path && !isAnimated(path)) [maskPaths addObject:path];
+    }
+    return std::min(1536, int(std::sqrt(4.*1024*1024 / std::max<NSUInteger>(1, paths.count + maskPaths.count + animatedNodes))));
 }
 void validateParent(Runtime &r, P parent) {
     if (!r.alive(parent) || r.object_get_class(parent) != r.type("UnityEngine", "RectTransform"))
@@ -229,7 +280,7 @@ void caption(Map &m, P parent, P font, const char *label) {
     r.call(text, "set_resizeTextMaxSize", {"System.Int32"}, {&size});
     flag(r, text, "set_raycastTarget", false);
 }
-void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *models, P font, int pixels) {
+void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *models, P font, int pixels, NSSet<NSString *> *maskPaths) {
     Runtime &r = m.r;
     m.screens = page.screens;
     m.layer = r.unbox<int>(r.call(r.call(parent, "get_gameObject"), "get_layer"));
@@ -261,6 +312,9 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
         bool animated = isAnimated(path);
         bool alphaHit = n.alphaHit && !animated;
         item.drop = n.dropIndex;
+        item.motion = n.motion;
+        item.feedbackOwner = layout::feedbackOwner(n, i, n.parent < 0 ? -1 : m.items[n.parent].feedbackOwner);
+        item.locked = n.challenge && !n.handler;
 
         item.home = layout::anchors(n);
         item.authored = puzzle::compose(n.parent < 0 ? puzzle::unit : m.items[n.parent].authored, item.home);
@@ -268,20 +322,21 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
         Object o = child(m, m.get(n.parent < 0 ? root.rect : m.items[n.parent].rect), n.id[0] ? n.id : "Element");
         item.object = o.go; item.rect = o.rect;
         P go = m.get(o.go), tr = m.get(o.rect);
-        stretch(r, tr, layout::anchors(n));
+        setSlot(m, item, item.home);
         add(r, go, "UnityEngine.UI", "RectMask2D");
         item.group = m.keep(add(r, go, "UnityEngine", "CanvasGroup"));
         bool action = layout::actionable(n);
-        if (action || (n.rgba & 255)) {
+        if (action || item.locked || (n.rgba & 255)) {
             P surface = add(r, go, "UnityEngine.UI", "Image");
             float color[] = {float(n.rgba>>24)/255, float((n.rgba>>16)&255)/255,
                              float((n.rgba>>8)&255)/255, float(n.rgba&255)/255};
             r.call(surface, "set_color", {"UnityEngine.Color"}, {color});
-            flag(r, surface, "set_raycastTarget", action && !alphaHit);
+            flag(r, surface, "set_raycastTarget", (action || item.locked) && !alphaHit);
             if (item.drop >= 0 && !alphaHit) item.hitObject = o.go;
-            if (action) {
+            if (action || item.locked) {
                 P button = add(r, go, "UnityEngine.UI", "Button");
                 item.button = m.keep(button);
+                if (item.locked) flag(r, button, "set_interactable", false);
                 r.call(button, "set_targetGraphic", {"UnityEngine.UI.Graphic"}, {surface});
                 int none = 0;
                 r.call(button, "set_transition", {"UnityEngine.UI.Selectable.Transition"}, {&none});
@@ -293,8 +348,13 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
             const char *key = path.UTF8String;
             if (!key) throw std::runtime_error("Invalid map image path");
             auto found = art.find(key);
-            if (found == art.end()) found = art.emplace(key, loadArt(m, path, pixels, [readable containsObject:path])).first;
+            if (found == art.end()) {
+                Art loaded = loadArt(m, path, pixels, [readable containsObject:path], [maskPaths containsObject:path]);
+                found = art.emplace(key, loaded).first;
+            }
+            item.silhouette = found->second.silhouette;
             Object picture = child(m, tr, "Artwork");
+            item.pictureRect = picture.rect;
             P image = add(r, m.get(picture.go), "UnityEngine.UI", "Image");
             stretch(r, m.get(picture.rect));
             r.call(image, "set_sprite", {"UnityEngine.Sprite"}, {m.get(found->second.sprite)});
@@ -310,11 +370,31 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
         if (n.label[0] && n.kind != PMOSHotspot) caption(m, tr, font, n.label);
         m.items.push_back(item);
     }
+    // Append after all authored children so artwork cannot obscure the flash.
+    for (int i = 0; i < page.nodes; ++i) {
+        Item &item = m.items[i];
+        if (!item.motion.tapTime || !item.motion.tapFlash) continue;
+        int face = page.elements[i].tapFaceIndex;
+        const Item &target = m.items.at(face);
+        bool masked = page.elements[i].tapFace[0] && page.elements[face].kind == PMOSImage && target.pictureRect;
+        Handle rect = masked ? target.pictureRect : target.rect;
+        Object overlay = child(m, m.get(rect), "Tap flash");
+        stretch(r, m.get(overlay.rect));
+        P graphic = add(r, m.get(overlay.go), "UnityEngine.UI", "Image");
+        if (masked) {
+            if (!target.silhouette) throw std::runtime_error("Missing map flash silhouette");
+            r.call(graphic, "set_sprite", {"UnityEngine.Sprite"}, {m.get(target.silhouette)});
+        }
+        flag(r, graphic, "set_raycastTarget", false);
+        float clearWhite[] = {1,1,1,0};
+        r.call(graphic, "set_color", {"UnityEngine.Color"}, {clearWhite});
+        item.flash = m.keep(graphic);
+    }
 }
-void refresh(Map &m) {
+void refresh(Map &m, double t) {
     if (!m.r.alive(m.get(m.root))) throw std::runtime_error("Map scene has unloaded");
-    double t = m.time();
-    for (Item &item : m.items) {
+    for (size_t i = 0; i < m.items.size(); ++i) {
+        Item &item = m.items[i];
         const Item *parent = item.parent < 0 ? nullptr : &m.items[item.parent];
         float alpha = layout::opacity(t, item.start, item.duration, item.fade);
         auto state = layout::sample(alpha, item.screen == m.page, item.manual,
@@ -326,6 +406,13 @@ void refresh(Map &m) {
         }
         if (item.media) syncMedia(m, *item.media, active && m.visible && m.running, t);
         if (!active) continue;
+        item.shownSince = std::max({item.start, item.manualSince, parent ? parent->shownSince : 0.});
+        if (item.motion.enter || item.motion.bob || item.motion.tapTime) {
+            float pulse = m.tap.owner == int(i) ? m.tap.pulse(t) : 0;
+            auto pose = layout::motion(item.motion, t - item.shownSince, pulse);
+            if (m.drag == int(i)) pose = {}; // Pointer owns the piece's bounds during a drag.
+            applyPose(m, item, pose);
+        }
         if (item.alpha != alpha) {
             m.r.call(m.get(item.group), "set_alpha", {"System.Single"}, {&alpha});
             item.alpha = alpha;
@@ -337,6 +424,7 @@ void refresh(Map &m) {
         }
         item.inheritedAlpha = inherited;
     }
+    if (m.tap.busy() && !eligible(m, m.tap.node)) m.tap.cancel();
 }
 bool matches(Runtime &r, Visit id) {
     return NSThread.isMainThread && current && &current->r == &r && current->id == id;
@@ -351,7 +439,7 @@ int owned(Runtime &r, P button) {
 }
 template<class Work> bool change(Runtime &r, Visit id, Work work) {
     if (!matches(r, id)) return false;
-    if (checked([&]{ work(*current); refresh(*current); })) return true;
+    if (checked([&]{ work(*current); refresh(*current, current->time()); })) return true;
     close(r, id);
     return false;
 }
@@ -365,24 +453,44 @@ Visit open(Runtime &r, P parent, const PMOSPage &page, NSArray<NSDictionary *> *
     }
     auto m = std::make_unique<Map>(r);
     if (!checked([&]{
-        int pixels = preflight(page, models);
+        NSMutableSet<NSString *> *maskPaths = [NSMutableSet set];
+        int pixels = preflight(page, models, maskPaths);
         validateParent(r, parent);
-        build(*m, parent, page, models, font, pixels);
-        refresh(*m);
+        build(*m, parent, page, models, font, pixels, maskPaths);
+        refresh(*m, m->time());
     }, reason)) { dispose(*m); return 0; }
     if (++sequence == 0) ++sequence;
     m->id = sequence;
     m->activate = [activate copy];
+    Visit token = m->id;
+    m->resignObserver = [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationWillResignActiveNotification
+        object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *) {
+            if (current && current->id == token) current->tap.cancel();
+        }];
     current = std::move(m);
     return sequence;
 }
 bool displayPage(Runtime &r, Visit id, int screen) {
     if (!matches(r,id) || screen < 0 || screen >= current->screens) return false;
-    return change(r,id,[&](Map &m){ cancelDrag(m); for (auto &item : m.items) if (item.media) syncMedia(m,*item.media,false,0); m.page = screen; m.elapsed = 0; m.resumed = Clock::now(); });
+    return change(r,id,[&](Map &m){
+        m.tap.cancel();
+        cancelDrag(m);
+        for (auto &item : m.items) {
+            if (item.media) syncMedia(m, *item.media, false, 0);
+            item.manualSince = 0;
+        }
+        m.page = screen;
+        m.elapsed = 0;
+        m.resumed = Clock::now();
+    });
 }
 bool setElement(Runtime &r, Visit id, int index, bool visible) {
     if (!matches(r,id) || index < 0 || size_t(index) >= current->items.size()) return false;
-    return change(r,id,[&](Map &m){ m.items[index].manual = visible; });
+    return change(r,id,[&](Map &m){
+        auto &item = m.items[index];
+        if (visible && !item.manual) item.manualSince = m.time();
+        item.manual = visible;
+    });
 }
 bool present(Runtime &r, Visit id, bool visible, bool runClock, bool input) {
     return change(r,id,[&](Map &m){
@@ -391,6 +499,7 @@ bool present(Runtime &r, Visit id, bool visible, bool runClock, bool input) {
             m.elapsed = m.time(); m.resumed = Clock::now(); m.running = running;
         }
         bool acceptInput = running && input;
+        if (!acceptInput) m.tap.cancel();
         if (m.input != acceptInput) cancelDrag(m);
         m.input = acceptInput;
         flag(r, m.get(m.rootGroup), "set_interactable", m.input);
@@ -399,14 +508,37 @@ bool present(Runtime &r, Visit id, bool visible, bool runClock, bool input) {
         m.visible = visible;
     });
 }
-bool tick(Runtime &r, Visit id) {
-    if (!change(r,id,[](Map &){})) return false;
-    int release = -1;
-    if (!checked([&]{ release = puzzleInput(*current); })) { close(r,id); return false; }
-    if (release >= 0) {
-        Activate callback = current->activate;
-        checked([&]{ callback(id,release); });
+// May run Lua and synchronously close/replace this visit. Do not access m after dispatch.
+void dispatchNode(Map &m, int index) {
+    Activate callback = m.activate;
+    callback(m.id, index);
+}
+void selectNode(Map &m, int index) {
+    if (!m.input || m.tap.busy() || !eligible(m, index) || m.items[index].locked) return;
+    int owner = m.items[index].feedbackOwner;
+    if (owner >= 0) {
+        if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive) return;
+        m.tap.begin(index, owner, m.time(), m.items[owner].motion.tapTime);
+        refresh(m, m.time());
+        return;
     }
+    dispatchNode(m, index);
+}
+bool tick(Runtime &r, Visit id) {
+    if (!matches(r,id)) return false;
+    if (!checked([&]{
+        Map &m = *current;
+        const double now = m.time();
+        refresh(m, now);
+        if (m.tap.busy()) {
+            cancelDrag(m); // Discard gestures queued during feedback.
+            int node = m.tap.take(now, m.input && eligible(m, m.tap.node));
+            if (node >= 0) dispatchNode(m, node);
+            return;
+        }
+        int release = puzzleInput(m);
+        if (release >= 0) selectNode(m, release);
+    })) { close(r,id); return false; }
     return true;
 }
 P anchor(Runtime &r, Visit id, int index) {
@@ -419,15 +551,14 @@ bool press(Runtime &r, P button) {
     int index = owned(r,button);
     if (index < 0) return false;
     Visit id = current->id;
-    if (!current->input || !change(r,id,[](Map &){})) return true;
+    if (!current->input || current->tap.busy() || !change(r,id,[](Map &){})) return true;
     const Item &item = current->items[index];
     if (item.drop >= 0 || current->drag >= 0 || !item.active || item.inheritedAlpha <= .01f) return true;
-    checked([&]{
+    if (!checked([&]{
         if (r.unbox<bool>(r.call(button,"IsActive")) && r.unbox<bool>(r.call(button,"IsInteractable"))) {
-            Activate callback = current->activate; // May synchronously close this map.
-            callback(id,index);
+            selectNode(*current, index);
         }
-    });
+    })) close(r,id);
     return true;
 }
 void close(Runtime &r, Visit id) {

@@ -29,7 +29,7 @@ struct Visit {
 Visit current;
 // The owned scene unloads before the normal selector arrives. Keep only the
 // return notification across that boundary, never its Unity objects.
-struct ReturnTrip { uint64_t id = 0; Returned done = nullptr; } returning;
+struct ReturnTrip { uint64_t id = 0; Returned done = nullptr; bool toSelector = false; } returning;
 bool installed = false;
 uint64_t sequence = 0;
 
@@ -91,7 +91,7 @@ static void finishLoad(Runtime &r, int handle) {
         returning = {};
         if(current.id==trip.id)clear(r); // The old scene can unload without a managed notification.
         bool arrived = false;
-        try { arrived = activeHandle(r) == handle && matches(r, handle, 7, selector); }
+        try { arrived = trip.toSelector && activeHandle(r) == handle && matches(r, handle, 7, selector); }
         catch (const std::exception &e) { PMDiagnosticsWrite(e.what()); }
         if (trip.done) {
             @try {
@@ -185,18 +185,35 @@ void *activeRoot(Runtime &r) {
     return nullptr;
 }
 
-bool leaveToSongSelector(Runtime &r, Returned cb) {
+bool isSongSelector(Runtime &r, int handle) { return matches(r, handle, 7, selector); }
+
+static bool leave(Runtime &r, Returned cb, bool toSelector) {
     if (!NSThread.isMainThread || !current.handle || current.leaving) return false;
+    P info = nullptr, previous = nullptr;
+    bool changedNextScene = false;
     try {
         if (activeHandle(r) != current.handle) return false;
         current.leaving = true;
-        returning = {current.id, cb};
-        if (watch(r, requestSingle(r, 7), current.id, true)) return true;
+        returning = {current.id, cb, toSelector};
+        if (!toSelector) {
+            info = r.klass("GameInformation");
+            previous = r.staticValue<P>(info,"nextScene","System.String");
+            r.setStaticValue<P>(info,"nextScene","System.String",r.string_new("ChapterSelector"));
+            changedNextScene = true;
+        }
+        if (watch(r, requestSingle(r, toSelector ? 7 : 5), current.id, true)) return true;
     } catch (const std::exception &e) { PMDiagnosticsWrite(e.what()); }
     returning = {};
     current.leaving = false;
+    if (changedNextScene) {
+        try { r.setStaticValue<P>(info,"nextScene","System.String",previous); }
+        catch (const std::exception &e) { PMDiagnosticsWrite(e.what()); }
+    }
     return false;
 }
+
+bool leaveToSongSelector(Runtime &r, Returned cb) { return leave(r, cb, true); }
+bool leaveToChapter(Runtime &r, Returned cb) { return leave(r, cb, false); }
 
 bool ownsController(Runtime &r, Route route, P self) {
     // Scope to the object's scene, including teardown after the active scene

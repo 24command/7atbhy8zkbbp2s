@@ -18,8 +18,8 @@ class ChallengeAccess(unittest.TestCase):
   hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf-8')
   block=hook.split('void onSelector(',1)[1].split('void onSelectorOff(',1)[0]
   self.assertIn('access=pmunlock::selectorAccess(R(),self)',block)
-  self.assertIn('||!access)return;',block)
-  self.assertLess(block.index('||!access)return;'),block.index('orig<VoidFn>'))
+  self.assertIn('||!access){pmnativecoordinator::abortSelectorEntry(R());return;}',block)
+  self.assertLess(block.index('||!access){pmnativecoordinator::abortSelectorEntry(R());return;}'),block.index('orig<VoidFn>'))
   self.assertIn('if(pmunlock::blockChallengeButton(R(),self))return true;',hook)
   self.assertIn('if(pmunlock::blockChallengeButton(R(),self))return;',hook)
   self.assertIn('if(!dispatchModButton(self))orig',hook)

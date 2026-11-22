@@ -1,5 +1,6 @@
 // The chapter VM never exposes native views or filesystem paths to scripts.
 #include <math.h>
+#include <float.h>
 static void word(lua_State *L,int index,char *out,size_t cap){
  size_t n;luaL_checktype(L,index,LUA_TSTRING);const char *s=lua_tolstring(L,index,&n);
  if(!n||n>=cap||memchr(s,0,n))luaL_error(L,"empty or oversized layout string");memcpy(out,s,n);out[n]=0;
@@ -22,6 +23,28 @@ static double secondsField(lua_State *L, const char *key) {
     lua_pop(L, 1);
     return seconds;
 }
+static double motionField(lua_State *L, const char *key, double fallback, double low, double high) {
+    lua_getfield(L, 1, key);
+    double value = fallback;
+    if (!lua_isnil(L, -1)) {
+        luaL_checktype(L, -1, LUA_TNUMBER);
+        value = lua_tonumber(L, -1);
+        if (!(value >= low && value <= high)) luaL_error(L, "invalid motion value in %s", key);
+    }
+    lua_pop(L, 1);
+    return value;
+}
+static void readMotion(lua_State *L, PMOSNode *node) {
+    PMOSMotion *m = &node->motion;
+    m->enter = secondsField(L, "enter");
+    m->bob = motionField(L, "bob", 0, 0, 1);
+    m->bobPeriod = motionField(L, "bobPeriod", 3, 0, DBL_MAX);
+    if (m->bobPeriod == 0) luaL_error(L, "bobPeriod must be positive");
+    m->tapTime = secondsField(L, "tapTime");
+    m->tapScale = motionField(L, "tapScale", 1.06, 1, 4);
+    m->tapFlash = motionField(L, "tapFlash", 0, 0, 1);
+    fieldText(L, "tapFace", node->tapFace, sizeof(node->tapFace));
+}
 static double axis(lua_State *L,const char *key,double def,int size){lua_getfield(L,1,key);double v=luaL_optnumber(L,-1,def);lua_pop(L,1);if(!(v>=-4 && v<=4) || (size&&v<=0))luaL_error(L,"invalid coordinate: %s",key);return v;}
 static int songField(lua_State *L,const char *key){lua_getfield(L,1,key);int res=0;if(!lua_isnil(L,-1)){lua_Integer i=luaL_checkinteger(L,-1);if(i<1||i>session(L)->songs)luaL_error(L,"invalid song number in %s",key);res=(int)i;}lua_pop(L,1);return res;}
 static int setCanvas(lua_State *L){PMOSPage *p=declarationPage(L);double w=luaL_checknumber(L,1),h=luaL_checknumber(L,2);if(!(w>0&&h>0&&w/h>=0.125&&w/h<=8))return luaL_error(L,"invalid canvas aspect ratio");p->aspect=w/h;return 0;}
@@ -32,6 +55,7 @@ static int layoutNode(lua_State *L){PMOSPage *p=declarationPage(L);luaL_checktyp
  if(!p->screens)strcpy(p->names[p->screens++],"main");
  int pos=p->nodes;PMOSNode *n=&p->elements[pos];n->kind=(int)lua_tointeger(L,lua_upvalueindex(1));n->screen=p->screens-1;n->parent=n->dest=-1;
  n->dropIndex=-1;
+ readMotion(L,n);
  fieldText(L,"dropTarget",n->dropTarget,sizeof(n->dropTarget));
  n->alphaHit=fieldBool(L,"alphaHit");
  n->hidden=fieldBool(L,"hidden");
@@ -68,6 +92,19 @@ static int layoutNode(lua_State *L){PMOSPage *p=declarationPage(L);luaL_checktyp
  if(n->alphaHit && (!n->dropTarget[0] || n->kind!=PMOSImage))return luaL_error(L,"alphaHit needs a draggable image");
  if(n->kind==PMOSHotspot&&!n->open&&!n->to[0]&&!n->handler&&!n->challenge)return luaL_error(L,"hotspot needs open, to, onClick or challenge");
  p->nodes++;return 0;}
+static int resolveTapFace(lua_State *L, const PMOSPage *page, int owner) {
+    const PMOSNode *node = &page->elements[owner];
+    if (!node->tapFace[0]) return owner;
+    for (int i = owner + 1; i < page->nodes; ++i) {
+        const PMOSNode *face = &page->elements[i];
+        if (face->screen != node->screen) break;
+        if (strcmp(face->id, node->tapFace)) continue;
+        for (int parent = face->parent; parent >= 0; parent = page->elements[parent].parent)
+            if (parent == owner) return i;
+        break; /* IDs are unique on a screen. */
+    }
+    return luaL_error(L, "tapFace must name a descendant: %s", node->tapFace);
+}
 static void resolveLinks(lua_State *L){PMOSPage *p=declarationPage(L);for(int i=0;i<p->nodes;i++){PMOSNode *n=&p->elements[i];if(n->dropTarget[0]) {
   for(int j=0;j<p->nodes;j++) {
    if(p->elements[j].screen==n->screen && !strcmp(p->elements[j].id,n->dropTarget)) { n->dropIndex=j; break; }
@@ -77,6 +114,7 @@ static void resolveLinks(lua_State *L){PMOSPage *p=declarationPage(L);for(int i=
   for(int j=n->dropIndex;j>=0;j=p->elements[j].parent)
    if(p->elements[j].dropTarget[0])luaL_error(L,"drop target must be stationary: %s",n->dropTarget);
  }
+ n->tapFaceIndex = resolveTapFace(L, p, i);
  if(!n->to[0])continue;
  n->dest=findScreen(p->names,p->screens,n->to);if(n->dest<0)luaL_error(L,"unknown target screen: %s",n->to);}}
 static void registerLayout(lua_State *L){const char *names[]={"frame","image","hotspot"};for(int i=0;i<3;i++){lua_pushinteger(L,i);lua_pushcclosure(L,layoutNode,1);lua_setglobal(L,names[i]);}

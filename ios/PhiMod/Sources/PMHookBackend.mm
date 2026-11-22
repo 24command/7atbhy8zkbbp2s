@@ -857,8 +857,11 @@ void onOSController(P self, P mi) {
 // IL2CPP passes UnityEngine.SceneManagement.Scene by value (one int32 field).
 struct SceneValue { int32_t handle; };
 void onOSSceneLoaded(SceneValue scene, int32_t mode, P mi) {
- if (!os::sceneLoaded(R(), scene.handle, mode))
-  orig<void(*)(SceneValue,int32_t,P)>(h::osSceneLoaded)(scene, mode, mi);
+ if (os::sceneLoaded(R(), scene.handle, mode)) return;
+ orig<void(*)(SceneValue,int32_t,P)>(h::osSceneLoaded)(scene, mode, mi);
+ if (mode==0 && !pmnativecoordinator::transitioning()) contentBoundary("Selector entry route",[&]{
+     if(os::isSongSelector(R(),scene.handle))pmcontent::selectorSceneLoaded(R(),scene.handle);
+ });
 }
 void onOSSceneUnloaded(SceneValue scene, P mi) {
  bool owned = os::sceneUnloaded(R(), scene.handle);
@@ -887,10 +890,10 @@ void onSelector(P self,P mi){
  if(cancelIdleDoorLaunch(self))pmstory::cancelLaunch();
  if(pmnativecoordinator::transitioning())return;
  if(pmchallenge::atResult || pmchallenge::cursor>=0 || pmchallenge::hpRoot)pmchallenge::cancelVariable(R());
- bool modal=false;if(!contentBoundary("Selector modal",[&]{modal=pmunlock::selectorModalUpdate(R(),self);})||modal)return;
+ bool modal=false;if(!contentBoundary("Selector modal",[&]{modal=pmunlock::selectorModalUpdate(R(),self);})||modal){pmnativecoordinator::abortSelectorEntry(R());return;}
  contentBoundary("Selector row restore",[&]{pmcontent::restoreSelectorRowVisibility(R(),self);});
  bool difficultyTouch=false;contentBoundary("Difficulty touch",[&]{difficultyTouch=pmcontent::difficultyInput(R(),self);});
- bool access=false;if(!contentBoundary("Selector chapter access",[&]{access=pmunlock::selectorAccess(R(),self);})||!access)return;
+ bool access=false;if(!contentBoundary("Selector chapter access",[&]{access=pmunlock::selectorAccess(R(),self);})||!access){pmnativecoordinator::abortSelectorEntry(R());return;}
  contentBoundary("Selector content prepare",[&]{pmcontent::prepareSelectorItems(R(),self);pmcontent::selectorLoadingBegin(R(),self);});
  if(!difficultyTouch)orig<VoidFn>(h::selector)(self,mi);
  contentBoundary("Difficulty transition display",[&]{pmcontent::difficultyTransitionLabel(R(),self);});
@@ -901,7 +904,7 @@ void onSelector(P self,P mi){
  contentBoundary("Selector loading",[&]{pmcontent::selectorLoadingFrame(R(),self);});
  contentBoundary("Chapter OS entry",[&]{pmnativecoordinator::selectorFrame(R(),self);});
 }
-void onSelectorOff(P self,P mi){if(cancelIdleDoorLaunch(self,true))pmstory::cancelLaunch();try{pmcontent::difficultySelectorOff(R());pmcontent::selectorLoadingEnd(R(),false);pmscene::selectorOff(R());pmunlock::clear(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::selectorOff)(self,mi);}
+void onSelectorOff(P self,P mi){pmnativecoordinator::abortSelectorEntry(R());if(cancelIdleDoorLaunch(self,true))pmstory::cancelLaunch();try{pmcontent::difficultySelectorOff(R());pmcontent::selectorLoadingEnd(R(),false);pmscene::selectorOff(R());pmunlock::clear(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::selectorOff)(self,mi);}
 void onSetting(P self,P mi){if(!pmscene::settingsPreviewSuspended(R(),self))orig<VoidFn>(h::setting)(self,mi);static std::string previous;try{pmunlock::clear(R());pmscene::settingsFrame(R(),self);previous.clear();}catch(const std::exception&e){lastError=e.what();if(previous!=lastError){previous=lastError;diagf("MOD settings update failed: %s",e.what());}}}
 void onSettingTab(P self,int index,P mi){try{if(pmscene::settingsTabRequest(R(),self,index))return;}catch(const std::exception&e){lastError=e.what();diagf("MOD tab routing failed target=%d: %s",index,e.what());return;}orig<void(*)(P,int,P)>(h::settingTab)(self,index,mi);}
 void onSettingBack(P self,P mi){try{pmscene::settingsLeave(R(),"back-button");}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::settingBack)(self,mi);}

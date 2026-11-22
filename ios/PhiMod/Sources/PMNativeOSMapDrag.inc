@@ -44,25 +44,32 @@ void bindDrag(Map &m, P go) {
 layout::Anchors bounds(const Map &m, int index) {
     if (index<0) return puzzle::unit;
     auto &item=m.items[index];
-    return item.placed ? item.placedBounds : puzzle::compose(bounds(m,item.parent),item.home);
+    int parent = item.placed ? m.items[item.drop].parent : item.parent;
+    if (index == m.drag) parent = -1;
+    auto local = layout::lifted(item.slot, item.pose.lift);
+    if (item.pose.scale == 1) return puzzle::compose(bounds(m,parent), local);
+    auto size = puzzle::size(local);
+    return puzzle::compose(bounds(m,parent), puzzle::centered(puzzle::center(local),
+                           {size.x * item.pose.scale, size.y * item.pose.scale}));
 }
 void attach(Map &m, Item &item, int parent, layout::Anchors rect) {
     P tr=m.get(item.rect);
     bool world=false;
     m.r.call(tr,"SetParent",{"UnityEngine.Transform","System.Boolean"},
              {m.get(parent<0?m.rootRect:m.items[parent].rect),&world});
-    stretch(m.r,tr,rect);
+    setSlot(m,item,rect);
     m.r.call(tr,"SetAsLastSibling");
 }
 void finishDrag(Map &m, bool place) {
     if (m.drag<0) return;
     auto &item=m.items[m.drag];
     if (place) {
-        item.placedBounds=puzzle::centered(puzzle::center(bounds(m,item.drop)),puzzle::size(item.authored));
+        auto dest = puzzle::centered(puzzle::center(bounds(m,item.drop)),puzzle::size(item.authored));
+        item.placedBounds = puzzle::relative(bounds(m,m.items[item.drop].parent),dest);
         item.placed=true;
     }
     int parent=item.placed?m.items[item.drop].parent:item.parent;
-    attach(m,item,parent,item.placed?puzzle::relative(bounds(m,parent),item.placedBounds):item.home);
+    attach(m,item,parent,item.placed?item.placedBounds:item.home);
     if (!place && item.originalSibling>=0)
         m.r.call(m.get(item.rect),"SetSiblingIndex",{"System.Int32"},{&item.originalSibling});
     m.r.gchandle_free(m.pointer); m.pointer=0; m.drag=-1;
@@ -117,13 +124,16 @@ int puzzleInput(Map &m) {
             if (!item.hitObject || hit!=m.get(item.hitObject) || !eligible(m,int(i))) continue;
             Point down;
             if (!scenePoint(m,e,"get_pressPosition",area,down)) break;
-            Point center=puzzle::center(bounds(m,int(i)));
+            auto visibleBounds = bounds(m,int(i));
+            Point center=puzzle::center(visibleBounds);
             m.grab={center.x-down.x,center.y-down.y};
             item.originalSibling=r.unbox<int>(r.call(m.get(item.rect),"GetSiblingIndex"));
             m.pointer=r.gchandle_new(e,false);
             if (!m.pointer) throw std::runtime_error("Map pointer handle failed");
             m.drag=int(i); m.dragSize={area.w,area.h};
-            attach(m,item,-1,bounds(m,int(i)));
+            m.pieceSize = puzzle::size(visibleBounds);
+            applyPose(m,item,{});
+            attach(m,item,-1,visibleBounds);
             break;
         }
     }
@@ -145,6 +155,6 @@ int puzzleInput(Map &m) {
         finishDrag(m,accepted);
         return accepted ? index : -1;
     }
-    stretch(r,m.get(item.rect),puzzle::centered(p,puzzle::size(item.authored)));
+    setSlot(m,item,puzzle::centered(p,m.pieceSize));
     return -1;
 }
