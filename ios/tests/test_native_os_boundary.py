@@ -36,7 +36,7 @@ class BoundaryTests(unittest.TestCase):
     def test_return_claim_and_graph_cleanup(self):
         ready = definition(COORD, 'void ready(')
         for check in ('[chapter isEqual:key]', 'revision==PMContentStore.shared.revision',
-                      'handoffScene==sceneHandle(', 'epoch!=generation', 'selector!=owner'):
+                      'handoffScene==ownerScene', 'epoch==generation', 'selector==owner'):
             self.assertIn(check, ready)
         self.assertNotIn('startSelection(', ready)
         play = definition(COORD, 'bool playSelection(Runtime &r,NSDictionary *card,NSDictionary *choice){')
@@ -54,18 +54,21 @@ class BoundaryTests(unittest.TestCase):
         self.assertIn('mode==0 && !pmnativecoordinator::transitioning()', hook)
         self.assertIn('if(os::isSongSelector(R(),scene.handle))', hook)
         preload = definition(COORD, 'void selectorLoaded(')
-        cover = preload.index('coverSelector(')
-        for decision in ('initWithChapter:', 'if(!bridge.program)', 'bridge.program.listFirst',
-                         'bridge.program.listSwitchHidden', 'PMChapterOSHasRoutedCheckpoint'):
-            self.assertLess(preload.index(decision), cover)
+        self.assertNotIn('initWithChapter:', preload)
+        self.assertLess(preload.index('coverSelector('), preload.index('loadChapter:key completion:'))
+        self.assertIn('handle==handoffScene', preload)
         self.assertIn('bridge.ticket==ticket && bridge.cover', preload)
         ready = definition(COORD, 'void ready(')
-        self.assertIn('if(staged)loaded(bridge.program,nil);', ready)
-        self.assertLess(ready.index('if(returning)return;'), ready.index('requestedEntry=epoch'))
         self.assertNotIn('"Back"', ready)
         leave = definition(COORD, 'bool leave(')
         self.assertIn('back ? scene::leaveToChapter(r,returned) : scene::leaveToSongSelector(r,returned)', leave)
         self.assertLess(leave.index('return false;', leave.index('scene::leaveToChapter')), leave.index('clearScene(r)'))
+
+    def test_live_selector_guards_release_speculative_cover(self):
+        content = (SRC / 'PMContentRuntime.mm').read_text('utf-8-sig')
+        begin = definition(content, 'static void beginChapterOS(')
+        self.assertIn('abortSelectorEntry(r)', begin.split('if(![key hasPrefix:', 1)[1].split('return;', 1)[0])
+        self.assertIn('else pmnativecoordinator::abortSelectorEntry(r);', begin.split('hasChapterScript:', 1)[1])
 
     def test_dispatch_and_scene_lifetime(self):
         # Compile the production entry points with simulated Unity calls. No Apple SDK required.
@@ -77,6 +80,7 @@ class BoundaryTests(unittest.TestCase):
 #include <cassert>
 #include <cstdint>
 #include <initializer_list>
+#include <functional>
 #include <stdexcept>
 using P=void*;
 #define nil nullptr
@@ -103,11 +107,29 @@ P selector=nullptr, program=nullptr, chapter=nullptr;
 uint64_t generation=3,visit=0,requestedEntry=0;
 int entries=0;
 
-struct { uint32_t cover=0; int handle=0; Runtime *runtime=nullptr; } bridge;
+struct PMNativeOSProgram {bool listFirst=false,listSwitchHidden=false;int selectedLifeTier=0;} lua;
+using NSString=int;
+struct NSError {struct {const char *UTF8String;} localizedDescription;};
+using PMNativeOSLoadCompletion=std::function<void(PMNativeOSProgram*,NSError*)>;
+struct { uint32_t cover=0; int handle=0; Runtime *runtime=nullptr;
+    NSString *chapter=nullptr; int revision=0; PMNativeOSProgram *program=nullptr;
+    bool loading=false;PMNativeOSLoadCompletion waiter;uint64_t ticket=0; } bridge;
+int loads=0,binds=0,lifeTier=0;
+bool visible=false,checkpoint=false;
+bool PMChapterOSHasRoutedCheckpoint(NSString*) {return checkpoint;}
+PMNativeOSLoadCompletion worker;
+void loadChapter(NSString*,PMNativeOSLoadCompletion cb){assert(!worker);++loads;worker=cb;}
+void finishWorker(PMNativeOSProgram *p){auto done=worker;worker=nil;done(p,nil);}
+void coverSelector(Runtime&,int){bridge.cover=1;}
+std::function<void()> timeout;
+#define dispatch_after(delay,queue,action) timeout=action
 void releaseEntryCover(Runtime&){bridge.cover=0;}
-void resetEntryBridge(Runtime&r){releaseEntryCover(r);bridge.handle=0;}
+void resetEntryBridge(Runtime&r){releaseEntryCover(r);auto ticket=bridge.ticket+1;bridge={};bridge.ticket=ticket;}
 
 namespace toggle {
+    enum class Face {Hidden,List};
+    bool bind(Runtime&,P,const char*) {++binds;return true;}
+    void show(Runtime&,Face face,bool enabled){visible=enabled && face==Face::List;}
     bool owns(Runtime&,P b){return b==&ownedButton;}
     void release(Runtime&){++releases;}
 }
@@ -137,6 +159,20 @@ template<class F>bool cutChecked(F f){try{f();return true;}catch(...){return fal
         for method in ('bool selectorReady(', 'void abortSelectorEntry(', 'void selectorFrame(', 'void discardHandoff(', 'void returned(', 'bool transitioning(', 'void detach(',
                        'void sceneUnloaded(', 'bool claims(', 'bool dispatch(', 'bool press(', 'bool pointerClick('):
             code += definition(COORD, method) + '\n'
+        # Keep ready()'s branches and callback intact. Translate only ObjC syntax
+        # for the portable fake runtime, whose chapter keys are interned pointers.
+        callbacks = '\n'.join(definition(COORD, signature) for signature in (
+            'bool wantsOSHome(', 'void selectorPreloaded(', 'void selectorLoaded(', 'void ready('))
+        for objc, cpp in {
+            '[chapter isEqual:key]': '(chapter==key)', '[bridge.chapter isEqual:key]': '(bridge.chapter==key)',
+            '[key copy]': 'key', 'key.UTF8String': '"pm_test"', '^bool{': '[=](){', '^{': '[=](){', '^(':'[=](',
+            'p.listSwitchHidden': 'p->listSwitchHidden', 'p.listFirst': 'p->listFirst',
+            'p.selectedLifeTier': 'p->selectedLifeTier', 'err.localizedDescription': 'err->localizedDescription',
+            '[PMNativeOSProgram loadChapter:key completion:loaded]': 'loadChapter(key,loaded)',
+            '[PMNativeOSProgram loadChapter:key completion:': 'loadChapter(key,', '}];': '});',
+        }.items():
+            callbacks = callbacks.replace(objc, cpp)
+        code += callbacks + '\n'
         for method in ('struct ManualCut', 'enum class CutStep', 'CutStep advanceCut(', 'void finishCut('):
             code += definition(CUT, method) + ';\n'
         code += r'''
@@ -203,6 +239,39 @@ int main(){
     assert(advanceCut(r,cut)==CutStep::cancelled && leaves==2);
     finishCut(r,cut,false);assert(restores==1); // obsolete callback cannot revive a new visit
     mode=Mode::listPending;assert(!transitioning() && claims(r,&retailButton));
+    // Exercise actual ready() with the C9 archive's home and switch settings.
+    mode=Mode::idle;r.mouse=17;NSString key=1;
+    selectorLoaded(r,17,&key);assert(bridge.cover && loads==1);
+    ready(r,button,&key);assert(!binds && loads==1 && bridge.cover); // join running preload
+    finishWorker(nil);assert(loads==2 && !binds && !bridge.cover); // one live retry
+    finishWorker(&lua);assert(visible && binds==1 && requestedEntry==generation);
+    resetEntryBridge(r);selectorLoaded(r,17,&key);finishWorker(&lua); // preload wins
+    assert(bridge.cover && bridge.program==&lua);
+    timeout();assert(!bridge.cover);
+    ready(r,button,&key);assert(loads==3 && binds==2 && requestedEntry==generation);
+    handoffScene=17;resetEntryBridge(r);selectorLoaded(r,17,&key);
+    assert(!bridge.cover && !worker); // explicit map-to-list return
+    ready(r,button,&key);finishWorker(&lua);
+    assert(!handoffScene && visible && requestedEntry!=generation);
+    selectorLoaded(r,17,&key);ready(r,button,&key);auto oldTimeout=timeout;
+    auto stale=worker;worker=nil;sceneUnloaded(r,17,false);detach(r);
+    selectorLoaded(r,18,&key);stale(&lua,nil);oldTimeout();
+    assert(!bridge.program && bridge.cover && !bridge.waiter && binds==3);
+    lua.listFirst=true;finishWorker(&lua);assert(!bridge.cover); // list home
+    r.mouse=18;ready(r,button,&key);assert(visible && binds==4 && requestedEntry!=generation);
+    resetEntryBridge(r);checkpoint=true;selectorLoaded(r,18,&key);ready(r,button,&key);
+    finishWorker(&lua);assert(bridge.cover && requestedEntry==generation);
+    resetEntryBridge(r);selectorLoaded(r,18,&key);finishWorker(nil); // failure before ready
+    ready(r,button,&key);finishWorker(nil);assert(!worker && !bridge.cover && mode==Mode::idle);
+    resetEntryBridge(r);selectorLoaded(r,18,&key);ready(r,button,&key);detach(r);
+    finishWorker(nil);assert(!worker && !bridge.cover && mode==Mode::idle); // obsolete waiter cannot retry
+    resetEntryBridge(r);selectorLoaded(r,18,&key);ready(r,button,&key);
+    int priorBinds=binds;++PMContentStore.shared.revision;finishWorker(&lua);
+    assert(!worker && !bridge.cover && mode==Mode::idle && binds==priorBinds);
+    ready(r,button,&key);finishWorker(&lua);assert(visible && binds==priorBinds+1);
+    resetEntryBridge(r);selectorLoaded(r,18,&key);finishWorker(&lua);
+    r.mouse=-1;ready(r,button,&key); // failed scene lookup invalidates just the speculative entry
+    assert(!bridge.cover && worker);finishWorker(&lua);assert(visible && requestedEntry==generation);
 }
 '''
         with tempfile.TemporaryDirectory() as tmp:

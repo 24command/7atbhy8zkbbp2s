@@ -670,7 +670,7 @@ static void beginChapterOS(Runtime&r,P selector){
  if(pendingSong.length)return;
  P chapter=r.get<P>(selector,"nowChapterInfo");if(!chapter)return;
  NSString *key=r.string(r.get<P>(chapter,"chapterCode"));
- if(![key hasPrefix:@"pm_"]){PMStorySequenceDiscardHandoff();return;}
+ if(![key hasPrefix:@"pm_"]){pmnativecoordinator::abortSelectorEntry(r);PMStorySequenceDiscardHandoff();return;}
  P challenge=r.get<P>(selector,"challengeSongSelectorControl");if(r.alive(challenge)){P button=r.get<P>(challenge,"selectButton");if(r.alive(button)&&r.unbox<bool>(r.call(r.call(button,"get_gameObject"),"get_activeInHierarchy"))){pmnativecoordinator::abortSelectorEntry(r);PMStorySequenceDiscardHandoff();return;}}
  PMStoryStartSong launch=^BOOL(NSString *installedID,NSString *difficulty,PMChapterDoorArm arm){
   try{
@@ -680,6 +680,7 @@ static void beginChapterOS(Runtime&r,P selector){
  };
  if(PMStorySequenceSelectorReady(key,launch)){pmnativecoordinator::abortSelectorEntry(r);return;}
  if([PMContentStore.shared hasChapterScript:key])pmnativecoordinator::ready(r,selector,key);
+ else pmnativecoordinator::abortSelectorEntry(r);
 }
 void selectorSceneLoaded(Runtime &r,int handle){
  if(pendingSong.length || !pmstorysequence::handoff.holds(nil))return;

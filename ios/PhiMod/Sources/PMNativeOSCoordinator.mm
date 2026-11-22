@@ -291,25 +291,40 @@ bool playSelection(Runtime &r,NSDictionary *card,NSDictionary *choice){
  resume(YES);
  return started;
 }
+bool wantsOSHome(PMNativeOSProgram *p,NSString *key){
+ return p.listSwitchHidden || !p.listFirst || PMChapterOSHasRoutedCheckpoint(key);
+}
+void selectorPreloaded(uint64_t ticket,PMNativeOSProgram *p,NSError *err){
+ if(ticket!=bridge.ticket || !bridge.loading)return;
+ bridge.loading=false;
+ if(bridge.revision!=PMContentStore.shared.revision)p=nil;
+ if(err)PMDiagnosticsWrite(err.localizedDescription.UTF8String);
+ if(!p || !wantsOSHome(p,bridge.chapter))releaseEntryCover(*bridge.runtime);
+ PMNativeOSLoadCompletion waiter=bridge.waiter;
+ bridge.waiter=nil;
+ if(waiter)waiter(p,err);
+ else bridge.program=p;
+}
 }
 void selectorLoaded(Runtime &r,int handle,NSString *key){
- if(!handle || bridge.handle==handle || transitioning() || mode==Mode::map || mode==Mode::detail)return;
+ if(!handle || bridge.handle==handle || handle==handoffScene || transitioning() || mode==Mode::map || mode==Mode::detail)return;
  resetEntryBridge(r);
+ bridge.runtime=&r;
  bridge.handle=handle;
  bridge.chapter=[key copy];
  bridge.revision=PMContentStore.shared.revision;
- NSError *err=nil;
- bridge.program=[[PMNativeOSProgram alloc] initWithChapter:key error:&err];
- if(!bridge.program){PMDiagnosticsWrite(err.localizedDescription.UTF8String);return;}
- if(bridge.program.listFirst && !bridge.program.listSwitchHidden && !PMChapterOSHasRoutedCheckpoint(key))return;
- // Cover only a confirmed automatic route. The selector must stay alive to
- // populate its stock rows and perform the usual unlock and loading checks.
- if(!coverSelector(r,handle))return;
+ bridge.loading=true;
  const auto ticket=bridge.ticket;
+ // The home policy can read saved Lua progress. Cover the candidate selector
+ // until the worker determines its home, even if Start has not supplied rows.
+ cutChecked([&]{coverSelector(r,handle);});
+ [PMNativeOSProgram loadChapter:key completion:^(PMNativeOSProgram *p,NSError *err){
+     selectorPreloaded(ticket,p,err);
+ }];
  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,8*NSEC_PER_SEC),dispatch_get_main_queue(),^{
      if(bridge.ticket==ticket && bridge.cover && mode!=Mode::entering){
          PMDiagnosticsWrite("Chapter OS: selector readiness timed out");
-         abortSelectorEntry(*bridge.runtime);
+         releaseEntryCover(*bridge.runtime); // Stop obscuring input while stock readiness is pending.
      }
  });
 }
@@ -320,29 +335,46 @@ void abortSelectorEntry(Runtime &r){
 }
 void ready(Runtime &r,P owner,NSString *key){
  if(transitioning() || mode==Mode::map || mode==Mode::detail)return;
- bool returning=false;
- if(handoffScene && [chapter isEqual:key] && revision==PMContentStore.shared.revision){
-     try { returning=handoffScene==sceneHandle(r,r.call(r.call(owner,"get_gameObject"),"get_scene")); }
-     catch(const std::exception &e){PMDiagnosticsWrite(e.what());}
- }
+ // Scene staging is optional. A failed preflight or Unity scene lookup must
+ // still allow the live selector to load the declaration and bind its switch.
+ int ownerScene=0;
+ if(handoffScene || bridge.handle)
+     cutChecked([&]{ownerScene=sceneHandle(r,r.call(r.call(owner,"get_gameObject"),"get_scene"));});
+ const bool returning=handoffScene && handoffScene==ownerScene && [chapter isEqual:key] &&
+                      revision==PMContentStore.shared.revision;
  discardHandoff();
- selector=owner;game=&r;chapter=[key copy];uint64_t epoch=++generation;
- mode=Mode::idle;
+ const bool matches=bridge.handle && bridge.handle==ownerScene && [bridge.chapter isEqual:key] &&
+                    bridge.revision==PMContentStore.shared.revision;
+ if(bridge.handle && !matches)resetEntryBridge(r);
+ if(returning)releaseEntryCover(r);
+ selector=owner;game=&r;chapter=[key copy];
+ const auto epoch=++generation,ticket=bridge.ticket;
+ const auto libraryRevision=PMContentStore.shared.revision;
  mode=Mode::loading;
- const bool staged=bridge.handle && bridge.handle==sceneHandle(r,r.call(r.call(owner,"get_gameObject"),"get_scene")) &&
-                   [bridge.chapter isEqual:key] && bridge.revision==PMContentStore.shared.revision;
- if(!staged)abortSelectorEntry(r);
- PMNativeOSLoadCompletion loaded=^(PMNativeOSProgram *p,NSError *err){if(epoch!=generation||selector!=owner||mode!=Mode::loading)return;
-  if(!p){mode=Mode::idle;if(err)PMDiagnosticsWrite(err.localizedDescription.UTF8String);return;}program=p;revision=PMContentStore.shared.revision;lifeTier=p.selectedLifeTier;gated=p.listSwitchHidden;mode=Mode::list;
+ auto current=^bool{return epoch==generation && ticket==bridge.ticket && selector==owner && mode==Mode::loading;};
+ PMNativeOSLoadCompletion loaded=^(PMNativeOSProgram *p,NSError *err){
+  if(!current())return;
+  if(!p || libraryRevision!=PMContentStore.shared.revision){
+   mode=Mode::idle;
+   releaseEntryCover(*game);
+   if(err)PMDiagnosticsWrite(err.localizedDescription.UTF8String);
+   return;
+  }
+  program=p;revision=libraryRevision;lifeTier=p.selectedLifeTier;gated=p.listSwitchHidden;mode=Mode::list;
   if(toggle::bind(*game,owner,key.UTF8String))toggle::show(*game,gated?toggle::Face::Hidden:toggle::Face::List,!gated);
-  if(returning)return;
-  if(staged){if(bridge.cover)requestedEntry=epoch;return;}
-  // A live selector can change chapters without a scene load. Preserve its
-  // existing routing once the new declaration has been validated.
-  if(gated || !p.listFirst || PMChapterOSHasRoutedCheckpoint(key))requestedEntry=epoch;
+  if(!returning && wantsOSHome(p,key))requestedEntry=epoch;
  };
- if(staged)loaded(bridge.program,nil);
- else [PMNativeOSProgram loadChapter:key completion:loaded];
+ // Join the preflight if it is still running. A missing result gets one
+ // live load, while a successful declaration is consumed exactly once.
+ PMNativeOSLoadCompletion usePreload=^(PMNativeOSProgram *p,NSError *){
+  if(!current())return;
+  if(p || libraryRevision!=PMContentStore.shared.revision)loaded(p,nil);
+  else [PMNativeOSProgram loadChapter:key completion:loaded];
+ };
+ if(bridge.loading){bridge.waiter=usePreload;return;}
+ PMNativeOSProgram *staged=bridge.program;
+ bridge.program=nil;
+ usePreload(staged,nil);
 }
 void selectorFrame(Runtime &r,P owner){
  if(!requestedEntry || requestedEntry!=generation || (mode!=Mode::list && mode!=Mode::listPending) || selector!=owner)return;

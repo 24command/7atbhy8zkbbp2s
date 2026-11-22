@@ -29,6 +29,11 @@ template <class Page> static auto nativeChapterFlag(const Page &page, int) -> de
 }
 template <class Page> static int nativeChapterFlag(const Page &, long) { return 9; }
 
+// Lua declarations may read or commit author progress, which requires a background queue.
+@interface PMNativeOSProgram ()
+- (nullable instancetype)initWithChapter:(NSString *)chapter error:(NSError **)error;
+@end
+
 @implementation PMNativeOSProgram {
     PMOSAuthorProgress *_progress;
     PMOSSession *_session;
@@ -58,6 +63,8 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
                                  userInfo:@{NSLocalizedDescriptionKey : message}];
         return nil;
     };
+    if (NSThread.isMainThread)
+        return fail(@"Chapter OS loading requires a background queue");
     PMContentStore *store = PMContentStore.shared;
     if (!chapter.length || ![store hasChapterScript:chapter])
         return fail(@"Chapter script unavailable");

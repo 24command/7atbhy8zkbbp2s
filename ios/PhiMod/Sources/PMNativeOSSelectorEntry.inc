@@ -6,6 +6,8 @@ struct SelectorEntry {
     NSUInteger revision = 0;
     NSString *chapter = nil;
     PMNativeOSProgram *program = nil;
+    bool loading = false;
+    PMNativeOSLoadCompletion waiter = nil; // Set if the live selector arrives first.
     uint32_t cover = 0;
     uint64_t ticket = 0;
 } bridge;
