@@ -80,6 +80,20 @@ enum Index : std::uint32_t {
  skinSoundUnity=71,
  challengeAdvance=72,
  challengeResultStart=73,
+ osSaturnOSStart=74,
+ osC8Start=75,
+ osC8Update=76,
+ osC8OnDisable=77,
+ osC9Awake=78,
+ osC9OnEnable=79,
+ osC9OnDisable=80,
+ osC9OnDestroy=81,
+ osC9Update=82,
+ osC9Phase2Awake=83,
+ osC9Phase2Start=84,
+ osC9Phase2OnDestroy=85,
+ osSceneLoaded=86,
+ osSceneUnloaded=87,
  Count
 };
 struct Entry {std::uint32_t site,original;std::uint64_t gateway;};

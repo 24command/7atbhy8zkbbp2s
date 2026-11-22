@@ -15,6 +15,7 @@
 #import "PMUnlockMedia.h"
 #include "PMRuntimeFeatures.hpp"
 #import "PMContentStore.h"
+#include "PMNativeOSCoordinator.hpp"
 #import "PMChapterOS.h"
 #import "PMDoorRun.h"
 #import "PMChapterSecretCourse.h"
@@ -669,23 +670,14 @@ static void beginChapterOS(Runtime&r,P selector){
  NSString *key=r.string(r.get<P>(chapter,"chapterCode"));
  if(![key hasPrefix:@"pm_"]){PMStorySequenceDiscardHandoff();return;}
  P challenge=r.get<P>(selector,"challengeSongSelectorControl");if(r.alive(challenge)){P button=r.get<P>(challenge,"selectButton");if(r.alive(button)&&r.unbox<bool>(r.call(r.call(button,"get_gameObject"),"get_activeInHierarchy"))){PMStorySequenceDiscardHandoff();return;}}
- PMOpenChapterOS(key,^BOOL(NSString *group){try{
-  if(!runtime||target(*runtime,loadingSelector)!=selector||runtime->get<bool>(selector,"exit"))return NO;
-  auto &game=*runtime;P items=game.call(selector,"get_SongItems");for(int i=0,n=game.count(items);i<n;++i){P item=game.at(items,i),song=game.get<P>(item,"songInfo");if(![game.string(game.get<P>(song,"songsId")) isEqual:group])continue;
-   game.put(selector,"nowSong",i);game.put(selector,"targetSong",i);game.put(selector,"nowSongSelectorValue",float(i));game.put(selector,"lastFrameSongSelectorValue",float(i));game.put(selector,"listMoveSpeed",0.f);game.call(selector,"SetPosition");game.call(selector,"SetText");return YES;
-  }
- }catch(const std::exception&e){log([NSString stringWithFormat:@"Chapter OS song selection: %s",e.what()]);}return NO;},^BOOL{
-  try{
-   if(!runtime||target(*runtime,loadingSelector)!=selector||runtime->get<bool>(selector,"exit"))return NO;
-   runtime->call(selector,"Back");return YES;
-  }catch(const std::exception &e){log([NSString stringWithFormat:@"Chapter OS Back: %s",e.what()]);return NO;}
- },^BOOL(NSString *installedID,NSString *difficulty,PMChapterDoorArm arm){
+ PMStoryStartSong launch=^BOOL(NSString *installedID,NSString *difficulty,PMChapterDoorArm arm){
   try{
    if(!NSThread.isMainThread||!runtime||target(*runtime,loadingSelector)!=selector)return NO;
    return startCheckpointSong(*runtime,selector,key,installedID,difficulty,arm);
-  }catch(const std::exception&e){log([NSString stringWithFormat:@"Chapter OS checkpoint: %s",e.what()]);return NO;}
-  catch(...){log(@"Chapter OS checkpoint: unexpected exception");return NO;}
- });
+  }catch(const std::exception&e){log([NSString stringWithFormat:@"Chapter OS start: %s",e.what()]);return NO;}
+ };
+ if(PMStorySequenceSelectorReady(key,launch))return;
+ if([PMContentStore.shared hasChapterScript:key])pmnativecoordinator::ready(r,selector,key,launch);
 }
 void selectorLoadingBegin(Runtime&r,P selector){
  if(playing||r.get<bool>(selector,"exit"))return;
@@ -742,7 +734,7 @@ static void releaseSelectorLoading(Runtime&r,bool finishSelected){
  // NormalStart releases loadingSelector on the successful path before OnDisable.
  if(!finishSelected&&loadingSelector)PMDoorCancelPending();
  chapterOSAwaitingSelector=false;
- PMCloseChapterOS();
+ pmnativecoordinator::detach(r);
  if(finishSelected&&loadingSelector)try{P owner=target(r,loadingSelector);if(r.alive(owner))observeSelector(r,owner);}catch(const std::exception&e){log([NSString stringWithFormat:@"Selector already leaving: %s",e.what()]);}
  deferredDifficultySort.clear();
  clearSelectorRowPresentation(r);
@@ -906,7 +898,7 @@ static bool checkpointOfficialOpen(Runtime &r,P song,NSDictionary *official,int 
 }
 
 using CheckedCourseMember = BOOL (^)(P, P, int, NSDictionary *, NSString *);
-static BOOL checkedSong(Runtime &r,P selector,NSString *chapter,NSString *installedID,NSString *difficulty,PMChapterDoorArm arm,CheckedCourseMember collect){
+static BOOL checkedSong(Runtime &r,P selector,NSString *chapter,NSString *installedID,NSString *difficulty,PMChapterDoorArm arm,CheckedCourseMember collect,bool resolveSiblings=false){
  if(!installedID.length||playing||pendingSong.length||PMUnlockMediaBusy()||!r.alive(selector)||
     r.get<bool>(selector,"exit")||r.get<bool>(selector,"isMoving"))return NO;
  P currentChapter=r.get<P>(selector,"nowChapterInfo");
@@ -927,8 +919,8 @@ static BOOL checkedSong(Runtime &r,P selector,NSString *chapter,NSString *instal
  if(!authored&&!official)return NO;
  NSString *label=[difficulty stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
  if(difficulty.length&&!label.length)return NO;
- if(collect&&authored&&label.length&&!checkpointLevelMatches(authored,label))return NO;
- if(!collect&&label.length&&(!authored||!checkpointLevelMatches(authored,label))){
+ if(collect&&!resolveSiblings&&authored&&label.length&&!checkpointLevelMatches(authored,label))return NO;
+ if((!collect||resolveSiblings)&&label.length&&(!authored||!checkpointLevelMatches(authored,label))){
   // Chapter membership is by installed chart ID, while native rows are grouped.
   // Count all chapter siblings, including inactive stock variants.
   NSDictionary *sibling=nil;
@@ -1066,6 +1058,10 @@ static BOOL startCheckpointSong(Runtime &r,P selector,NSString *chapter,NSString
  return checkedSong(r,selector,chapter,installedID,difficulty,arm,nil);
 }
 #include "PMSecretCourseSelection.inc"
+} // namespace pmcontent
+#include "PMNativeOSRows.hpp"
+#include "PMNativeOSRows.inc"
+namespace pmcontent {
 
 void levelBegin(Runtime&r){
  // Native Retry also enters here for levels that never qualify for door binding.

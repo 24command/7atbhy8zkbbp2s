@@ -2,9 +2,9 @@
 #import <Foundation/Foundation.h>
 NS_ASSUME_NONNULL_BEGIN
 typedef BOOL (^PMChapterDoorArm)(NSString *nativeGroup, int slot, NSString *resolvedChartID);
-void PMOpenChapterOS(NSString *chapter, BOOL (^selectSong)(NSString *), BOOL (^leaveChapter)(void),
-                     BOOL (^startSong)(NSString *songID, NSString * _Nullable difficulty, PMChapterDoorArm _Nullable arm));
 void PMChapterOSResumeAfterBoot(BOOL (^available)(NSString *chapter), BOOL (^navigate)(NSString *chapter));
-void PMCloseChapterOS(void);
-BOOL PMChapterOSVisible(void);
+FOUNDATION_EXPORT BOOL PMChapterOSHasRoutedCheckpoint(NSString *chapter);
+// Main thread. Claims this chapter's routed boot record once. Compare scriptHash before
+// dispatching the destination, then clear its persisted token with PMOSClearCheckpoint.
+FOUNDATION_EXPORT NSDictionary * _Nullable PMChapterOSTakeCheckpoint(NSString *chapter);
 NS_ASSUME_NONNULL_END

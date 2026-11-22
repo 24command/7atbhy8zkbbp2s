@@ -23,7 +23,7 @@ class ManagementResources(unittest.TestCase):
   self.assertIn('UnityEngine.Events.UnityAction<System.Boolean>[]',s)
  def test_skin_extras_really_have_hooks(self):
   manifest=json.loads((ROOT/'tools/gameplay_hook_manifest.json').read_text())
-  self.assertEqual(len(manifest),74)
+  self.assertEqual(len(manifest),88)
   self.assertEqual({x['id'] for x in manifest[68:72]},{'skinInstantiate','skinSoundHit','skinSoundNA','skinSoundUnity'})
   fx=source('PMPackEffects.inc');runtime=source('PMRuntimeFeatures.mm')
   self.assertIn('PlayOneShot',runtime);self.assertIn('skinEffectCreated',runtime)

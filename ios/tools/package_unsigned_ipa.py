@@ -72,8 +72,8 @@ def main() -> None:
         raise RuntimeError(f"missing framework executable: {args.framework / 'PhiMod'}")
 
     binary = (args.framework / "PhiMod").read_bytes()
-    if b"PMGameplay-v1" in binary or any(marker not in binary for marker in (b"PMJudgeHook-v1", b"PMGameplay-v2", b"PMGameplay-contract-v2-74-ios404")):
-        raise RuntimeError("Stale framework: requires PMGameplay-v2 with all 74 gates; rebuild the new sources first")
+    if b"PMGameplay-v1" in binary or any(marker not in binary for marker in (b"PMJudgeHook-v1", b"PMGameplay-v2", b"PMGameplay-contract-v2-88-ios404")):
+        raise RuntimeError("Stale framework: requires PMGameplay-v2 with all 88 gates; rebuild the new sources first")
 
     tools = Path(__file__).resolve().parent
     from patch_judge_windows import parse
@@ -87,6 +87,8 @@ def main() -> None:
                             "UnityFramework.id2", "UnityFramework.nam", "UnityFramework.til",
                             "UnityFramework.i64", "UnityFramework.idb", "*.before-phimod", "*.before-judge", "*.before-gameplay"))
         app = find_app(stage / "Payload")
+        from native_os_donors import install as install_os_donors
+        install_os_donors(app / "Data")
         enable_high_refresh(app)
         info = plistlib.loads((app / "Info.plist").read_bytes())
         if info.get("MinimumOSVersion") and float(info["MinimumOSVersion"].split(".")[0]) < 15:

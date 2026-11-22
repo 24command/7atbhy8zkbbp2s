@@ -590,5 +590,117 @@
     "args": "",
     "bytes": "ff0302d1",
     "instruction": "sub sp, sp, #0x80"
+  },
+  {
+    "id": "osSaturnOSStart",
+    "name": "SaturnOSControl.Start",
+    "rva": 22667212,
+    "args": "",
+    "bytes": "ffc302d1",
+    "instruction": "sub sp, sp, #0xb0"
+  },
+  {
+    "id": "osC8Start",
+    "name": "Chapter8SelectMusicControl.Start",
+    "rva": 22237948,
+    "args": "",
+    "bytes": "ff8302d1",
+    "instruction": "sub sp, sp, #0xa0"
+  },
+  {
+    "id": "osC8Update",
+    "name": "Chapter8SelectMusicControl.Update",
+    "rva": 22245732,
+    "args": "",
+    "bytes": "fa67bba9",
+    "instruction": "stp x26, x25, [sp, #-0x50]!"
+  },
+  {
+    "id": "osC8OnDisable",
+    "name": "Chapter8SelectMusicControl.OnDisable",
+    "rva": 22248480,
+    "args": "",
+    "bytes": "ff0302d1",
+    "instruction": "sub sp, sp, #0x80"
+  },
+  {
+    "id": "osC9Awake",
+    "name": "Phigros2.Chapter9.Chapter9Phase1Control.Awake",
+    "rva": 21957708,
+    "args": "",
+    "bytes": "f657bda9",
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
+  },
+  {
+    "id": "osC9OnEnable",
+    "name": "Phigros2.Chapter9.Chapter9Phase1Control.OnEnable",
+    "rva": 21958748,
+    "args": "",
+    "bytes": "f657bda9",
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
+  },
+  {
+    "id": "osC9OnDisable",
+    "name": "Phigros2.Chapter9.Chapter9Phase1Control.OnDisable",
+    "rva": 21958880,
+    "args": "",
+    "bytes": "f657bda9",
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
+  },
+  {
+    "id": "osC9OnDestroy",
+    "name": "Phigros2.Chapter9.Chapter9Phase1Control.OnDestroy",
+    "rva": 21962704,
+    "args": "",
+    "bytes": "f657bda9",
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
+  },
+  {
+    "id": "osC9Update",
+    "name": "Phigros2.Chapter9.Chapter9Phase1Control.Update",
+    "rva": 21968064,
+    "args": "",
+    "bytes": "f44fbea9",
+    "instruction": "stp x20, x19, [sp, #-0x20]!"
+  },
+  {
+    "id": "osC9Phase2Awake",
+    "name": "Phigros2.Chapter9.Scripts.Chapter9Phase2Control.Awake",
+    "rva": 22105352,
+    "args": "",
+    "bytes": "f657bda9",
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
+  },
+  {
+    "id": "osC9Phase2Start",
+    "name": "Phigros2.Chapter9.Scripts.Chapter9Phase2Control.Start",
+    "rva": 22105564,
+    "args": "",
+    "bytes": "f85fbca9",
+    "instruction": "stp x24, x23, [sp, #-0x40]!"
+  },
+  {
+    "id": "osC9Phase2OnDestroy",
+    "name": "Phigros2.Chapter9.Scripts.Chapter9Phase2Control.OnDestroy",
+    "rva": 22120124,
+    "args": "",
+    "bytes": "f657bda9",
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
+  },
+  {
+    "id": "osSceneLoaded",
+    "name": "UnityEngine.SceneManagement.SceneManager.Internal_SceneLoaded",
+    "rva": 60382936,
+    "args": "Scene scene, LoadSceneMode mode",
+    "bytes": "f657bda9",
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
+  },
+  {
+    "id": "osSceneUnloaded",
+    "name": "UnityEngine.SceneManagement.SceneManager.Internal_SceneUnloaded",
+    "rva": 60383140,
+    "args": "Scene scene",
+    "bytes": "f657bda9",
+    "instruction": "stp x22, x21, [sp, #-0x30]!"
   }
 ]

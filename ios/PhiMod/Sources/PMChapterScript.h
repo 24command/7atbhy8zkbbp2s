@@ -1,6 +1,7 @@
 #pragma once
 #import <Foundation/Foundation.h>
 #include <string.h>
+#import <CommonCrypto/CommonDigest.h>
 
 static NSString * const PMChapterScriptName=@"os.lua";
 static inline NSData *PMChapterScriptData(NSURL *url,NSError **error) {
@@ -11,4 +12,12 @@ static inline NSData *PMChapterScriptData(NSURL *url,NSError **error) {
   if(data.length && data.length<=2*1024*1024 && !memchr(data.bytes,0,data.length) && ((const uint8_t*)data.bytes)[0]!=0x1b && [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding])return data;
  }
  if(error)*error=[NSError errorWithDomain:@"PhiMod.ChapterOS" code:1 userInfo:@{NSLocalizedDescriptionKey:@"请选择非空的 UTF-8 Lua 源码文件（最大 2 MiB），不支持二进制字节码。"}];return nil;
+}
+
+static inline NSString *PMChapterScriptDigest(NSData *data) {
+ unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+ CC_SHA256(data.bytes,(CC_LONG)data.length,digest);
+ NSMutableString *hex=[NSMutableString stringWithCapacity:64];
+ for(size_t i=0;i<sizeof digest;++i)[hex appendFormat:@"%02x",digest[i]];
+ return hex;
 }

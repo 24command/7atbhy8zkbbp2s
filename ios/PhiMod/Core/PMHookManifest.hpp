@@ -77,6 +77,20 @@ inline constexpr ExpectedEntry expected[]={
  {0x14b3d88u,0xa9bc5ff8u}, // skinSoundUnity
  {0x1520c90u,0xd10183ffu}, // challengeAdvance
  {0x1522144u,0xd10203ffu}, // challengeResultStart
+ {0x159dfccu,0xd102c3ffu}, // osSaturnOSStart
+ {0x15352fcu,0xd10283ffu}, // osC8Start
+ {0x1537164u,0xa9bb67fau}, // osC8Update
+ {0x1537c20u,0xd10203ffu}, // osC8OnDisable
+ {0x14f0c4cu,0xa9bd57f6u}, // osC9Awake
+ {0x14f105cu,0xa9bd57f6u}, // osC9OnEnable
+ {0x14f10e0u,0xa9bd57f6u}, // osC9OnDisable
+ {0x14f1fd0u,0xa9bd57f6u}, // osC9OnDestroy
+ {0x14f34c0u,0xa9be4ff4u}, // osC9Update
+ {0x1514d08u,0xa9bd57f6u}, // osC9Phase2Awake
+ {0x1514ddcu,0xa9bc5ff8u}, // osC9Phase2Start
+ {0x15186bcu,0xa9bd57f6u}, // osC9Phase2OnDestroy
+ {0x3995ed8u,0xa9bd57f6u}, // osSceneLoaded
+ {0x3995fa4u,0xa9bd57f6u}, // osSceneUnloaded
 };
 static_assert(sizeof(expected)/sizeof(expected[0])==Count,"Offline hook manifest must match callback protocol");
 }

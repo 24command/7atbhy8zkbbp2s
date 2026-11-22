@@ -4,6 +4,7 @@
 #import "PMContentStore.h"
 #import "PMUnlockMedia.h"
 #import "PMChapterOS.h"
+#include "PMNativeOSCoordinator.hpp"
 #include "../Core/PMBuildInfo.hpp"
 #import "PMHookBackend.h"
 #import "PMSettings.h"
@@ -15,6 +16,7 @@
 #include "PMChallengeRun.hpp"
 #include "PMSecretCourseRuntime.hpp"
 #include "PMSceneUI.hpp"
+#include "PMNativeOSScene.hpp"
 #include "PMHPLife.hpp"
 #include "PMChartModes.hpp"
 #include "PMPractice.hpp"
@@ -39,7 +41,7 @@ using pmbridge::P;
 using pmbridge::Runtime;
 namespace h=phimod::hooks;
 __attribute__((used)) static const char PMGameplayProtocol[16]="PMGameplay-v2";
-__attribute__((used)) static const char PMGameplayBuild[]="PMGameplay-contract-v2-74-ios404";
+__attribute__((used)) static const char PMGameplayBuild[]="PMGameplay-contract-v2-88-ios404";
 struct V3{float x,y,z;};
 struct V2{float x,y;};
 struct Color{float r,g,b,a;};
@@ -834,7 +836,23 @@ void onMainlineCheckSongUnlock(P self,P songID,int*unlockType,P*chartUnlocked,bo
   if(unlockInfo)*unlockInfo=r.managedString(@"");
  }catch(const std::exception&e){diagf("Mainline CheckSongUnlock failed: %s",e.what());}
 }
+namespace os = pmnativeosscene;
+template<h::Index slot, os::Route route>
+void onOSController(P self, P mi) {
+ if (!os::ownsController(R(), route, self)) orig<VoidFn>(slot)(self, mi);
+}
+// IL2CPP passes UnityEngine.SceneManagement.Scene by value (one int32 field).
+struct SceneValue { int32_t handle; };
+void onOSSceneLoaded(SceneValue scene, int32_t mode, P mi) {
+ if (!os::sceneLoaded(R(), scene.handle, mode))
+  orig<void(*)(SceneValue,int32_t,P)>(h::osSceneLoaded)(scene, mode, mi);
+}
+void onOSSceneUnloaded(SceneValue scene, P mi) {
+ if (!os::sceneUnloaded(R(), scene.handle))
+  orig<void(*)(SceneValue,P)>(h::osSceneUnloaded)(scene, mi);
+}
 void onMainlinePhase1Start(P self,P mi){
+ if(os::ownsController(R(),os::Route::C9,self))return;
  orig<VoidFn>(h::mainlinePhase1Start)(self,mi);
  if(!PMSettingBool("mainlineUnlock"))return;
  try{pmunlock::mainlinePhase1Start(R(),self);}catch(const std::exception&e){diagf("Mainline Chapter9 phase1 entry failed: %s",e.what());}
@@ -852,7 +870,7 @@ void onSelector(P self,P mi){
  if(pmsecretcourse::active())contentBoundary("Secret course selector return",[&]{pmsecretcourse::menu(R());});
  clearDoorPresentation();
  if(cancelIdleDoorLaunch(self))pmstory::cancelLaunch();
- if(PMChapterOSVisible())return;
+ if(pmnativecoordinator::transitioning())return;
  if(pmchallenge::atResult || pmchallenge::cursor>=0 || pmchallenge::hpRoot)pmchallenge::cancelVariable(R());
  bool modal=false;if(!contentBoundary("Selector modal",[&]{modal=pmunlock::selectorModalUpdate(R(),self);})||modal)return;
  contentBoundary("Selector row restore",[&]{pmcontent::restoreSelectorRowVisibility(R(),self);});
@@ -905,7 +923,7 @@ bool dispatchModButton(P self){
  catch(const std::exception&e){lastError=std::string("MOD button: ")+e.what();NSLog(@"[PhiMod] %s",lastError.c_str());}
  return true; // Only an owned clone is consumed. All game buttons pass through.
 }
-void onPress(P self,P mi){if(!dispatchModButton(self))orig<VoidFn>(h::button)(self,mi);}
+void onPress(P self,P mi){if(pmnativecoordinator::press(R(),self))return;if(!dispatchModButton(self))orig<VoidFn>(h::button)(self,mi);}
 void onPointerClick(P self,P event,P mi){
  if(pmchallengeresults::pointerClick(R(),self,event))return;
  try{if(pmunlock::selectorButtonBlocked(R(),self))return;}catch(const std::exception&e){diagf("Selector modal click: %s",e.what());return;}
@@ -1111,10 +1129,25 @@ bool pmsecretcourse::backendReady(){return ready&&!broken;}
   r.resolve(r.klass("AddressableAudioSource"),"set_Volume",{"System.Single"});
   pmhp::validate(r);pmmodes::validate(r);pmcontent::validate(r);
   rt=std::move(candidate);pmcontent::attach(*rt);pmfeatures::attach(*rt);pmunlock::attach(*rt);
-  P callbacks[h::Count]={reinterpret_cast<P>(onAwake),reinterpret_cast<P>(onDestroy),reinterpret_cast<P>(onProgressStart),reinterpret_cast<P>(onProgressUpdate),reinterpret_cast<P>(onMiss),reinterpret_cast<P>(onBad),reinterpret_cast<P>(onGood),reinterpret_cast<P>(onPerfect),reinterpret_cast<P>(onScoreUpdate),reinterpret_cast<P>(onResultInfo),reinterpret_cast<P>(onClick),reinterpret_cast<P>(onDrag),reinterpret_cast<P>(onHold),reinterpret_cast<P>(onFlick),reinterpret_cast<P>(onRecord),reinterpret_cast<P>(onSetRecord),reinterpret_cast<P>(onRanking),reinterpret_cast<P>(onResultStart),reinterpret_cast<P>(onResultMove),reinterpret_cast<P>(onSelector),reinterpret_cast<P>(onSelectorOff),reinterpret_cast<P>(onSetting),reinterpret_cast<P>(onSettingTab),reinterpret_cast<P>(onSettingBack),reinterpret_cast<P>(onPress),reinterpret_cast<P>(onCheckNote),reinterpret_cast<P>(onCheckFlick),reinterpret_cast<P>(onDelete),reinterpret_cast<P>(saveBool<h::SaveBool>),reinterpret_cast<P>(saveInt<h::SaveInt>),reinterpret_cast<P>(saveFloat<h::SaveFloat>),reinterpret_cast<P>(onSaveDate),reinterpret_cast<P>(saveString<h::SaveString>),reinterpret_cast<P>(saveBool<h::LegacySaveBool>),reinterpret_cast<P>(saveInt<h::LegacySaveInt>),reinterpret_cast<P>(saveFloat<h::LegacySaveFloat>),reinterpret_cast<P>(saveString<h::LegacySaveString>),reinterpret_cast<P>(onPointerClick),reinterpret_cast<P>(onSubmit),reinterpret_cast<P>(onLifeStart),reinterpret_cast<P>(onLifeNormalized),reinterpret_cast<P>(onLifeModStart),reinterpret_cast<P>(onHPBackgroundStart),reinterpret_cast<P>(onProgressLevelOver),reinterpret_cast<P>(onLifeUpdate),reinterpret_cast<P>(onLevelCodes),reinterpret_cast<P>(onLevelInformation),reinterpret_cast<P>(onNoteManager),reinterpret_cast<P>(onBlocking),reinterpret_cast<P>(onBlockLate),reinterpret_cast<P>(onHoldMove),reinterpret_cast<P>(onNoteMove<h::clickMove>),reinterpret_cast<P>(onNoteMove<h::dragMove>),reinterpret_cast<P>(onNoteMove<h::flickMove>),reinterpret_cast<P>(onJudgeUpdate),reinterpret_cast<P>(onAddressableAudioUpdate),reinterpret_cast<P>(onCreateNote),reinterpret_cast<P>(onAssetCtor),reinterpret_cast<P>(onAssetRelease),reinterpret_cast<P>(onSongInfo),reinterpret_cast<P>(onItemInfo),reinterpret_cast<P>(onAssetReleaseResource),reinterpret_cast<P>(onChapterStart),reinterpret_cast<P>(onNormalStart),reinterpret_cast<P>(onMainlineCheckSongUnlock),reinterpret_cast<P>(onMainlinePhase1Start),reinterpret_cast<P>(onMainlinePhase1ToPhase2),reinterpret_cast<P>(onMainlineApplyMapCover),reinterpret_cast<P>(onSkinInstantiate),reinterpret_cast<P>(onSkinSound<h::skinSoundHit>),reinterpret_cast<P>(onSkinSound<h::skinSoundNA>),reinterpret_cast<P>(onSkinSound<h::skinSoundUnity>),reinterpret_cast<P>(onChallengeAdvance),reinterpret_cast<P>(onChallengeResultStart)};
+  P callbacks[h::Count]={reinterpret_cast<P>(onAwake),reinterpret_cast<P>(onDestroy),reinterpret_cast<P>(onProgressStart),reinterpret_cast<P>(onProgressUpdate),reinterpret_cast<P>(onMiss),reinterpret_cast<P>(onBad),reinterpret_cast<P>(onGood),reinterpret_cast<P>(onPerfect),reinterpret_cast<P>(onScoreUpdate),reinterpret_cast<P>(onResultInfo),reinterpret_cast<P>(onClick),reinterpret_cast<P>(onDrag),reinterpret_cast<P>(onHold),reinterpret_cast<P>(onFlick),reinterpret_cast<P>(onRecord),reinterpret_cast<P>(onSetRecord),reinterpret_cast<P>(onRanking),reinterpret_cast<P>(onResultStart),reinterpret_cast<P>(onResultMove),reinterpret_cast<P>(onSelector),reinterpret_cast<P>(onSelectorOff),reinterpret_cast<P>(onSetting),reinterpret_cast<P>(onSettingTab),reinterpret_cast<P>(onSettingBack),reinterpret_cast<P>(onPress),reinterpret_cast<P>(onCheckNote),reinterpret_cast<P>(onCheckFlick),reinterpret_cast<P>(onDelete),reinterpret_cast<P>(saveBool<h::SaveBool>),reinterpret_cast<P>(saveInt<h::SaveInt>),reinterpret_cast<P>(saveFloat<h::SaveFloat>),reinterpret_cast<P>(onSaveDate),reinterpret_cast<P>(saveString<h::SaveString>),reinterpret_cast<P>(saveBool<h::LegacySaveBool>),reinterpret_cast<P>(saveInt<h::LegacySaveInt>),reinterpret_cast<P>(saveFloat<h::LegacySaveFloat>),reinterpret_cast<P>(saveString<h::LegacySaveString>),reinterpret_cast<P>(onPointerClick),reinterpret_cast<P>(onSubmit),reinterpret_cast<P>(onLifeStart),reinterpret_cast<P>(onLifeNormalized),reinterpret_cast<P>(onLifeModStart),reinterpret_cast<P>(onHPBackgroundStart),reinterpret_cast<P>(onProgressLevelOver),reinterpret_cast<P>(onLifeUpdate),reinterpret_cast<P>(onLevelCodes),reinterpret_cast<P>(onLevelInformation),reinterpret_cast<P>(onNoteManager),reinterpret_cast<P>(onBlocking),reinterpret_cast<P>(onBlockLate),reinterpret_cast<P>(onHoldMove),reinterpret_cast<P>(onNoteMove<h::clickMove>),reinterpret_cast<P>(onNoteMove<h::dragMove>),reinterpret_cast<P>(onNoteMove<h::flickMove>),reinterpret_cast<P>(onJudgeUpdate),reinterpret_cast<P>(onAddressableAudioUpdate),reinterpret_cast<P>(onCreateNote),reinterpret_cast<P>(onAssetCtor),reinterpret_cast<P>(onAssetRelease),reinterpret_cast<P>(onSongInfo),reinterpret_cast<P>(onItemInfo),reinterpret_cast<P>(onAssetReleaseResource),reinterpret_cast<P>(onChapterStart),reinterpret_cast<P>(onNormalStart),reinterpret_cast<P>(onMainlineCheckSongUnlock),reinterpret_cast<P>(onMainlinePhase1Start),reinterpret_cast<P>(onMainlinePhase1ToPhase2),reinterpret_cast<P>(onMainlineApplyMapCover),reinterpret_cast<P>(onSkinInstantiate),reinterpret_cast<P>(onSkinSound<h::skinSoundHit>),reinterpret_cast<P>(onSkinSound<h::skinSoundNA>),reinterpret_cast<P>(onSkinSound<h::skinSoundUnity>),reinterpret_cast<P>(onChallengeAdvance),reinterpret_cast<P>(onChallengeResultStart),
+    reinterpret_cast<P>(onOSController<h::osSaturnOSStart, os::Route::SaturnOS>),
+    reinterpret_cast<P>(onOSController<h::osC8Start, os::Route::C8>),
+    reinterpret_cast<P>(onOSController<h::osC8Update, os::Route::C8>),
+    reinterpret_cast<P>(onOSController<h::osC8OnDisable, os::Route::C8>),
+    reinterpret_cast<P>(onOSController<h::osC9Awake, os::Route::C9>),
+    reinterpret_cast<P>(onOSController<h::osC9OnEnable, os::Route::C9>),
+    reinterpret_cast<P>(onOSController<h::osC9OnDisable, os::Route::C9>),
+    reinterpret_cast<P>(onOSController<h::osC9OnDestroy, os::Route::C9>),
+    reinterpret_cast<P>(onOSController<h::osC9Update, os::Route::C9>),
+    reinterpret_cast<P>(onOSController<h::osC9Phase2Awake, os::Route::C9Phase2>),
+    reinterpret_cast<P>(onOSController<h::osC9Phase2Start, os::Route::C9Phase2>),
+    reinterpret_cast<P>(onOSController<h::osC9Phase2OnDestroy, os::Route::C9Phase2>),
+    reinterpret_cast<P>(onOSSceneLoaded),
+    reinterpret_cast<P>(onOSSceneUnloaded)};
   auto slots=reinterpret_cast<h::Slot*>(const_cast<uint8_t*>(base)+state);
   for(uint32_t i=0;i<h::Count;++i)__atomic_store_n(&slots[i].callback,reinterpret_cast<uint64_t>(callbacks[i]),__ATOMIC_RELEASE);
-  ready=true;lastError="72 offline entry hooks v2 installed; verify on device";diagf("PMHookBackend.install success hooks=%u judgeUpdate=1 audioUpdate=1",h::Count);return [self status];
+  os::hooksInstalled();
+  ready=true;lastError="88 offline entry hooks v2 installed; verify on device";diagf("PMHookBackend.install success hooks=%u judgeUpdate=1 audioUpdate=1",h::Count);return [self status];
  }catch(const std::exception&e){lastError=e.what();if(installAttempts<=3||installAttempts%10==0)diagf("PMHookBackend.install failed: %s",e.what());return [self status];}
  }@catch(NSException*e){lastError=std::string("Initialization exception: ")+(e.reason.UTF8String?:e.name.UTF8String);if(installAttempts<=3||installAttempts%10==0)diagf("PMHookBackend.install failed: %s",lastError.c_str());return [self status];}
 }

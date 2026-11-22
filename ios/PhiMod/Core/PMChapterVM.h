@@ -46,7 +46,7 @@ typedef struct {
     char intro[PMOSMaxChallengeIntro][256]; /* Local GIF/MP4 basenames in playback order. */
     PMOSChallengeSong nextSongs[PMOSMaxChallengeNextSongs]; /* After each clear, in order. */
 } PMOSChallenge;
-typedef struct {int nodes,screens;double aspect;char names[PMOSMaxScreens][PMOSScreenNameSize];PMOSNode elements[PMOSMaxNodes];int listFirst,count,listSwitchHidden,selectedLifeTier; PMOSCard cards[128];char error[384];
+typedef struct {int nodes,screens;double aspect;char names[PMOSMaxScreens][PMOSScreenNameSize];PMOSNode elements[PMOSMaxNodes];int listFirst,count,listSwitchHidden,selectedLifeTier; int nativeChapter; /* 8 or 9, defaults to 9. */ PMOSCard cards[128];char error[384];
     int cueCount; PMOSChallengeCue cues[PMOSMaxChallengeCues];
     int challengeCount; PMOSChallenge challenges[PMOSMaxChallenges];
     char chapterCover[256]; /* Last chapterCover(stillBasename) during declaration; empty = configured art. */

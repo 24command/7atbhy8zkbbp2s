@@ -132,6 +132,16 @@ static int listSwitchAfter(lua_State *L) {
     return 0;
 }
 
+static int nativeChapter(lua_State *L) {
+    PMOSPage *page = declarationPage(L);
+    if (lua_gettop(L) != 1 || !lua_isinteger(L, 1))
+        return luaL_error(L, "nativeChapter expects 8 or 9");
+    lua_Integer chapter = lua_tointeger(L, 1);
+    if (chapter != 8 && chapter != 9) return luaL_error(L, "nativeChapter expects 8 or 9");
+    page->nativeChapter = (int)chapter;
+    return 0;
+}
+
 static int home(lua_State *L) {
     PMOSPage *page = declarationPage(L);
     size_t n;
@@ -249,6 +259,7 @@ typedef struct { const char *source; size_t length; } Script;
 
 static int evaluate(lua_State *L) {
     const Script *script = lua_touserdata(L, 1);
+    lua_pushcfunction(L, nativeChapter); lua_setglobal(L, "nativeChapter");
     lua_pushcfunction(L, home);
     lua_setglobal(L, "home");
     lua_pushcfunction(L, card);
@@ -341,6 +352,7 @@ PMOSSession *PMOSStartWithProgress(const char *src, size_t len, int songs,
                                   PMOSPage *page, PMOSProgress callbacks) {
     if (!page) return NULL;
     memset(page, 0, sizeof(*page));
+    page->nativeChapter = 9;
     if (!src || !len || len > SourceLimit || songs < 0) {
         snprintf(page->error, sizeof(page->error), "invalid OS input");
         return NULL;

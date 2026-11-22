@@ -1,16 +1,41 @@
-// Hosted iOS XCTest. Link the chapter OS presentation unit into the test host.
+// Hosted iOS XCTest. Compile the legacy canvas into this test bundle.
 #import <XCTest/XCTest.h>
 #import <UIKit/UIKit.h>
+#import <ImageIO/ImageIO.h>
+#import "../PhiMod/Core/PMChapterVM.h"
+#import "../PhiMod/Sources/PMOSMediaView.h"
+#import "../PhiMod/Sources/PMOSRevealView.h"
+#include <cmath>
 
-@interface PMChapterCanvas : UIView
-@property(nonatomic,copy) NSArray *nodes;
-@property(nonatomic,copy) void (^runHandler)(NSInteger);
-@property(nonatomic,readonly) NSArray<UIControl *> *items;
-@property(nonatomic,readonly) NSUInteger visit;
-- (void)displayPage:(NSInteger)index;
-- (void)setElement:(NSInteger)index visible:(BOOL)visible;
-- (void)dragPiece:(UIPanGestureRecognizer *)pan;
-@end
+static NSOperationQueue *coverQueue() {
+    static NSOperationQueue *queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        queue = [NSOperationQueue new];
+        queue.maxConcurrentOperationCount = 2;
+    });
+    return queue;
+}
+
+static UIImage *thumb(NSString *path, NSInteger pixels) {
+    NSURL *url = [NSURL fileURLWithPath:path];
+    CGImageSourceRef source = CGImageSourceCreateWithURL((__bridge CFURLRef)url, NULL);
+    if (!source) return nil;
+    NSDictionary *options = @{
+        (__bridge NSString *)kCGImageSourceCreateThumbnailFromImageAlways: @YES,
+        (__bridge NSString *)kCGImageSourceCreateThumbnailWithTransform: @YES,
+        (__bridge NSString *)kCGImageSourceThumbnailMaxPixelSize: @(pixels)
+    };
+    CGImageRef image = CGImageSourceCreateThumbnailAtIndex(source, 0, (__bridge CFDictionaryRef)options);
+    CFRelease(source);
+    if (!image) return nil;
+    UIImage *result = [UIImage imageWithCGImage:image];
+    CGImageRelease(image);
+    return result;
+}
+
+#include "../PhiMod/Sources/PMChapterCanvas.inc"
+
 @interface PMTestDropPan : UIPanGestureRecognizer
 @property(nonatomic,weak) UIView *piece;
 @property(nonatomic) UIGestureRecognizerState phase;
