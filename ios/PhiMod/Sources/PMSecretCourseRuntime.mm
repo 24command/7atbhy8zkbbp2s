@@ -36,7 +36,13 @@ void release(Runtime &r){if(owned)r.gchandle_free(owned);owned=0;previous.reset(
 }
 P pauseOwner(){return active()&&lockPause&&!reported&&!finishedLeg?progressOwner:nullptr;}
 bool active(){return protecting.load();}
-void bindChart(Runtime &r,P song,NSDictionary *chart){bindings.push_back({r.gchandle_new(song,false),chart?:@{}});}
+void bindChart(Runtime &r,P song,NSDictionary *chart){
+ // Allocate the vector slot first so a failed allocation cannot leak a GC root.
+ bindings.push_back({0, [chart copy] ?: @{}});
+ auto &entry=bindings.back();
+ entry.root=r.gchandle_new(song,false);
+ if(!entry.root){bindings.pop_back();throw std::runtime_error("Cannot retain course chart binding");}
+}
 void clearBindings(Runtime &r){for(auto &b:bindings)r.gchandle_free(b.root);bindings.clear();}
 NSDictionary *binding(Runtime &r,P song){for(auto &b:bindings)if(r.gchandle_get_target(b.root)==song)return b.chart;return nil;}
 bool launch(Runtime &r,P list,NSString *chapter,NSString *door,NSInteger tier,bool noPause){

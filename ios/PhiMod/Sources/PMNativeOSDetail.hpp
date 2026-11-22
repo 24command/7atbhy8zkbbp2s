@@ -15,7 +15,7 @@ P findDonor(Runtime&, P donorRoot, Style);
 // Supply an active root enclosing both controller and canvas, never the stock scene.
 // One disposable donor per visit. Never reuse its delayed animation callbacks.
 // Coordinator owns input: it routes slot changes through update(), accepts
-// Start only via its checked startSong callback, and calls close before unload.
+// Start only via the checked OS scene launch, and calls close before unload.
 // C9 builds stock addressable keys internally. For a PM/ cover pass the live
 // Unity Sprite resolved for this exact selection, or a row whose cover loader
 // has already settled on its exact coverAssetCode. Otherwise open/update fails.

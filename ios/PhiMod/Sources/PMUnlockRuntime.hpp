@@ -6,6 +6,7 @@ bool playChapterStoryMedia(NSString *path, NSString *cover, NSString *title, voi
 void difficultyChanged(pmbridge::Runtime&);
 void attach(pmbridge::Runtime&);void validate(pmbridge::Runtime&);void mainlinePhase1Start(pmbridge::Runtime&,void*);bool mainlinePhase1ToPhase2(pmbridge::Runtime&,void*);bool mainlineApplyMapCover(pmbridge::Runtime&,void*);
 NSString* coverPath(pmbridge::Runtime&,NSString* identifier,bool persist=true);
+bool chapterStartIntro(pmbridge::Runtime&,NSString *identifier,BOOL (^valid)(void),void (^done)(BOOL));
 bool beforeStart(pmbridge::Runtime&,void* selector,void (^resume)(void));
 void songInfo(pmbridge::Runtime&,void* song,int slot,void* value);
 void itemInfo(pmbridge::Runtime&,void* item,int slot,void* value);

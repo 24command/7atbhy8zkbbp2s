@@ -210,6 +210,22 @@ NSString*coverPath(Runtime&r,NSString*identifier,bool persist){
  }
  NSString*path=[folder stringByAppendingPathComponent:[variant stringByAppendingString:@".png"]];return [NSFileManager.defaultManager fileExistsAtPath:path]?path:[folder stringByAppendingPathComponent:@"image.png"];
 }
+bool chapterStartIntro(Runtime &r,NSString *identifier,BOOL (^valid)(void),void (^done)(BOOL)){
+ NSDictionary *subject=entity(identifier), *rule=subject[@"unlock"];
+ if(![rule[@"enabled"] boolValue] || [rule[@"playTiming"] intValue]==0 || ![rule[@"animation"] length])return false;
+ NSString *path=[[PMContentStore.shared asset:identifier] stringByAppendingPathComponent:rule[@"animation"]];
+ NSString *signature=PMUnlockSignature(rule);
+ menuActive=false;
+ BOOL presented=presentMedia(path,coverPath(r,identifier),subject[@"title"]?:subject[@"name"],^(BOOL completed){
+  restoreMediaAudio();menuActive=true;
+  if(!completed || !valid() || ![PMUnlockSignature(ruleFor(identifier)) isEqualToString:signature]){done(NO);return;}
+  NSError *error=nil;[progress seen:identifier signature:signature error:&error];
+  if(error)logf("Intro progress save failed: %s",error.localizedDescription.UTF8String);
+  continueChain(identifier);done(YES);
+ });
+ if(!presented)menuActive=true;
+ return presented;
+}
 bool beforeStart(Runtime&r,void*selector,void(^resume)(void)){
  if(PMUnlockMediaBusy())return true;
  P owner=(P)selector;int index=r.get<int>(owner,"nowSong"),slot=r.get<int>(owner,"nowLevel");
@@ -217,19 +233,15 @@ bool beforeStart(Runtime&r,void*selector,void(^resume)(void)){
  P item=r.at(items,index),song=r.get<P>(item,"songInfo");NSString*group=r.string(r.get<P>(song,"songsId"));
  NSDictionary*subject=songEntity(group,slot);if(chapterBlocked(r,group,subject)){logf("Unlock start blocked by parent chapter");return true;}if(!subject)return false;
  NSString*id=subject[@"id"],*chapter=subject[@"targetChapter"];if(!opened(r,id)||(entity(chapter)&&!opened(r,chapter))){logf("Unlock start blocked: %s",id.UTF8String);return true;}
- NSDictionary*rule=subject[@"unlock"];if(![rule[@"enabled"] boolValue]||[rule[@"playTiming"] intValue]==0||![rule[@"animation"]length])return false;
- NSString*name=rule[@"animation"],*folder=[PMContentStore.shared asset:id],*signature=PMUnlockSignature(rule);
- uint32_t handle=r.gchandle_new(owner,false);Runtime*rt=&r;menuActive=false;
- BOOL presented=presentMedia(name.length?[folder stringByAppendingPathComponent:name]:@"",coverPath(r,id),subject[@"title"]?:subject[@"name"],^(BOOL completed){
-  restoreMediaAudio(); // Release our audio state before native navigation changes it.
-  P current=rt->gchandle_get_target(handle);bool valid=rt->alive(current);rt->gchandle_free(handle);menuActive=true;
-  if(!completed||!valid){PMDoorCancelPending();pmstory::cancelLaunch();return;}
-  NSDictionary*latest=ruleFor(id);if(![PMUnlockSignature(latest) isEqualToString:signature]){PMDoorCancelPending();pmstory::cancelLaunch();return;}
-  NSError*error=nil;[progress seen:id signature:signature error:&error];if(error)logf("Intro progress save failed: %s",error.localizedDescription.UTF8String);continueChain(id);
+ if(![subject[@"unlock"][@"animation"] length])return false;
+ uint32_t handle=r.gchandle_new(owner,false);Runtime *rt=&r;
+ bool presented=chapterStartIntro(r,id,^BOOL{return rt->alive(rt->gchandle_get_target(handle));},^(BOOL completed){
+  rt->gchandle_free(handle);
+  if(!completed){PMDoorCancelPending();pmstory::cancelLaunch();return;}
   resume();
  });
- if(!presented){r.gchandle_free(handle);menuActive=true;logf("Unlock intro deferred: menu is busy");return false;}
- return true;
+ if(!presented)r.gchandle_free(handle);
+ return presented;
 }
 void resultStarted(Runtime&r,void*owner){if(resultOwner)r.gchandle_free(resultOwner);resultOwner=r.gchandle_new(owner,false);}
 bool beforeResultContinue(Runtime&r,void*button){
@@ -309,8 +321,8 @@ bool mainlineApplyMapCover(Runtime&r,void*value){
  return true;
 }
 void attach(Runtime&r){runtime=&r;}
-void songInfo(Runtime&r,void*song,int slot,void*value){if(!runtime||!song)return;try{NSString*id=r.string(r.get<P>((P)song,"songsId"));NSDictionary*custom=pmcontent::difficultyForSong(r,song,slot)?:songEntity(id,slot);if(custom)id=custom[@"id"];else if(entity(id))return;if(id.length&&entity(id))opened(r,id);}catch(const std::exception&e){logf("Unlock song info failed: %s",e.what());}(void)slot;(void)value;}
-void itemInfo(Runtime&r,void*item,int slot,void*value){if(!runtime||!item)return;try{P info=r.get<P>((P)item,"songInfo");NSString*id=info?r.string(r.get<P>(info,"songsId")):nil;NSDictionary*selected=pmcontent::difficultyForSong(r,info,slot)?:songEntity(id,slot);if(selected)id=selected[@"id"];else if(entity(id))return;unlockSong(r,info,id,slot);NSDictionary*custom=entity(id);if(custom){bool open=opened(r,id);BOOL hidden=[custom[@"hidden"] boolValue]&&!open;BOOL secret=[custom[@"secret"] boolValue]&&!open&&!hidden;r.put((P)item,"<Unlocked>k__BackingField",true);r.put((P)item,"visible",!hidden);r.put((P)item,"<InfoHidden>k__BackingField",secret);}else if(PMSettingBool("mainlineUnlock")&&pmcontent::isMainlineSong(id)){P difficulty=r.get<P>(info,"difficulty");bool any=false;for(uintptr_t i=0;difficulty&&i<r.array_length(difficulty);++i)if(r.unbox<float>(r.arrayAt(difficulty,(int)i))>0)any=true;r.put((P)item,"<Unlocked>k__BackingField",any);r.put((P)item,"unlockType",any?-1:0);r.put((P)item,"unlockInfo",r.managedString(@""));r.put((P)item,"visible",true);r.put((P)item,"<InfoHidden>k__BackingField",false);}if(id.length&&entity(id))opened(r,id);}catch(const std::exception&e){logf("Unlock item info failed: %s",e.what());}}
+void songInfo(Runtime&r,void*song,int slot,void*value){if(!runtime||!song||pmcontent::capturingStartInfo(song))return;try{NSString*id=r.string(r.get<P>((P)song,"songsId"));NSDictionary*custom=pmcontent::difficultyForSong(r,song,slot)?:songEntity(id,slot);if(custom)id=custom[@"id"];else if(entity(id))return;if(id.length&&entity(id))opened(r,id);}catch(const std::exception&e){logf("Unlock song info failed: %s",e.what());}(void)slot;(void)value;}
+void itemInfo(Runtime&r,void*item,int slot,void*value){if(!runtime||!item)return;try{P info=r.get<P>((P)item,"songInfo");if(pmcontent::capturingStartInfo(info))return;NSString*id=info?r.string(r.get<P>(info,"songsId")):nil;NSDictionary*selected=pmcontent::difficultyForSong(r,info,slot)?:songEntity(id,slot);if(selected)id=selected[@"id"];else if(entity(id))return;unlockSong(r,info,id,slot);NSDictionary*custom=entity(id);if(custom){bool open=opened(r,id);BOOL hidden=[custom[@"hidden"] boolValue]&&!open;BOOL secret=[custom[@"secret"] boolValue]&&!open&&!hidden;r.put((P)item,"<Unlocked>k__BackingField",true);r.put((P)item,"visible",!hidden);r.put((P)item,"<InfoHidden>k__BackingField",secret);}else if(PMSettingBool("mainlineUnlock")&&pmcontent::isMainlineSong(id)){P difficulty=r.get<P>(info,"difficulty");bool any=false;for(uintptr_t i=0;difficulty&&i<r.array_length(difficulty);++i)if(r.unbox<float>(r.arrayAt(difficulty,(int)i))>0)any=true;r.put((P)item,"<Unlocked>k__BackingField",any);r.put((P)item,"unlockType",any?-1:0);r.put((P)item,"unlockInfo",r.managedString(@""));r.put((P)item,"visible",true);r.put((P)item,"<InfoHidden>k__BackingField",false);}if(id.length&&entity(id))opened(r,id);}catch(const std::exception&e){logf("Unlock item info failed: %s",e.what());}}
 NSString*requirementName(NSString*ref,bool chapter){
  NSDictionary*db=unlockLibrary();
  for(NSDictionary*entry in db[chapter?@"chapters":@"songs"])if([entry[@"id"] isEqualToString:ref]||(!chapter&&[entry[@"groupId"] isEqualToString:ref]))return entry[chapter?@"name":@"title"]?:ref;

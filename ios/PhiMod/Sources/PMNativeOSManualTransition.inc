@@ -38,7 +38,7 @@ void finishCut(Runtime &r,const ManualCut &cut,bool accepted) {
     }
     if (!cut.current()) return;
     if (cut.direction == Mode::listCut) mode = Mode::list;
-    else if (!presentMap(r)) leave(r,false,nil);
+    else if (!presentMap(r)) leave(r,false);
 }
 
 enum class CutStep { waiting, accepted, cancelled };
@@ -56,7 +56,7 @@ CutStep advanceCut(Runtime &r,const ManualCut &cut) {
         enter(r);
         return mode == Mode::entering ? CutStep::accepted : CutStep::cancelled;
     }
-    return !gated && scene::activeRoot(r) && leave(r,false,nil) ? CutStep::accepted : CutStep::cancelled;
+    return !gated && scene::activeRoot(r) && leave(r,false) ? CutStep::accepted : CutStep::cancelled;
 }
 
 void pollCut(Runtime *runtime,ManualCut cut) {

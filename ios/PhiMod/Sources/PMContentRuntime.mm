@@ -679,7 +679,7 @@ static void beginChapterOS(Runtime&r,P selector){
   }catch(const std::exception&e){log([NSString stringWithFormat:@"Chapter OS start: %s",e.what()]);return NO;}
  };
  if(PMStorySequenceSelectorReady(key,launch)){pmnativecoordinator::abortSelectorEntry(r);return;}
- if([PMContentStore.shared hasChapterScript:key])pmnativecoordinator::ready(r,selector,key,launch);
+ if([PMContentStore.shared hasChapterScript:key])pmnativecoordinator::ready(r,selector,key);
 }
 void selectorSceneLoaded(Runtime &r,int handle){
  if(pendingSong.length || !pmstorysequence::handoff.holds(nil))return;
@@ -902,10 +902,10 @@ static bool checkpointLevelMatches(NSDictionary *chart,NSString *label){
 
 // A new authored slot on an official row still requires access to the row.
 // If the slot already existed, its individual native lock takes precedence.
-static bool checkpointOfficialOpen(Runtime &r,P song,NSDictionary *official,int slot){
+static bool checkpointOfficialGroupOpen(Runtime &r,P groupID,NSDictionary *official,int slot){
  int unlockType=0;P mask=nullptr,hint=nullptr;bool appeared=false;
  r.call(r.mainGame(),"CheckSongUnlock",{"System.String","System.Int32&","System.Boolean[]&","System.Boolean&","System.String&"},
-        {r.get<P>(song,"songsId"),&unlockType,&mask,&appeared,&hint});
+        {groupID,&unlockType,&mask,&appeared,&hint});
  if(!appeared||!mask)return false;
  NSArray *numbers=official[@"difficulty"];
  auto openSlot=[&](int i){return uintptr_t(i)<r.array_length(mask)&&r.unbox<bool>(r.arrayAt(mask,i));};
@@ -913,6 +913,17 @@ static bool checkpointOfficialOpen(Runtime &r,P song,NSDictionary *official,int 
  for(int i=0;i<4&&NSUInteger(i)<numbers.count;++i)if([numbers[i] doubleValue]>0&&openSlot(i))return true;
  return false;
 }
+
+static bool checkpointOfficialOpen(Runtime &r,P song,NSDictionary *official,int slot){
+ return checkpointOfficialGroupOpen(r,r.get<P>(song,"songsId"),official,slot);
+}
+
+// Native row construction synchronously calls both info hooks. Run only their
+// native bodies for this private song, then apply the resolved chart once the
+// row has appended its extra mods and supplied any chart asset override.
+static thread_local P capturingSong=nullptr;
+bool capturingStartInfo(P song){return song && song==capturingSong;}
+static void applyExactLevelInfo(Runtime&,NSString *group,NSDictionary *chart,P info);
 
 using CheckedCourseMember = BOOL (^)(P, P, int, NSDictionary *, NSString *);
 static BOOL checkedSong(Runtime &r,P selector,NSString *chapter,NSString *installedID,NSString *difficulty,PMChapterDoorArm arm,CheckedCourseMember collect,bool resolveSiblings=false){
@@ -1121,7 +1132,38 @@ bool assetRelease(Runtime&r,P self,bool force){
  if(contents&&r.unbox<bool>(r.call(contents,"ContainsKey",{"System.String"},{key}))&&r.call(contents,"get_Item",{"System.String"},{key})==self)r.call(contents,"Remove",{"System.String"},{key});
  log([NSString stringWithFormat:@"Content custom release (%@): %@",force?@"ReleaseResource":@"Release",r.string(key)]);return true;
 }
-void levelInfo(Runtime&r,P song,int slot,P info){NSString*id=r.string(r.get<P>(song,"songsId"));NSDictionary*bound=pmsecretcourse::binding(r,song);NSDictionary*custom=bound?(bound.count?bound:nil):(frozenDifficulty(r,song)?:songFor(id,slot));if(!info)return;if(!custom){NSString*cover=[[PMContentStore.shared coverFolder:id]stringByAppendingPathComponent:@"image.png"];if(cover&&[NSFileManager.defaultManager fileExistsAtPath:cover]){NSString*key=[NSString stringWithFormat:@"PM/%@/image@%lu",id,(unsigned long)PMContentStore.shared.revision];r.put(info,"illustrationKey",r.managedString(key));}return;}NSString*identifier=custom[@"id"];for(const auto&entry:std::vector<std::pair<const char*,NSString*>>{{"songsId",identifier},{"songsName",custom[@"title"] ?: @""},{"composer",custom[@"composer"] ?: @""},{"charter",custom[@"charter"] ?: @""},{"illustrator",custom[@"illustrator"] ?: @""},{"songsDifficulty",[@(PMDifficultyNumber(custom[@"difficulty"])) description]}})r.put(info,entry.first,r.managedString(entry.second));for(auto pair:std::vector<std::pair<const char*,const char*>>{{"musicAddressableKey","playMusic"},{"chartAddressableKey","chart"},{"illustrationKey","courseImage"}}){NSString*k=[NSString stringWithFormat:@"PM/%@/%s@%lu",identifier,pair.second,(unsigned long)PMContentStore.shared.revision];r.put(info,pair.first,r.managedString(k));}}
+void levelInfo(Runtime &r,P song,int slot,P info){
+ if(capturingStartInfo(song))return;
+ NSString *id=r.string(r.get<P>(song,"songsId"));
+ NSDictionary *bound=pmsecretcourse::binding(r,song);
+ NSDictionary *custom=bound?(bound.count?bound:nil):(frozenDifficulty(r,song)?:songFor(id,slot));
+ applyExactLevelInfo(r,id,custom,info);
+}
+static void applyExactLevelInfo(Runtime &r,NSString *id,NSDictionary *custom,P info){
+ if(!info)return;
+ if(!custom){
+  NSString *cover=[[PMContentStore.shared coverFolder:id] stringByAppendingPathComponent:@"image.png"];
+  if(cover && [NSFileManager.defaultManager fileExistsAtPath:cover]){
+   NSString *key=[NSString stringWithFormat:@"PM/%@/image@%lu",id,(unsigned long)PMContentStore.shared.revision];
+   r.put(info,"illustrationKey",r.managedString(key));
+  }
+  return;
+ }
+ NSString *identifier=custom[@"id"];
+ const std::pair<const char*,NSString*> fields[]={
+  {"songsId",identifier},{"songsName",custom[@"title"]?:@""},{"composer",custom[@"composer"]?:@""},
+  {"charter",custom[@"charter"]?:@""},{"illustrator",custom[@"illustrator"]?:@""},
+  {"songsDifficulty",[@(PMDifficultyNumber(custom[@"difficulty"])) description]}
+ };
+ for(auto &field:fields)r.put(info,field.first,r.managedString(field.second));
+ const std::pair<const char*,const char*> assets[]={
+  {"musicAddressableKey","playMusic"},{"chartAddressableKey","chart"},{"illustrationKey","courseImage"}
+ };
+ for(auto &asset:assets){
+  NSString *key=[NSString stringWithFormat:@"PM/%@/%s@%lu",identifier,asset.second,(unsigned long)PMContentStore.shared.revision];
+  r.put(info,asset.first,r.managedString(key));
+ }
+}
 void ensureVisualChart(Runtime&r){NSString*actual=gameplayChartID(r);if(actual&&[actual isEqualToString:levelID]&&currentChart)return;levelID=actual;lastCustom=actual.length>0;currentChart=nil;if(!actual)return;NSString*path=[[PMContentStore.shared asset:levelID]stringByAppendingPathComponent:@"chart.json"];NSData*d=[NSData dataWithContentsOfFile:path];currentChart=d?[NSJSONSerialization JSONObjectWithData:d options:0 error:nil]:nil;if(!currentChart)throw std::runtime_error("Custom visual chart missing");resourceSubdir=@"";for(NSDictionary*s in [PMContentStore.shared snapshot][@"songs"])if([s[@"id"]isEqualToString:levelID])resourceSubdir=s[@"resourceRoot"] ?: @"";}
 void beforeChart(Runtime&r,P level){beforeInformation(r,level);}
 void afterChart(Runtime&r,P level){clearHud(r);if(!currentChart)return;hudLevel=r.gchandle_new(level,false);

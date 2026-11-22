@@ -1,10 +1,14 @@
 #pragma once
 #include "PMIL2CPP.hpp"
+#include "PMNativeOSRows.hpp"
+#include "PMNativeOSScene.hpp"
 namespace pmsecretcourse {
 using pmbridge::Runtime; using pmbridge::P;
 struct Pin {
     Runtime &r; uint32_t handle;
-    Pin(Runtime &r,P obj):r(r),handle(obj?r.gchandle_new(obj,false):0){}
+    Pin(Runtime &r,P obj):r(r),handle(obj?r.gchandle_new(obj,false):0){
+        if(obj && !handle) throw std::runtime_error("Cannot retain course object");
+    }
     ~Pin(){if(handle)r.gchandle_free(handle);}
     Pin(const Pin&)=delete;
     P get()const{return handle?r.gchandle_get_target(handle):nullptr;}

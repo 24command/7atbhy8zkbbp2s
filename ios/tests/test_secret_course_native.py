@@ -20,6 +20,45 @@ class SecretCourse(unittest.TestCase):
         for method in ('GetSavedTierIndex','GetSelectedTierIndex','SetSelectedTierIndex','BeginRun','RestartRun'):
             self.assertNotIn('"'+method+'"', code)
 
+    def test_owned_course_uses_prepared_rows_and_a_fresh_typed_queue(self):
+        code = (SRC/'PMSecretCourseSelection.inc').read_text('utf8')
+        resolve, start = code.split('static BOOL startSecretCourse(')
+        self.assertIn('pmnativeosrows::lookup(sid, difficulty, saved)', resolve)
+        self.assertIn('pmnativeosscene::activeRoot(r)', start)
+        owned, selector = start.split('if(root){', 1)[1].split('}else{', 1)
+        self.assertIn('isEqualToString:chapter', owned)
+        self.assertNotIn('loadingSelector', owned + resolve)
+        self.assertIn('target(r,loadingSelector)', selector)
+        self.assertIn('r.class_from_type(r.field_get_type(field))', start)
+        self.assertNotIn('templateList', start)
+        self.assertNotIn('LoadScene', code)
+
+    def test_owned_row_rejects_siblings_and_preserves_gameplay_data(self):
+        code = (SRC/'PMSecretCourseSelection.inc').read_text('utf8')
+        resolve, start = code.split('static BOOL startSecretCourse(')
+        for check in ('isEqualToString:sid', 'checkpointLevelMatches(chart, label)',
+                      'PMStockDifficulty(label) != saved.slot', 'checkpointOfficialOpen(',
+                      'pmunlock::courseMemberOpen(r, group, chart, false)'):
+            self.assertIn(check, resolve)
+        self.assertIn('"GetSongInformation"', resolve)
+        self.assertIn('collect(saved.row, song, saved.slot, chart, group)', resolve)
+        for step in ('r.call(song,"MemberwiseClone")', 'pmsecretcourse::bindChart(r,data.get(),chart)',
+                     'r.put(entry.get(),"levelIndex",slot)'):
+            self.assertIn(step, start)
+
+    def test_all_members_must_resolve_before_scene_handoff(self):
+        code = (SRC/'PMSecretCourseSelection.inc').read_text('utf8')
+        loop = code[code.index('for(id member in members)'):]
+        self.assertIn('members.count!=3&&members.count!=4', code)
+        self.assertIn('!checkedOwnedCourseMember(r,sid,diff,library,officialSongs,collect))return NO', loop)
+        self.assertIn('pmsecretcourse::clearBindings(r)', code)
+        launch = loop.index('pmsecretcourse::launch(')
+        self.assertLess(loop.index('revision!=PMContentStore.shared.revision'), launch)
+        self.assertLess(loop.index('root!=pmnativeosscene::activeRoot(r)'), launch)
+        self.assertEqual(code.count('pmsecretcourse::launch('), 1)
+        runtime = (SRC/'PMSecretCourseRuntime.mm').read_text('utf8')
+        self.assertIn('"hiddenChallengeSongItem",count==4?r.at(list,3):nullptr', runtime)
+
     @unittest.skipUnless(os.environ.get('PHIGROS_404_ANALYSIS'), 'requires the local iOS 4.0.4 dump')
     def test_stock_writers_and_tier_data(self):
         root = Path(os.environ['PHIGROS_404_ANALYSIS'])

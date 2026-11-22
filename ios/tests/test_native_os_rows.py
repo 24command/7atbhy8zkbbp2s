@@ -83,6 +83,60 @@ class NativeOSRows(unittest.TestCase):
         for forbidden in ('selector','checkedSong','GetSongRecord','coverPath','GetLevelStartInfo'):
             self.assertNotIn(forbidden,lookup)
 
+    def test_capture_uses_native_row_mods_and_exact_content_assets(self):
+        capture = ROWS.split('Root captureStart(', 1)[1].split('std::unique_ptr<Saved> snapshot(', 1)[0]
+        self.assertIn('r.call(song,"MemberwiseClone")', capture)
+        self.assertIn('"extraLevelMods","chartAssetCode"', capture)
+        self.assertIn('r.put(item.get(),"songInfo",source.get())', capture)
+        self.assertIn('"difficulty","charter"', capture)
+        self.assertNotIn('"levels"', capture)  # keep the native transport label, e.g. AT
+        self.assertLess(capture.index('r.call(item.get(),"GetLevelStartInfo"'),
+                        capture.index('applyExactLevelInfo(r,group,chart,info.get())'))
+        self.assertIn('Root info;', ROWS)
+        self.assertIn('info(std::move(start))', ROWS)
+        self.assertIn('applyExactLevelInfo(r,id,custom,info)', CONTENT)
+        self.assertIn('if(capturingStartInfo(song))return', CONTENT)
+        unlock = (SRC/'PMUnlockRuntime.mm').read_text('utf8')
+        for entry, marker in [('songInfo','song'), ('itemInfo','info')]:
+            hook = unlock.split(f'void {entry}(', 1)[1].split('\n', 1)[0]
+            self.assertLess(hook.index(f'capturingStartInfo({marker})'), hook.index('difficultyForSong('))
+
+    def test_resolve_rechecks_saved_member_after_selector_teardown(self):
+        resolve = ROWS.split('Start resolveStart(', 1)[1].split('bool lookup(', 1)[0]
+        for check in ['NSThread.isMainThread', 'batch==current', 'runtime==&r',
+                      'applied==current->revision', 'shared.revision==current->revision',
+                      'current->rows.find(key(sid,diff))', 'PMUnlockMediaBusy()']:
+            self.assertIn(check, resolve)
+        order = ['if(!valid())', 'checkpointOfficialGroupOpen(r,r.managedString(saved.group),official,saved.slot)',
+                 'courseMemberOpen(r,saved.group,saved.chart,false)', '|| !valid()',
+                 'return {saved.info.get(),saved.group,saved.slot,saved.chart[@"id"]?:saved.group}']
+        self.assertEqual(sorted(resolve.index(s) for s in order), [resolve.index(s) for s in order])
+        for forbidden in ['selector', 'songFor(', 'GetLevelStartInfo', 'sprite(']:
+            self.assertNotIn(forbidden, resolve)
+
+    @unittest.skipUnless(os.environ.get('PHIGROS_404_ANALYSIS'), 'requires local 4.0.4 dump')
+    def test_native_launch_inputs_match_detached_capture(self):
+        from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
+        base = Path(os.environ['PHIGROS_404_ANALYSIS'])
+        dump = (base/'dump.cs').read_text('utf-8-sig')
+        def klass(name):
+            return re.search(r'^public class '+name+r' [^\n]*\n\{.*?^}', dump, re.M|re.S)[0]
+        def field(body, name):
+            return int(re.search(r' '+name+r'; // 0x(\w+)', body)[1], 16)
+        def start(body):
+            return int(re.search(r'// RVA: 0x(\w+)[^\n]*\n\s*public LevelStartInfo GetLevelStartInfo', body)[1], 16)
+        row, song, info = map(klass, ['SongSelectorItem','SongsItem','LevelStartInfo'])
+        with (base/'UnityFramework').open('rb') as binary:
+            binary.seek(start(row))
+            asm = [(op.mnemonic, op.op_str) for op in Cs(CS_ARCH_ARM64, CS_MODE_ARM).disasm(binary.read(0x110), start(row))]
+        cursor = 0
+        for op in [('ldr', f'x0, [x20, #{field(row,"songInfo"):#x}]'), ('bl', f'#{start(song):#x}'),
+                   ('ldr', f'x0, [x20, #{field(row,"extraLevelMods"):#x}]'),
+                   ('ldr', f'x22, [x21, #{field(info,"levelMods"):#x}]'),
+                   ('ldr', f'x0, [x20, #{field(row,"chartAssetCode"):#x}]'),
+                   ('str', f'x0, [x21, #{field(info,"chartAddressableKey"):#x}]')]:
+            cursor = asm.index(op, cursor) + 1
+
     @unittest.skipUnless(os.environ.get('PHIGROS_404_ANALYSIS'), 'requires local 4.0.4 dump')
     def test_dump_and_read_only_record_lookup(self):
         base=Path(os.environ['PHIGROS_404_ANALYSIS']); dump=(base/'dump.cs').read_text('utf-8-sig')

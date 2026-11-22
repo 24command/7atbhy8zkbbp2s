@@ -1,6 +1,7 @@
 #include "PMNativeOSScene.hpp"
 #include "PMIL2CPP.hpp"
 #include "PMDiagnostics.h"
+#include <memory>
 
 namespace pmnativeosscene {
 namespace {
@@ -85,6 +86,8 @@ void notify(Runtime &r, Arrived cb, uint64_t id, Route route, P root) {
 }
 }
 
+#include "PMNativeOSPlayTransition.inc"
+
 static void finishLoad(Runtime &r, int handle) {
     if (returning.id) {
         const ReturnTrip trip = returning;
@@ -115,7 +118,10 @@ static void finishLoad(Runtime &r, int handle) {
             if (r.alive(found) && sceneHandle(r, r.call(found, "get_scene")) == handle &&
                 !r.call(r.call(found, "get_transform"), "get_parent")) {
                 current.root = r.gchandle_new(found, false);
-                if (current.root) root = found;
+                if (current.root) {
+                    entrance::checked([&]{ entrance::reserve(r, found, d->route); });
+                    root = found;
+                }
             }
         }
     } catch (const std::exception &e) { PMDiagnosticsWrite(e.what()); }
@@ -151,6 +157,7 @@ static bool watch(Runtime &r,P op,uint64_t id,bool back){
     return true;
 }
 bool sceneLoaded(Runtime &r,int handle,int mode){
+    if(mode==0) entrance::loaded(r,handle);
     if(mode!=0 || !current.target || returning.id)return false;
     try{return matches(r,handle,current.target->index,current.target->path);}
     catch(const std::exception &e){PMDiagnosticsWrite(e.what());return false;}
@@ -159,7 +166,7 @@ void hooksInstalled() { installed = true; }
 
 uint64_t enter(Runtime &r, Route route, Arrived cb) {
     const Destination *d = destination(route);
-    if (!NSThread.isMainThread || !installed || current.target || returning.id || !d || !cb) return 0;
+    if (!NSThread.isMainThread || !installed || current.target || returning.id || entrance::pending() || !d || !cb) return 0;
     if (++sequence == 0) ++sequence;
     uint64_t id = sequence;
     current = {d, id, cb};
@@ -171,6 +178,7 @@ uint64_t enter(Runtime &r, Route route, Arrived cb) {
 
 bool sceneUnloaded(Runtime &r, int handle) {
     if (!current.handle || current.handle != handle) return false;
+    entrance::unloaded(r);
     clear(r);
     return true;
 }
@@ -188,7 +196,7 @@ void *activeRoot(Runtime &r) {
 bool isSongSelector(Runtime &r, int handle) { return matches(r, handle, 7, selector); }
 
 static bool leave(Runtime &r, Returned cb, bool toSelector) {
-    if (!NSThread.isMainThread || !current.handle || current.leaving) return false;
+    if (!NSThread.isMainThread || !current.handle || current.leaving || entrance::pending()) return false;
     P info = nullptr, previous = nullptr;
     bool changedNextScene = false;
     try {

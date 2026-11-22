@@ -38,7 +38,12 @@ class BoundaryTests(unittest.TestCase):
         for check in ('[chapter isEqual:key]', 'revision==PMContentStore.shared.revision',
                       'handoffScene==sceneHandle(', 'epoch!=generation', 'selector!=owner'):
             self.assertIn(check, ready)
-        self.assertLess(ready.index('discardHandoff()'), ready.index('startSelection('))
+        self.assertNotIn('startSelection(', ready)
+        play = definition(COORD, 'bool playSelection(Runtime &r,NSDictionary *card,NSDictionary *choice){')
+        self.assertIn('scene::play(', play)
+        self.assertIn('rows::resolveStart(gameRuntime,sid,diff)', play)
+        self.assertNotIn('leaveToSongSelector', play)
+        self.assertIn('playSelection(r,detail,selected)', definition(COORD,'void dispatchOwned('))
         clear = definition(COORD, 'void clearScene(')
         for operation in ('stopClock()', '[actions invalidate]', 'panel::close(', 'map::close(',
                           'chrome::close(', 'rows::release()'):
@@ -94,7 +99,7 @@ int sceneHandle(Runtime&,P value){return *static_cast<int*>(value);}
 void PMDiagnosticsWrite(const char*){}
 Runtime *game=&runtime;
 int handoffScene=0, actions=0, closes=0, releases=0, ownedButton, retailButton;
-P selector=nullptr, program=nullptr, chapter=nullptr, pendingStart=nullptr;
+P selector=nullptr, program=nullptr, chapter=nullptr;
 uint64_t generation=3,visit=0,requestedEntry=0;
 int entries=0;
 
@@ -123,7 +128,7 @@ double cutTime(Runtime&) {return now;}
 int activeCutScene(Runtime&r){return r.activeScene;}
 void enter(Runtime&){++entries;if(mode==Mode::listCut && !refuse)mode=Mode::entering;}
 namespace scene { P activeRoot(Runtime &r){return &r;} }
-bool leave(Runtime&,bool,P){++leaves;if(refuse)return false;mode=Mode::returning;return true;}
+bool leave(Runtime&,bool){++leaves;if(refuse)return false;mode=Mode::returning;return true;}
 bool presentMap(Runtime&){++restores;mode=Mode::map;return true;}
 void destroyCut(Runtime&,P){++destroys;}
 template<class F>bool cutChecked(F f){try{f();return true;}catch(...){return false;}}
@@ -165,14 +170,14 @@ int main(){
     mode=Mode::detail;visit=33;sceneUnloaded(other,9,true);sceneUnloaded(r,9,false);
     assert(visit==33 && closes==0);sceneUnloaded(r,9,true);sceneUnloaded(r,9,true);
     assert(closes==1 && releases==1 && generation==4 && !visit && !claims(r,button));
-    mode=Mode::returning;visit=34;pendingStart=button;
+    mode=Mode::returning;visit=34;
     sceneUnloaded(r,9,true);assert(visit==34 && closes==1 && transitioning());
     returned(r,33,true);assert(visit==34 && transitioning());
     returned(r,34,true);assert(!visit && !claims(r,button) && handoffScene==17);
-    detach(r);sceneUnloaded(r,98,false);assert(handoffScene==17 && pendingStart==button);
-    sceneUnloaded(r,17,false);assert(!handoffScene && !pendingStart);
-    mode=Mode::returning;visit=35;pendingStart=button;returned(r,35,false);
-    assert(!claims(r,button) && !pendingStart && !handoffScene);
+    detach(r);sceneUnloaded(r,98,false);assert(handoffScene==17);
+    sceneUnloaded(r,17,false);assert(!handoffScene);
+    mode=Mode::returning;visit=35;returned(r,35,false);
+    assert(!claims(r,button) && !handoffScene);
     // Both manual directions claim retail input, wait through equality, and
     // release the pin without removing an accepted load's outgoing visual.
     selector=button;

@@ -15,6 +15,8 @@
 #import "PMChapterSecretCourse.h"
 #import "PMStoryCueRun.h"
 #import "PMDiagnostics.h"
+#import "PMUnlockMedia.h"
+#include "PMUnlockRuntime.hpp"
 namespace pmnativecoordinator {
 using pmbridge::Runtime; using pmbridge::P;
 namespace scene=pmnativeosscene; namespace chrome=pmnativechrome; namespace map=pmnativeosmap; namespace rows=pmnativeosrows; namespace panel=pmnativedetail; namespace toggle=pmnativeswitch;
@@ -22,7 +24,7 @@ namespace {
 enum class Mode { idle, loading, list, listPending, listCut, entering, map, mapCut, detail, returning };
 Mode mode=Mode::idle;
 Runtime *game=nullptr; P selector=nullptr; uint64_t generation=0,visit=0,mapID=0,detailID=0;
-PMNativeOSProgram *program; NSString *chapter; NSDictionary *detail,*pendingStart,*selected;
+PMNativeOSProgram *program; NSString *chapter; NSDictionary *detail,*selected;
 NSArray<NSDictionary *> *choices; NSInteger lifeTier=0; NSUInteger revision=0;
 uint64_t requestedEntry=0;
 int handoffScene=0; // Only the selector scene that received this return may consume it.
@@ -35,7 +37,7 @@ void stopClock(){if(clockSource){dispatch_source_cancel(clockSource);clockSource
 void clearScene(Runtime &r,uint64_t closingVisit=visit){stopClock(); [actions invalidate]; actions=nil; mountMap=nil; applyCheckpoint=nil; if(detailID)panel::close(r,detailID);detailID=0;if(mapID)map::close(r,mapID);mapID=0;if(closingVisit)chrome::close(r,closingVisit);chromeView={};rows::release();detail=nil;selected=nil;choices=nil;busy=false;}
 NSDictionary *entry(NSDictionary *card){NSString *sid=card[@"sid"]?:card[@"installedID"];if(!sid)return nil;NSMutableDictionary *e=[@{@"songID":sid} mutableCopy];if(card[@"difficulty"])e[@"difficulty"]=card[@"difficulty"];return e;}
 NSArray *options(NSDictionary *card){NSArray *replays=card[@"replaySongs"];if(replays.count)return replays;NSDictionary *e=entry(card);return e?@[e]:@[];}
-void discardHandoff(){handoffScene=0;pendingStart=nil;}
+void discardHandoff(){handoffScene=0;}
 int sceneHandle(Runtime &r,P sceneValue){
  struct SceneValue { int32_t handle; };
  if(!sceneValue || r.object_get_class(sceneValue)!=r.type("UnityEngine.SceneManagement","Scene"))
@@ -54,13 +56,13 @@ void returned(Runtime &r,uint64_t token,bool ok){
  }
  if(!handoffScene)discardHandoff();
 }
-bool leave(Runtime &r,bool back,NSDictionary *launch){
+bool leave(Runtime &r,bool back){
  if(mode!=Mode::detail&&mode!=Mode::map&&mode!=Mode::mapCut&&mode!=Mode::entering)return false;
  if(!(back ? scene::leaveToChapter(r,returned) : scene::leaveToSongSelector(r,returned)))return false;
- pendingStart=[launch copy];mode=Mode::returning;clearScene(r);return true;
+ mode=Mode::returning;clearScene(r);return true;
 }
 bool presentMap(Runtime &r){mode=Mode::map;busy=false;return chrome::present(r,visit,chrome::Face::Map,true,0,!gated)&&map::present(r,mapID,true,true,true);}
-void closePanel(Runtime &r){if(detailID)panel::close(r,detailID);detailID=0;detail=nil;choices=nil;selected=nil;if(!presentMap(r))leave(r,false,nil);}
+void closePanel(Runtime &r){if(detailID)panel::close(r,detailID);detailID=0;detail=nil;choices=nil;selected=nil;if(!presentMap(r))leave(r,false);}
 bool rowFor(NSDictionary *e,rows::Row &out){return e&&rows::lookup(e[@"songID"],e[@"difficulty"],out);}
 unsigned allowedSlots(){unsigned mask=0;for(NSDictionary *e in choices){rows::Row row;if(rowFor(e,row)&&row.slot>=0&&row.slot<4)mask|=1u<<row.slot;}return mask;}
 void openPanel(Runtime &r,NSDictionary *card){
@@ -73,10 +75,11 @@ void openPanel(Runtime &r,NSDictionary *card){
  map::present(r,mapID,false,false,false);chrome::present(r,visit,chrome::Face::Detail,false);
  panel::Speech speech{card[@"speechHeading"],card[@"caption"],[card[@"seconds"] doubleValue]};
  detailID=panel::open(r,program.nativeChapter==8?panel::Style::c8:panel::Style::c9,chromeView.detailRoot,row.row,row.slot,speech,false,row.cover);
- if(!detailID){if(!presentMap(r))leave(r,false,nil);return;}
+ if(!detailID){if(!presentMap(r))leave(r,false);return;}
  detail=card;selected=first;choices=available;mode=Mode::detail;
  if(!chrome::present(r,visit,chrome::Face::Detail,true,allowedSlots()))closePanel(r);
 }
+bool playSelection(Runtime &r,NSDictionary *card,NSDictionary *choice);
 void showDetail(Runtime &r, NSDictionary *card) {
     if (!card || mode != Mode::map || [card[@"lockedChallenge"] boolValue]) return;
     if (!card[@"challengeID"] || [card[@"replaySongs"] count]) { openPanel(r,card); return; }
@@ -85,9 +88,8 @@ void showDetail(Runtime &r, NSDictionary *card) {
         if (visit != token || mode != Mode::map) return;
         if (!presentMap(*game) || !completed) return;
         NSDictionary *e = entry(card);
-        // Keep the full challenge attached through the selector handoff so startSelection
-        // arms HP/delta, noPause, cues, sequence and course life tier at launch time.
-        if (![card[@"showDetail"] boolValue] && e && leave(*game,false,@{@"detail":card,@"entry":e})) return;
+        // Keep the complete challenge descriptor until the exact chart starts.
+        if (![card[@"showDetail"] boolValue] && e && playSelection(*game,card,e)) return;
         openPanel(*game,card);
     };
     if (![card[@"intro"] count]) { afterIntro(YES); return; }
@@ -103,7 +105,7 @@ void activate(uint64_t mapVisit, int index) {
     if (mode != Mode::map || busy || mapID != mapVisit) return;
     if (actions.cardOnly) {
         [actions activateCardNode:index open:^(NSDictionary *card){ showDetail(*game,card); }
-                          rebuild:^{ if (!mountMap || !mountMap()) leave(*game,false,nil); }];
+                          rebuild:^{ if (!mountMap || !mountMap()) leave(*game,false); }];
         return;
     }
     busy=true;
@@ -123,13 +125,13 @@ void activate(uint64_t mapVisit, int index) {
             if (a->checkpoint) {
                 shown=[actions checkpoint:a resume:^(NSDictionary *record){
                     if (!applyCheckpoint || !applyCheckpoint(record)) presentMap(*game);
-                } leave:^{ if (!leave(*game,gated,nil)) presentMap(*game); }];
+                } leave:^{ if (!leave(*game,gated)) presentMap(*game); }];
             } else {
                 NSDictionary *card = a->song>0 && NSUInteger(a->song)<=program.order.count ? program.bySong[program.order[a->song-1]] : nil;
                 shown=[actions reveal:a fromNode:index completion:^(PMNativeRevealChoice choice){
                     if (!presentMap(*game) || !card || choice==PMNativeRevealContinue) return;
                     NSDictionary *e=entry(card);
-                    if (choice==PMNativeRevealStart && e && leave(*game,false,@{@"detail":card,@"entry":e})) return;
+                    if (choice==PMNativeRevealStart && e && playSelection(*game,card,e)) return;
                     showDetail(*game,card);
                 }];
             }
@@ -146,7 +148,7 @@ void arrived(Runtime &r,uint64_t token,scene::Route,P root){
  if(mode!=Mode::entering||token!=visit)return;
  if(!root||!chrome::open(r,visit,program.nativeChapter==8?scene::Route::C8:scene::Route::C9,root,chromeView)){
   PMDiagnosticsWrite(root?"Chapter OS: native chapter controls unavailable":"Chapter OS: loaded scene host unavailable");
-  if(!leave(r,false,nil)){
+  if(!leave(r,false)){
    clearScene(r);visit=0;
    mode=selector && r.alive(selector) ? Mode::list : Mode::idle;
    abortSelectorEntry(r);
@@ -165,7 +167,7 @@ void arrived(Runtime &r,uint64_t token,scene::Route,P root){
      if (!mapID || !presentMap(*game)) { PMDiagnosticsWrite(reason.UTF8String?:"Native chapter map unavailable"); return NO; }
      return YES;
  };
- if (!mountMap()) { leave(r,false,nil); return; }
+ if (!mountMap()) { leave(r,false); return; }
  // The stock transition may leave a captured frame on the persistent RawImage.
  // Release it only after this visit owns a rendered map and its input controls.
  try{
@@ -190,7 +192,7 @@ void arrived(Runtime &r,uint64_t token,scene::Route,P root){
      if (!card) return NO;
      NSMutableDictionary *e=[@{@"songID":sid} mutableCopy];
      if (record[@"difficulty"]) e[@"difficulty"]=record[@"difficulty"];
-     return leave(*game,false,@{@"detail":card,@"entry":e});
+     return playSelection(*game,card,e);
  };
  NSDictionary *record=PMChapterOSTakeCheckpoint(chapter);
  if (record) {
@@ -227,6 +229,9 @@ void enter(Runtime &r){
      for (NSDictionary *card in program.cards) if (![card[@"lockedChallenge"] boolValue])
          [targets addObjectsFromArray:options(card[@"challengeDetail"]?:card)];
  }
+ // Secret courses capture every leg before the selector is unloaded, including the hidden fourth leg.
+ for (NSDictionary *card in program.challengeRows)
+     if (card[@"secretCourse"]) [targets addObjectsFromArray:card[@"secretCourse"]];
  NSArray *entries=targets.array;
  if(!rows::prepare(r,selector,chapter,entries)){
    PMDiagnosticsWrite("Chapter OS: selector changed before songs could be captured");return;
@@ -236,13 +241,55 @@ void enter(Runtime &r){
 }
 #include "PMNativeOSManualTransition.inc"
 
-bool startSelection(NSDictionary *launch,PMStoryStartSong start){
- NSDictionary *card=launch[@"detail"],*e=launch[@"entry"];NSString *key=chapter;
- if(card[@"secretCourse"]){NSInteger tier=[card[@"lifeTier"] integerValue];return PMChapterStartSecretCourseWithPauseLock(key,card[@"challengeID"],card[@"secretCourse"],tier<0?lifeTier:tier,[card[@"noPause"] boolValue]);}
- if([card[@"replaySongs"] count])return start(e[@"songID"],e[@"difficulty"],^BOOL(NSString *g,int s,NSString *idValue){return PMDoorArmReplay(g,s,idValue);});
- if(!card[@"challengeID"])return start(e[@"songID"],e[@"difficulty"],nil);
- return start(e[@"songID"],e[@"difficulty"],^BOOL(NSString *g,int s,NSString *idValue){if(!PMDoorArm(key,card[@"challengeID"],g,s,idValue,[card[@"hp"] doubleValue],card[@"delta"]))return NO;
- if(!PMDoorSetPendingNoPause([card[@"noPause"] boolValue])||!PMStorySequenceArm(key,card[@"nextSongs"])){PMDoorCancelPending();return NO;}PMStoryCueArm(card[@"cues"]);return YES;});
+bool armGameplay(NSDictionary *card,const rows::Start &song){
+ if(PMDoorActive() || PMUnlockMediaBusy())return false;
+ if([card[@"replaySongs"] count])return PMDoorArmReplay(song.group,song.slot,song.chartID);
+ if(!card[@"challengeID"]){PMDoorCancelPending();pmstory::cancelLaunch();return true;}
+ if(!PMDoorArm(chapter,card[@"challengeID"],song.group,song.slot,song.chartID,[card[@"hp"] doubleValue],card[@"delta"]))return false;
+ if(!PMDoorSetPendingNoPause([card[@"noPause"] boolValue]) || !PMStorySequenceArm(chapter,card[@"nextSongs"])){
+  PMDoorCancelPending();return false;
+ }
+ PMStoryCueArm(card[@"cues"]);pmstory::captureLaunch();return true;
+}
+
+bool playSelection(Runtime &r,NSDictionary *card,NSDictionary *choice){
+ if(!card || !choice || busy || (mode!=Mode::map && mode!=Mode::detail) ||
+    revision!=PMContentStore.shared.revision || !scene::activeRoot(r) || PMUnlockMediaBusy())return false;
+ if(card[@"secretCourse"]){
+  NSInteger tier=[card[@"lifeTier"] integerValue];busy=true;
+  bool started=PMChapterStartSecretCourseWithPauseLock(chapter,card[@"challengeID"],card[@"secretCourse"],tier<0?lifeTier:tier,[card[@"noPause"] boolValue]);
+  if(!started)busy=false;
+  return started;
+ }
+ NSString *sid=choice[@"songID"], *diff=choice[@"difficulty"];
+ auto song=rows::resolveStart(r,sid,diff);
+ if(!song.info){PMDiagnosticsWrite("Chapter OS: selected chart is unavailable at Start");return false;}
+ const uint64_t token=visit,epoch=generation;
+ const Mode source=mode;Runtime *rt=&r;
+ busy=true;
+ BOOL (^sameFace)(void)=^BOOL{return visit==token && generation==epoch && mode==source;};
+ auto valid=^BOOL{return sameFace() && revision==PMContentStore.shared.revision && scene::activeRoot(*rt);};
+ __block bool started=false,armed=false;
+ auto resume=^(BOOL completed){
+  if(!sameFace())return;
+  auto finished=^(bool routed){
+   if(!routed && armed){PMDoorCancelPending();pmstory::cancelLaunch();armed=false;}
+   if(!routed && sameFace())busy=false;
+  };
+  if(completed && valid()){
+   auto arm=^bool(Runtime &gameRuntime,P info){
+    if(!valid())return false;
+    auto exact=rows::resolveStart(gameRuntime,sid,diff);
+    if(!exact.info || exact.info!=info)return false;
+    armed=armGameplay(card,exact);return armed;
+   };
+   started=scene::play(*rt,token,song.info,arm,finished);
+  }
+  if(!started)finished(false);
+ };
+ if(pmunlock::chapterStartIntro(r,song.chartID,valid,resume))return true;
+ resume(YES);
+ return started;
 }
 }
 void selectorLoaded(Runtime &r,int handle,NSString *key){
@@ -271,19 +318,16 @@ void abortSelectorEntry(Runtime &r){
  requestedEntry=0;
  releaseEntryCover(r);
 }
-void ready(Runtime &r,P owner,NSString *key,PMStoryStartSong start){
+void ready(Runtime &r,P owner,NSString *key){
  if(transitioning() || mode==Mode::map || mode==Mode::detail)return;
  bool returning=false;
  if(handoffScene && [chapter isEqual:key] && revision==PMContentStore.shared.revision){
      try { returning=handoffScene==sceneHandle(r,r.call(r.call(owner,"get_gameObject"),"get_scene")); }
      catch(const std::exception &e){PMDiagnosticsWrite(e.what());}
  }
- NSDictionary *launch=returning?pendingStart:nil;
- discardHandoff(); // Consume before NormalStart can re-enter detach().
+ discardHandoff();
  selector=owner;game=&r;chapter=[key copy];uint64_t epoch=++generation;
  mode=Mode::idle;
- if(launch && startSelection(launch,start))return;
- if(epoch!=generation || owner!=selector)return;
  mode=Mode::loading;
  const bool staged=bridge.handle && bridge.handle==sceneHandle(r,r.call(r.call(owner,"get_gameObject"),"get_scene")) &&
                    [bridge.chapter isEqual:key] && bridge.revision==PMContentStore.shared.revision;
@@ -359,9 +403,9 @@ void dispatchOwned(Runtime &r,P b){
  if(busy)return;
  if(mode==Mode::map && map::press(r,b))return;
  auto action=chrome::press(r,b);switch(action.intent){
- case chrome::Intent::Back:if(mode==Mode::detail)closePanel(r);else leave(r,true,nil);break;
+ case chrome::Intent::Back:if(mode==Mode::detail)closePanel(r);else leave(r,true);break;
  case chrome::Intent::List:if(mode==Mode::map && !gated)beginManualCut(r,Mode::mapCut);break;
- case chrome::Intent::Start:if(detail&&selected)leave(r,false,@{@"detail":detail,@"entry":selected});break;
+ case chrome::Intent::Start:if(detail&&selected)playSelection(r,detail,selected);break;
  case chrome::Intent::Slot:for(NSDictionary *e in choices){rows::Row row;if(rowFor(e,row)&&row.slot==action.slot&&panel::update(r,detailID,row.row,row.slot,row.cover)){selected=e;chrome::present(r,visit,chrome::Face::Detail,true,allowedSlots());break;}}break;
  default:break;
  }

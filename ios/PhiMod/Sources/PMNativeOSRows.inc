@@ -10,7 +10,8 @@ struct Root {
     Root(Runtime &rt,P obj):r(rt),handle(obj?rt.gchandle_new(obj,false):0){
         if(!handle)throw std::runtime_error("Native detail snapshot allocation failed");
     }
-    ~Root(){r.gchandle_free(handle);}
+    ~Root(){if(handle)r.gchandle_free(handle);}
+    Root(Root &&other) noexcept:r(other.r),handle(other.handle){other.handle=0;}
     Root(const Root&)=delete;
     P get()const{return r.gchandle_get_target(handle);}
 };
@@ -26,18 +27,25 @@ struct Cover {
 };
 struct Saved {
     Root row;
+    Root info;
+    NSString *group;
+    NSDictionary *chart;
     int slot;
     std::shared_ptr<Cover> cover;
-    Saved(Runtime &r,P data,int level,std::shared_ptr<Cover> art):row(r,data),slot(level),cover(std::move(art)){}
+    Saved(Runtime &r,P data,Root start,NSString *nativeGroup,NSDictionary *member,int level,std::shared_ptr<Cover> art)
+        :row(r,data),info(std::move(start)),group([nativeGroup copy]),chart(member),slot(level),cover(std::move(art)){}
 };
 struct Batch {
     Runtime &r;
     std::map<Key,std::unique_ptr<Saved>> rows;
     std::map<std::string,std::shared_ptr<Cover>> covers;
     const NSUInteger revision;
-    explicit Batch(Runtime &rt):r(rt),revision(PMContentStore.shared.revision){}
+    NSDictionary *officialSongs;
+    NSDictionary *overrides;
+    explicit Batch(Runtime &rt):r(rt),revision(PMContentStore.shared.revision),
+        officialSongs(PMOfficialSongMap(pmcontent::officialCache)),overrides([PMContentStore.shared snapshot][@"overrides"]){}
 };
-std::unique_ptr<Batch> batch;
+std::shared_ptr<Batch> batch;
 
 void destroy(Runtime &r,P object){if(r.alive(object))r.stat(r.type("UnityEngine","Object"),"Destroy",{"UnityEngine.Object"},{object});}
 P sprite(Runtime &r,Cover &cover){
@@ -77,6 +85,24 @@ std::shared_ptr<Cover> localCover(Batch &next,NSString *identifier){
     auto cover=std::make_shared<Cover>();cover->bytes=png;next.covers.emplace(k,cover);return cover;
 }
 void arraySet(Runtime &r,P array,int i,P value){r.call(array,"SetValue",{"System.Object","System.Int32"},{value,&i});}
+// GameStart calls the row overload. Supply its data inputs on private objects
+// so the native method sees the transport level and both sources of level mods.
+// Only its returned LevelStartInfo survives capture.
+Root captureStart(Runtime &r,P original,P song,P detail,int slot,NSString *group,NSDictionary *chart){
+    Root source(r,r.call(song,"MemberwiseClone"));
+    Root item(r,r.object_new(r.klass("SongSelectorItem")));
+    for(const char *field:{"difficulty","charter"})r.put(source.get(),field,r.get<P>(detail,field));
+    r.put(item.get(),"songInfo",source.get());
+    for(const char *field:{"extraLevelMods","chartAssetCode"})r.put(item.get(),field,r.get<P>(original,field));
+    struct CaptureScope {
+        P previous=pmcontent::capturingSong;
+        explicit CaptureScope(P value){pmcontent::capturingSong=value;}
+        ~CaptureScope(){pmcontent::capturingSong=previous;}
+    } capture(source.get());
+    Root info(r,r.call(item.get(),"GetLevelStartInfo",{"System.Int32"},{&slot}));
+    pmcontent::applyExactLevelInfo(r,group,chart,info.get());
+    return info;
+}
 std::unique_ptr<Saved> snapshot(Batch &next,P original,P song,int slot,NSDictionary *chart,NSString *group){
     auto &r=next.r;NSString *identifier=chart?chart[@"id"]:group;
     if(![identifier isKindOfClass:NSString.class]||!identifier.length)return {};
@@ -101,6 +127,14 @@ std::unique_ptr<Saved> snapshot(Batch &next,P original,P song,int slot,NSDiction
         Root clone(r,r.call(originalArray,"Clone"));r.put(data.get(),field,clone.get());
         if(chart){if(!strcmp(field,"difficulty"))r.arrayPutFloat(clone.get(),slot,PMDifficultyNumber(chart[@"difficulty"]));
             else arraySet(r,clone.get(),slot,r.managedString(!strcmp(field,"levels")?PMDifficultyName(chart[@"level"]):chart[@"charter"]?:@""));}
+        else if(strcmp(field,"levels")!=0){
+            // A pager binding can have replaced the stock AT rating/charter.
+            NSString *name=[NSString stringWithUTF8String:field];
+            NSArray *values=next.overrides[group][name]?:next.officialSongs[group][name];
+            if(NSUInteger(slot)>=values.count)return {};
+            if(!strcmp(field,"difficulty"))r.arrayPutFloat(clone.get(),slot,[values[slot] floatValue]);
+            else arraySet(r,clone.get(),slot,r.managedString(values[slot]));
+        }
     }
     P records=r.get<P>(original,"records");if(!records)return {};
     Root list(r,r.object_new(r.object_get_class(records)));r.call(list.get(),".ctor");
@@ -131,7 +165,8 @@ std::unique_ptr<Saved> snapshot(Batch &next,P original,P song,int slot,NSDiction
             r.put(row.get(),pair.first,address);
         }
     }
-    return std::make_unique<Saved>(r,row.get(),slot,art);
+    auto start=captureStart(r,original,song,data.get(),slot,group,chart);
+    return std::make_unique<Saved>(r,row.get(),std::move(start),group,chart,slot,art);
 }
 } // namespace
 void release(){
@@ -152,7 +187,7 @@ bool prepare(Runtime &r,P selector,NSString *chapter,NSArray<NSDictionary *> *en
     release();
     if(![chapter isKindOfClass:NSString.class]||![chapter hasPrefix:@"pm_"]||![entries isKindOfClass:NSArray.class])return false;
     @try{try{
-        auto next=std::make_unique<Batch>(r);Batch *staging=next.get();
+        auto next=std::make_shared<Batch>(r);Batch *staging=next.get();
         if(!currentSelector(r,selector,chapter,next->revision))return false;
         for(id entry in entries){@autoreleasepool{
             @try{try{
@@ -172,6 +207,29 @@ bool prepare(Runtime &r,P selector,NSString *chapter,NSArray<NSDictionary *> *en
         batch=std::move(next);return true;
     }catch(const std::exception &e){PMDiagnosticsWrite(e.what());}}@catch(NSException *e){PMDiagnosticsWrite(e.reason.UTF8String);}
     return false;
+}
+Start resolveStart(Runtime &r,NSString *sid,NSString *diff){
+    if(!NSThread.isMainThread || ![sid isKindOfClass:NSString.class] || !sid.length ||
+       (diff && (![diff isKindOfClass:NSString.class] || !diff.length)))return {};
+    auto current=batch;
+    if(!current || &current->r!=&r)return {};
+    auto valid=[&]{
+        return batch==current && pmcontent::runtime==&r && !pmcontent::playing &&
+               !pmcontent::pendingSong.length && !PMUnlockMediaBusy() &&
+               pmcontent::applied==current->revision && PMContentStore.shared.revision==current->revision &&
+               pmcontent::appliedMainline==PMSettingBool("mainlineUnlock");
+    };
+    @try{try{
+        if(!valid())return {};
+        auto found=current->rows.find(key(sid,diff));
+        if(found==current->rows.end())return {};
+        Saved &saved=*found->second;
+        NSDictionary *official=current->officialSongs[saved.group];
+        if(official && !pmcontent::checkpointOfficialGroupOpen(r,r.managedString(saved.group),official,saved.slot))return {};
+        if(!pmunlock::courseMemberOpen(r,saved.group,saved.chart,false) || !valid())return {};
+        return {saved.info.get(),saved.group,saved.slot,saved.chart[@"id"]?:saved.group};
+    }catch(const std::exception &e){PMDiagnosticsWrite(e.what());}}@catch(NSException *e){PMDiagnosticsWrite(e.reason.UTF8String);}
+    return {};
 }
 bool lookup(NSString *sid,NSString *difficulty,Row &out){
     out={};if(!NSThread.isMainThread||!batch||![sid isKindOfClass:NSString.class]||!sid.length||(difficulty&&![difficulty isKindOfClass:NSString.class]))return false;
