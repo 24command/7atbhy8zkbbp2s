@@ -82,7 +82,9 @@ std::unique_ptr<Saved> snapshot(Batch &next,P original,P song,int slot,NSDiction
     if(![identifier isKindOfClass:NSString.class]||!identifier.length)return {};
     auto art=localCover(next,identifier);
     if(chart&&!art)return {};
-    if(!r.get<bool>(original,"visible")||!r.unbox<bool>(r.call(original,"get_Unlocked")))return {};
+    // SetPosition culls off-screen covers by clearing SongSelectorItem.visible.
+    // checkedSong has already checked chapter membership and this exact chart's unlock.
+    if(!r.unbox<bool>(r.call(original,"get_Unlocked")))return {};
     // Allocate by whitelist. SongSelectorItem itself has nine Unity scene fields.
     Root row(r,r.object_new(r.klass("SongSelectorItem"))),data(r,r.object_new(r.klass("SongsItem")));
     for(const char *field:{"songsId","songsName","songsTitle","composer","illustrator","songsKey"})r.put(data.get(),field,r.get<P>(song,field));

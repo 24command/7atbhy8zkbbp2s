@@ -23,6 +23,12 @@ class NativeOSRows(unittest.TestCase):
         self.assertIn('opened(r,chart[@"id"],persist)',unlock)
         self.assertIn('coverPath(next.r,identifier,false)',ROWS)
 
+    def test_map_rows_do_not_depend_on_selector_scroll_position(self):
+        snapshot = ROWS.split('std::unique_ptr<Saved> snapshot(', 1)[1].split('} // namespace', 1)[0]
+        self.assertNotIn('get<bool>(original,"visible")', snapshot)
+        self.assertIn('r.call(original,"get_Unlocked")', snapshot)
+        self.assertIn('r.put(row.get(),"visible",true)', snapshot)
+
     def test_best_effort_entries_and_empty_map(self):
         prepare = ROWS.split('bool prepare(',1)[1].split('bool lookup(',1)[0]
         loop = prepare.split('for(id entry in entries)',1)[1].split('if(!currentSelector(',1)[0]

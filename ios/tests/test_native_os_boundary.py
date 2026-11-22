@@ -8,6 +8,7 @@ import unittest
 
 SRC = Path(__file__).resolve().parents[1] / 'PhiMod/Sources'
 COORD = (SRC / 'PMNativeOSCoordinator.mm').read_text(encoding='utf-8-sig')
+CUT = (SRC / 'PMNativeOSManualTransition.inc').read_text(encoding='utf-8-sig')
 HOOK = (SRC / 'PMHookBackend.mm').read_text(encoding='utf-8-sig')
 
 
@@ -59,6 +60,10 @@ using P=void*;
 struct Runtime {
     int activeScene=17, queries=0, mouse=0;
     bool loadOver=false,lockTouch=false,exit=false,moving=false;
+    bool alive(P p){return p!=nullptr;}
+    P gchandle_get_target(uint32_t handle){return handle ? this : nullptr;}
+    void gchandle_free(uint32_t) {++freed;}
+    int freed=0;
     P klass(const char*) {return this;}
     template<class T>T staticValue(P,const char *name,const char*){return name[1]=='o' && name[2]=='a' ? loadOver : lockTouch;}
     template<class T>T get(P,const char *name){return name[0]=='e' ? exit : moving;}
@@ -74,7 +79,7 @@ int handoffScene=0, actions=0, closes=0, releases=0, ownedButton, retailButton;
 P selector=nullptr, program=nullptr, chapter=nullptr, pendingStart=nullptr;
 uint64_t generation=3,visit=0,requestedEntry=0;
 int entries=0;
-void enter(Runtime&){++entries;}
+
 bool returnBack=false;
 namespace toggle {
     bool owns(Runtime&,P b){return b==&ownedButton;}
@@ -88,10 +93,26 @@ void clearScene(Runtime& r,uint64_t closingVisit){
 template<class F>void guardInput(F f){try{f();}catch(const std::exception&){}}
 '''
         code += definition(COORD, 'enum class Mode') + '; Mode mode=Mode::idle;\n'
+        code += r'''
+bool refuse=false, gated=false;
+int revision=1, leaves=0, restores=0, destroys=0;
+struct {struct {int revision=1;} shared;} PMContentStore;
+double now=0;
+double cutTime(Runtime&) {return now;}
+int activeCutScene(Runtime&r){return r.activeScene;}
+void enter(Runtime&){++entries;if(mode==Mode::listCut && !refuse)mode=Mode::entering;}
+namespace scene { P activeRoot(Runtime &r){return &r;} }
+bool leave(Runtime&,bool,P){++leaves;if(refuse)return false;mode=Mode::returning;return true;}
+bool presentMap(Runtime&){++restores;mode=Mode::map;return true;}
+void destroyCut(Runtime&,P){++destroys;}
+template<class F>void cutChecked(F f){f();}
+'''
         code += 'void dispatchOwned(Runtime&,P){++actions;mode=Mode::idle;}\n'
-        for method in ('void selectorFrame(', 'void discardHandoff(', 'void returned(', 'bool transitioning(', 'void detach(',
+        for method in ('bool selectorReady(', 'void selectorFrame(', 'void discardHandoff(', 'void returned(', 'bool transitioning(', 'void detach(',
                        'void sceneUnloaded(', 'bool claims(', 'bool dispatch(', 'bool press(', 'bool pointerClick('):
             code += definition(COORD, method) + '\n'
+        for method in ('struct ManualCut', 'enum class CutStep', 'CutStep advanceCut(', 'void finishCut('):
+            code += definition(CUT, method) + ';\n'
         code += r'''
 int main(){
     Runtime &r=runtime; P button=&ownedButton,event=&runtime;
@@ -124,6 +145,31 @@ int main(){
     sceneUnloaded(r,17,false);assert(!handoffScene && !pendingStart && !returnBack);
     mode=Mode::returning;visit=35;pendingStart=button;returned(r,35,false);
     assert(!claims(r,button) && !pendingStart && !handoffScene);
+    // Both manual directions claim retail input, wait through equality, and
+    // release the pin without removing an accepted load's outgoing visual.
+    selector=button;
+    for(auto dir:{Mode::listCut,Mode::mapCut}){
+        mode=dir;assert(transitioning() && claims(r,&retailButton));
+        ManualCut cut{dir,generation,visit,r.activeScene,1,1.67};
+        now=cut.deadline;assert(advanceCut(r,cut)==CutStep::waiting);
+        now+=0.016; assert(advanceCut(r,cut)==CutStep::accepted);
+        assert(advanceCut(r,cut)==CutStep::cancelled);
+        int priorDestroys=destroys;finishCut(r,cut,true);assert(destroys==priorDestroys);
+        mode=dir;refuse=true;assert(advanceCut(r,cut)==CutStep::cancelled);
+        finishCut(r,cut,false);refuse=false;
+        assert(mode==(dir==Mode::mapCut?Mode::map:Mode::list));
+    }
+    assert(destroys==2 && restores==1 && leaves==2 && r.freed==4);
+    mode=Mode::listCut;ManualCut cut{mode,generation,visit,r.activeScene,1,now-1};
+    int before=entries;r.lockTouch=true;assert(advanceCut(r,cut)==CutStep::cancelled);
+    r.lockTouch=false;++revision;assert(advanceCut(r,cut)==CutStep::cancelled);--revision;
+    ++r.activeScene;assert(advanceCut(r,cut)==CutStep::cancelled && mode==Mode::idle);
+    mode=Mode::listCut;assert(advanceCut(r,cut)==CutStep::cancelled && entries==before);
+    mode=Mode::mapCut;cut={mode,generation,visit,r.activeScene,1,0};gated=true;
+    assert(advanceCut(r,cut)==CutStep::cancelled);gated=false;++visit;
+    assert(advanceCut(r,cut)==CutStep::cancelled && leaves==2);
+    finishCut(r,cut,false);assert(restores==1); // obsolete callback cannot revive a new visit
+    mode=Mode::listPending;assert(!transitioning() && claims(r,&retailButton));
 }
 '''
         with tempfile.TemporaryDirectory() as tmp:

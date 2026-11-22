@@ -19,7 +19,7 @@ namespace pmnativecoordinator {
 using pmbridge::Runtime; using pmbridge::P;
 namespace scene=pmnativeosscene; namespace chrome=pmnativechrome; namespace map=pmnativeosmap; namespace rows=pmnativeosrows; namespace panel=pmnativedetail; namespace toggle=pmnativeswitch;
 namespace {
-enum class Mode { idle, loading, list, entering, map, detail, returning };
+enum class Mode { idle, loading, list, listPending, listCut, entering, map, mapCut, detail, returning };
 Mode mode=Mode::idle;
 Runtime *game=nullptr; P selector=nullptr; uint64_t generation=0,visit=0,mapID=0,detailID=0;
 PMNativeOSProgram *program; NSString *chapter; NSDictionary *detail,*pendingStart,*selected;
@@ -54,7 +54,7 @@ void returned(Runtime &r,uint64_t token,bool ok){
  if(!handoffScene)discardHandoff();
 }
 bool leave(Runtime &r,bool back,NSDictionary *launch){
- if(mode!=Mode::detail&&mode!=Mode::map&&mode!=Mode::entering)return false;
+ if(mode!=Mode::detail&&mode!=Mode::map&&mode!=Mode::mapCut&&mode!=Mode::entering)return false;
  if(!scene::leaveToSongSelector(r,returned))return false;
  pendingStart=[launch copy];returnBack=back;mode=Mode::returning;clearScene(r);return true;
 }
@@ -201,8 +201,17 @@ void arrived(Runtime &r,uint64_t token,scene::Route,P root){
  dispatch_source_set_timer(clockSource,DISPATCH_TIME_NOW,NSEC_PER_SEC/30,NSEC_PER_MSEC*3);
  dispatch_source_set_event_handler(clockSource,^{if(visit==token && mode==Mode::map)map::tick(*game,mapID);});dispatch_resume(clockSource);
 }
+// Both manual entry and the deferred automatic entry respect SongSelector.Update's gates.
+bool selectorReady(Runtime &r,P owner){
+ P loading=r.klass("Loading");
+ return r.staticValue<bool>(loading,"loadOver","System.Boolean") &&
+        !r.staticValue<bool>(loading,"lockTouch","System.Boolean") &&
+        !r.get<bool>(owner,"exit") && !r.get<bool>(owner,"isMoving");
+}
+void beginManualCut(Runtime &r,Mode cut);
 void enter(Runtime &r){
- if(mode!=Mode::list||!selector)return;
+ if(mode==Mode::listPending){beginManualCut(r,Mode::listCut);return;}
+ if((mode!=Mode::list && mode!=Mode::listCut)||!selector)return;
  if(revision!=PMContentStore.shared.revision){PMDiagnosticsWrite("Chapter OS: chapter library changed before entry");return;}
  PMDiagnosticsWrite([NSString stringWithFormat:@"Chapter OS: entering %@ with chapter %d layout",chapter,(int)program.nativeChapter].UTF8String);
  NSMutableOrderedSet *targets=[NSMutableOrderedSet orderedSet];
@@ -223,6 +232,8 @@ void enter(Runtime &r){
  mode=Mode::entering;visit=scene::enter(r,program.nativeChapter==8?scene::Route::C8:scene::Route::C9,arrived);
  if(!visit){mode=Mode::list;rows::release();PMDiagnosticsWrite("Native chapter scene unavailable; check packaged scene resources");}
 }
+#include "PMNativeOSManualTransition.inc"
+
 bool startSelection(NSDictionary *launch,PMStoryStartSong start){
  NSDictionary *card=launch[@"detail"],*e=launch[@"entry"];NSString *key=chapter;
  if(card[@"secretCourse"]){NSInteger tier=[card[@"lifeTier"] integerValue];return PMChapterStartSecretCourseWithPauseLock(key,card[@"challengeID"],card[@"secretCourse"],tier<0?lifeTier:tier,[card[@"noPause"] boolValue]);}
@@ -255,19 +266,17 @@ void ready(Runtime &r,P owner,NSString *key,PMStoryStartSong start){
  }];
 }
 void selectorFrame(Runtime &r,P owner){
- if(!requestedEntry || requestedEntry!=generation || mode!=Mode::list || selector!=owner)return;
+ if(!requestedEntry || requestedEntry!=generation || (mode!=Mode::list && mode!=Mode::listPending) || selector!=owner)return;
  // 4.0.4 SongSelector.Update uses these same two Loading flags before input.
  // Leave the stock transition in charge until it finishes unlocking the selector.
- P loading=r.klass("Loading");
- if(!r.staticValue<bool>(loading,"loadOver","System.Boolean") ||
-    r.staticValue<bool>(loading,"lockTouch","System.Boolean") ||
-    r.get<bool>(owner,"exit") || r.get<bool>(owner,"isMoving"))return;
+ if(!selectorReady(r,owner))return;
  requestedEntry=0;
  enter(r);
 }
 void detach(Runtime &r){
  if(&r!=game)return;
  selector=nullptr;
+ if(mode==Mode::listCut)mode=Mode::idle; // No async scene request yet.
  toggle::release(r);
  // Selector teardown is expected during a Single load. Keep the scene's
  // generation and any scene-scoped return until the corresponding unload.
@@ -276,7 +285,7 @@ void detach(Runtime &r){
  program=nil;
  mode=Mode::idle;
 }
-bool transitioning(){return mode==Mode::entering || mode==Mode::returning;}
+bool transitioning(){return mode==Mode::listCut || mode==Mode::mapCut || mode==Mode::entering || mode==Mode::returning;}
 void sceneUnloaded(Runtime &r,int handle,bool owned){
  if(&r!=game)return;
  if(!owned){
@@ -303,15 +312,15 @@ bool claims(Runtime &r,P button){
 }
 void dispatchOwned(Runtime &r,P b){
  if(mode==Mode::list){
-  if(toggle::press(r,b)==toggle::Press::OpenOS){PMDiagnosticsWrite("Chapter OS: list switch pressed");requestedEntry=generation;}
+  if(toggle::press(r,b)==toggle::Press::OpenOS){PMDiagnosticsWrite("Chapter OS: list switch pressed");mode=Mode::listPending;requestedEntry=generation;}
   return;
  }
- if(mode==Mode::entering||mode==Mode::returning)return;
+ if(mode==Mode::listPending || transitioning())return;
  if(busy)return;
  if(mode==Mode::map && map::press(r,b))return;
  auto action=chrome::press(r,b);switch(action.intent){
  case chrome::Intent::Back:if(mode==Mode::detail)closePanel(r);else leave(r,true,nil);break;
- case chrome::Intent::List:if(!gated)leave(r,false,nil);break;
+ case chrome::Intent::List:if(mode==Mode::map && !gated)beginManualCut(r,Mode::mapCut);break;
  case chrome::Intent::Start:if(detail&&selected)leave(r,false,@{@"detail":detail,@"entry":selected});break;
  case chrome::Intent::Slot:for(NSDictionary *e in choices){rows::Row row;if(rowFor(e,row)&&row.slot==action.slot&&panel::update(r,detailID,row.row,row.slot,row.cover)){selected=e;chrome::present(r,visit,chrome::Face::Detail,true,allowedSlots());break;}}break;
  default:break;
