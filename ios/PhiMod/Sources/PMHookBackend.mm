@@ -899,6 +899,7 @@ void onSelector(P self,P mi){
  contentBoundary("Selector unlock",[&]{pmunlock::tick(R(),self);});
   contentBoundary("Selector difficulty UI",[&]{pmcontent::selectorDifficultyUI(R(),self);});
  contentBoundary("Selector loading",[&]{pmcontent::selectorLoadingFrame(R(),self);});
+ contentBoundary("Chapter OS entry",[&]{pmnativecoordinator::selectorFrame(R(),self);});
 }
 void onSelectorOff(P self,P mi){if(cancelIdleDoorLaunch(self,true))pmstory::cancelLaunch();try{pmcontent::difficultySelectorOff(R());pmcontent::selectorLoadingEnd(R(),false);pmscene::selectorOff(R());pmunlock::clear(R());}catch(const std::exception&e){lastError=e.what();}orig<VoidFn>(h::selectorOff)(self,mi);}
 void onSetting(P self,P mi){if(!pmscene::settingsPreviewSuspended(R(),self))orig<VoidFn>(h::setting)(self,mi);static std::string previous;try{pmunlock::clear(R());pmscene::settingsFrame(R(),self);previous.clear();}catch(const std::exception&e){lastError=e.what();if(previous!=lastError){previous=lastError;diagf("MOD settings update failed: %s",e.what());}}}

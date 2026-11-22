@@ -24,6 +24,7 @@ Mode mode=Mode::idle;
 Runtime *game=nullptr; P selector=nullptr; uint64_t generation=0,visit=0,mapID=0,detailID=0;
 PMNativeOSProgram *program; NSString *chapter; NSDictionary *detail,*pendingStart,*selected;
 NSArray<NSDictionary *> *choices; NSInteger lifeTier=0; NSUInteger revision=0;
+uint64_t requestedEntry=0;
 int handoffScene=0; // Only the selector scene that received this return may consume it.
 bool gated=false,busy=false,returnBack=false; chrome::View chromeView;
 PMNativeOSActions *actions;
@@ -144,7 +145,10 @@ void arrived(Runtime &r,uint64_t token,scene::Route,P root){
  if(mode!=Mode::entering||token!=visit)return;
  if(!root||!chrome::open(r,visit,program.nativeChapter==8?scene::Route::C8:scene::Route::C9,root,chromeView)){
   PMDiagnosticsWrite(root?"Chapter OS: native chapter controls unavailable":"Chapter OS: loaded scene host unavailable");
-  if(!leave(r,false,nil)){clearScene(r);mode=Mode::idle;}
+  if(!leave(r,false,nil)){
+   clearScene(r);visit=0;
+   mode=selector && r.alive(selector) ? Mode::list : Mode::idle;
+  }
   return;
  }
  uint64_t epoch=generation;
@@ -160,6 +164,16 @@ void arrived(Runtime &r,uint64_t token,scene::Route,P root){
      return YES;
  };
  if (!mountMap()) { leave(r,false,nil); return; }
+ // The stock transition may leave a captured frame on the persistent RawImage.
+ // Release it only after this visit owns a rendered map and its input controls.
+ try{
+  P mask=r.get<P>(r.mainGame(),"sceneSwitchMask");
+  if(r.alive(mask) && r.call(mask,"get_texture")){
+   float transparent[4]={};
+   r.call(mask,"set_texture",{"UnityEngine.Texture"},{nullptr});
+   r.call(mask,"set_color",{"UnityEngine.Color"},{transparent});
+  }
+ }catch(const std::exception &e){PMDiagnosticsWrite(e.what());}
  PMDiagnosticsWrite("Chapter OS: map ready");
  applyCheckpoint=^BOOL(NSDictionary *record){
      if (visit!=token || generation!=epoch || mode!=Mode::map || ![record[@"chapter"] isEqual:chapter] ||
@@ -237,8 +251,19 @@ void ready(Runtime &r,P owner,NSString *key,PMStoryStartSong start){
  [PMNativeOSProgram loadChapter:key completion:^(PMNativeOSProgram *p,NSError *err){if(epoch!=generation||selector!=owner||mode!=Mode::loading)return;
   if(!p){mode=Mode::idle;PMDiagnosticsWrite(err.localizedDescription.UTF8String);return;}program=p;revision=PMContentStore.shared.revision;lifeTier=p.selectedLifeTier;gated=p.listSwitchHidden;mode=Mode::list;
   if(toggle::bind(*game,owner,key.UTF8String))toggle::show(*game,gated?toggle::Face::Hidden:toggle::Face::List,!gated);
-  if(!returning&&(gated||!p.listFirst||PMChapterOSHasRoutedCheckpoint(key)))enter(*game);
+  if(!returning&&(gated||!p.listFirst||PMChapterOSHasRoutedCheckpoint(key)))requestedEntry=epoch;
  }];
+}
+void selectorFrame(Runtime &r,P owner){
+ if(!requestedEntry || requestedEntry!=generation || mode!=Mode::list || selector!=owner)return;
+ // 4.0.4 SongSelector.Update uses these same two Loading flags before input.
+ // Leave the stock transition in charge until it finishes unlocking the selector.
+ P loading=r.klass("Loading");
+ if(!r.staticValue<bool>(loading,"loadOver","System.Boolean") ||
+    r.staticValue<bool>(loading,"lockTouch","System.Boolean") ||
+    r.get<bool>(owner,"exit") || r.get<bool>(owner,"isMoving"))return;
+ requestedEntry=0;
+ enter(r);
 }
 void detach(Runtime &r){
  if(&r!=game)return;
@@ -278,7 +303,7 @@ bool claims(Runtime &r,P button){
 }
 void dispatchOwned(Runtime &r,P b){
  if(mode==Mode::list){
-  if(toggle::press(r,b)==toggle::Press::OpenOS){PMDiagnosticsWrite("Chapter OS: list switch pressed");enter(r);}
+  if(toggle::press(r,b)==toggle::Press::OpenOS){PMDiagnosticsWrite("Chapter OS: list switch pressed");requestedEntry=generation;}
   return;
  }
  if(mode==Mode::entering||mode==Mode::returning)return;

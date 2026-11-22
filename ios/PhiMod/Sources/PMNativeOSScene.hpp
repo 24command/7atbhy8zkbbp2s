@@ -13,7 +13,7 @@ enum class Route { SaturnOS, C8, C9, C9Phase2 };
 using Arrived = void (*)(Runtime&, uint64_t visit, Route, void *root);
 uint64_t enter(Runtime&, Route, Arrived);
 void *activeRoot(Runtime&);
-// Optional notification at Single scene arrival (before SongSelector.Start).
+// Optional notification once the return operation finishes and the selector is active.
 // False means another Single destination interrupted the accepted return.
 using Returned = void (*)(Runtime&, uint64_t visit, bool atSongSelector);
 bool leaveToSongSelector(Runtime&, Returned = nullptr);

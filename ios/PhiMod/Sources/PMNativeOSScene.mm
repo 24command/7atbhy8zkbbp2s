@@ -59,12 +59,12 @@ void clear(Runtime &r) {
     if (current.root) r.gchandle_free(current.root);
     current = {};
 }
-bool requestSingle(Runtime &r, int index) {
+P requestSingle(Runtime &r, int index) {
     P manager = r.type(sceneNS, "SceneManager");
     int count = r.unbox<int>(r.stat(manager, "get_sceneCountInBuildSettings"));
     if (index < 0 || index >= count) {
         PMDiagnosticsWrite([NSString stringWithFormat:@"Chapter OS: build index %d unavailable (%d scenes)",index,count].UTF8String);
-        return false;
+        return nullptr;
     }
     // The 4.0.4 player retains the name/index implementation used by its public
     // overloads. Load the exact packaged scene from BuildSettings in Single mode.
@@ -75,7 +75,7 @@ bool requestSingle(Runtime &r, int index) {
     bool synchronous = false;
     return r.stat(manager,"LoadSceneAsyncNameIndexInternal",{"System.String","System.Int32",
                   "UnityEngine.SceneManagement.LoadSceneParameters","System.Boolean"},
-                  {nullptr,&index,&parameters,&synchronous}) != nullptr;
+                  {nullptr,&index,&parameters,&synchronous});
 }
 void notify(Runtime &r, Arrived cb, uint64_t id, Route route, P root) {
     @try {
@@ -85,25 +85,11 @@ void notify(Runtime &r, Arrived cb, uint64_t id, Route route, P root) {
 }
 }
 
-void hooksInstalled() { installed = true; }
-
-uint64_t enter(Runtime &r, Route route, Arrived cb) {
-    const Destination *d = destination(route);
-    if (!NSThread.isMainThread || !installed || current.target || returning.id || !d || !cb) return 0;
-    if (++sequence == 0) ++sequence;
-    uint64_t id = sequence;
-    current = {d, id, cb};
-    try { if (requestSingle(r, d->index)) return id; }
-    catch (const std::exception &e) { PMDiagnosticsWrite(e.what()); }
-    if (current.id == id) clear(r);
-    return 0;
-}
-
-bool sceneLoaded(Runtime &r, int handle, int mode) {
-    if (mode != 0) return false;
+static void finishLoad(Runtime &r, int handle) {
     if (returning.id) {
         const ReturnTrip trip = returning;
         returning = {};
+        if(current.id==trip.id)clear(r); // The old scene can unload without a managed notification.
         bool arrived = false;
         try { arrived = activeHandle(r) == handle && matches(r, handle, 7, selector); }
         catch (const std::exception &e) { PMDiagnosticsWrite(e.what()); }
@@ -113,9 +99,9 @@ bool sceneLoaded(Runtime &r, int handle, int mode) {
                 catch (const std::exception &e) { PMDiagnosticsWrite(e.what()); }
             } @catch (NSException *e) { PMDiagnosticsWrite(e.reason.UTF8String); }
         }
-        return false; // Always deliver retail scene notifications, even on interruption.
+        return;
     }
-    if (!current.arrived) return false;
+    if (!current.arrived) return;
     auto cb = current.arrived;
     auto d = current.target;
     auto id = current.id;
@@ -136,7 +122,51 @@ bool sceneLoaded(Runtime &r, int handle, int mode) {
     bool owned = current.handle != 0;
     if (!owned) clear(r);
     notify(r, cb, id, d->route, root);
-    return owned;
+}
+
+// Unity can deliver scene notifications before the destination is active. The
+// retained AsyncOperation is the completion signal even without a notification.
+static void waitForLoad(Runtime *r,uint64_t id,bool back,uint32_t op) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
+        const bool pending=back ? returning.id==id : current.id==id && current.arrived;
+        if(!pending){r->gchandle_free(op);return;}
+        int handle=0;
+        try {
+            P operation=r->gchandle_get_target(op);
+            if(!operation)throw std::runtime_error("Chapter OS: lost scene operation");
+            if(!r->unbox<bool>(r->call(operation,"get_isDone"))){
+                waitForLoad(r,id,back,op);return;
+            }
+            handle=activeHandle(*r);
+        } catch(const std::exception &e){PMDiagnosticsWrite(e.what());}
+        r->gchandle_free(op);
+        finishLoad(*r,handle);
+    });
+}
+static bool watch(Runtime &r,P op,uint64_t id,bool back){
+    if(!op)return false;
+    uint32_t root=r.gchandle_new(op,false);
+    if(!root)throw std::runtime_error("Chapter OS: cannot retain scene load");
+    waitForLoad(&r,id,back,root);
+    return true;
+}
+bool sceneLoaded(Runtime &r,int handle,int mode){
+    if(mode!=0 || !current.target || returning.id)return false;
+    try{return matches(r,handle,current.target->index,current.target->path);}
+    catch(const std::exception &e){PMDiagnosticsWrite(e.what());return false;}
+}
+void hooksInstalled() { installed = true; }
+
+uint64_t enter(Runtime &r, Route route, Arrived cb) {
+    const Destination *d = destination(route);
+    if (!NSThread.isMainThread || !installed || current.target || returning.id || !d || !cb) return 0;
+    if (++sequence == 0) ++sequence;
+    uint64_t id = sequence;
+    current = {d, id, cb};
+    try { if (watch(r, requestSingle(r, d->index), id, false)) return id; }
+    catch (const std::exception &e) { PMDiagnosticsWrite(e.what()); }
+    if (current.id == id) clear(r);
+    return 0;
 }
 
 bool sceneUnloaded(Runtime &r, int handle) {
@@ -161,7 +191,7 @@ bool leaveToSongSelector(Runtime &r, Returned cb) {
         if (activeHandle(r) != current.handle) return false;
         current.leaving = true;
         returning = {current.id, cb};
-        if (requestSingle(r, 7)) return true;
+        if (watch(r, requestSingle(r, 7), current.id, true)) return true;
     } catch (const std::exception &e) { PMDiagnosticsWrite(e.what()); }
     returning = {};
     current.leaving = false;

@@ -58,6 +58,10 @@ using P=void*;
 #define nil nullptr
 struct Runtime {
     int activeScene=17, queries=0, mouse=0;
+    bool loadOver=false,lockTouch=false,exit=false,moving=false;
+    P klass(const char*) {return this;}
+    template<class T>T staticValue(P,const char *name,const char*){return name[1]=='o' && name[2]=='a' ? loadOver : lockTouch;}
+    template<class T>T get(P,const char *name){return name[0]=='e' ? exit : moving;}
     P type(const char*,const char*) {return this;}
     P stat(P,const char*) {return &activeScene;}
     P call(P,const char*) {++queries; if(mouse<0)throw std::runtime_error("event expired");return &mouse;}
@@ -68,7 +72,9 @@ void PMDiagnosticsWrite(const char*){}
 Runtime *game=&runtime;
 int handoffScene=0, actions=0, closes=0, releases=0, ownedButton, retailButton;
 P selector=nullptr, program=nullptr, chapter=nullptr, pendingStart=nullptr;
-uint64_t generation=3,visit=0;
+uint64_t generation=3,visit=0,requestedEntry=0;
+int entries=0;
+void enter(Runtime&){++entries;}
 bool returnBack=false;
 namespace toggle {
     bool owns(Runtime&,P b){return b==&ownedButton;}
@@ -83,12 +89,18 @@ template<class F>void guardInput(F f){try{f();}catch(const std::exception&){}}
 '''
         code += definition(COORD, 'enum class Mode') + '; Mode mode=Mode::idle;\n'
         code += 'void dispatchOwned(Runtime&,P){++actions;mode=Mode::idle;}\n'
-        for method in ('void discardHandoff(', 'void returned(', 'bool transitioning(', 'void detach(',
+        for method in ('void selectorFrame(', 'void discardHandoff(', 'void returned(', 'bool transitioning(', 'void detach(',
                        'void sceneUnloaded(', 'bool claims(', 'bool dispatch(', 'bool press(', 'bool pointerClick('):
             code += definition(COORD, method) + '\n'
         code += r'''
 int main(){
     Runtime &r=runtime; P button=&ownedButton,event=&runtime;
+    mode=Mode::list;selector=button;requestedEntry=generation;
+    selectorFrame(r,button);assert(!entries && requestedEntry);
+    r.lockTouch=true;r.loadOver=true;selectorFrame(r,button);assert(!entries);
+    r.lockTouch=false;r.moving=true;selectorFrame(r,button);assert(!entries);
+    r.moving=false;selectorFrame(r,event);assert(!entries);
+    selectorFrame(r,button);selectorFrame(r,button);assert(entries==1 && !requestedEntry);
     for(auto passive:{Mode::idle,Mode::loading}){
         mode=passive; assert(!pointerClick(r,button,event));assert(!press(r,button));
     }
