@@ -10,6 +10,7 @@ typedef struct {int song,speech; double seconds;char speechHeading[192];char tit
     /* Ordered C8 WaveDisplay bar heights in [0,1]. The 4.0.4 donor has 100 bars. */
     int waveformCount;
     float waveform[100];
+    int songSuppressed;
 } PMOSCard;
 enum {PMOSFrame, PMOSImage, PMOSHotspot};
 enum { PMOSMaxNodes = 256, PMOSMaxScreens = 32, PMOSScreenNameSize = 64 };
@@ -21,6 +22,7 @@ typedef struct {double x,y,w,h,start,duration,fade;int kind,parent,depth,cover,o
     PMOSMotion motion;
     char tapFace[64]; /* Optional descendant ID. Empty flashes the whole node. */
     int tapFaceIndex;
+    int songSuppressed; /* Permanent for this declaration, including inherited suppression. */
 } PMOSNode;
 enum { PMOSProgressKeyMax = 64, PMOSProgressAccessLimit = 128 };
 enum { PMOSMaxChallenges = 32, PMOSMaxChallengeTiers = 16,
@@ -57,13 +59,38 @@ typedef struct {
     int introCount, showDetail, nextSongCount; /* showDetail defaults to 1. Zero starts play after intro. */
     char intro[PMOSMaxChallengeIntro][256]; /* Local GIF/MP4 basenames in playback order. */
     PMOSChallengeSong nextSongs[PMOSMaxChallengeNextSongs]; /* After each clear, in order. */
+    int songSuppressed;
 } PMOSChallenge;
+enum { PMOSMaxUnlockAnimations = 32,
+       PMOSUnlockIdMax = PMOSProgressKeyMax - (sizeof("unlock.") - 1) };
+typedef enum { PMOSUnlockMod, PMOSUnlockC5, PMOSUnlockC6, PMOSUnlockC7,
+               PMOSUnlockC8, PMOSUnlockC9 } PMOSUnlockStyle;
+typedef enum { PMOSUnlockEnter, PMOSUnlockEvent } PMOSUnlockWhen;
+/* unlockAnimation{...} requires a unique progress-safe id, a one-based song and
+   a style. src is a UTF-8 local MP4 basename or a known @stock clip, required
+   for mod. All supplied times are seconds in [0,86400]. after delays playback.
+   Each omitted info bound is -1 so the presenter resolves the clip/style default.
+   A supplied bound has its presence flag set, including an explicit zero.
+   When both are supplied, infoUntil must follow infoAt. An explicit duration
+   must be positive and contain the supplied bounds (infoAt < duration). */
+typedef struct {
+    char id[PMOSUnlockIdMax + 1], progressKey[PMOSProgressKeyMax + 1], src[256];
+    int song, once, seen;
+    PMOSUnlockStyle style;
+    PMOSUnlockWhen when;
+    double after, infoAt, infoUntil, duration; /* 0 duration = automatic. */
+    int hasInfoAt, hasInfoUntil;
+} PMOSUnlockAnimation;
 typedef struct {int nodes,screens;double aspect;char names[PMOSMaxScreens][PMOSScreenNameSize];PMOSNode elements[PMOSMaxNodes];int listFirst,count,listSwitchHidden,selectedLifeTier; int nativeChapter; /* 8 or 9, defaults to 9. */ PMOSCard cards[128];char error[384];
     int cueCount; PMOSChallengeCue cues[PMOSMaxChallengeCues];
     int challengeCount; PMOSChallenge challenges[PMOSMaxChallenges];
     char entryMovieKey[65],entryMovieName[256]; int entryMovieSeen;
     char chapterCover[256]; /* Last chapterCover(stillBasename) during declaration; empty = configured art. */
     int nativePhase; /* 1 by default, or 2 for nativeChapter(9, 2). */
+    /* Scan in declaration order for when == PMOSUnlockEnter && !seen. seen is
+       a load-time snapshot of once && progress.get(progressKey) != 0. */
+    int unlockAnimationCount;
+    PMOSUnlockAnimation unlockAnimations[PMOSMaxUnlockAnimations];
 } PMOSPage;
 typedef struct PMOSSession PMOSSession;
 typedef struct {int song, dest, element, visible; char error[384]; int checkpoint; char difficulty[96]; int challenge;
@@ -71,6 +98,10 @@ typedef struct {int song, dest, element, visible; char error[384]; int checkpoin
        target and song is the optional one-based native song (0 to resume only). */
     char revealTitle[256], revealText[1024];
     int listSwitchHidden,selectedLifeTier;
+    /* One-based page index for an event scene. 0 also represents a suppressed
+       once event. Each click reads live/staged progress. The presenter writes
+       unlock.<id> = 1 on completion for once scenes. The VM never marks them. */
+    int unlockAnimation;
 } PMOSAction;
 
 typedef struct { char key[PMOSProgressKeyMax + 1]; int value; } PMOSProgressChange;
@@ -100,6 +131,9 @@ PMOSSession *PMOSStartWithProgress(const char *source, size_t len, int songs,
    Serialize clicks and stop for a given session. A failed start sets page->error. */
 PMOSSession *PMOSStart(const char *source, size_t len, int songs, PMOSPage *page);
 void PMOSStop(PMOSSession *session);
+/* Lua songVisible(song, bool) is declaration-only. Songs start visible and the
+   last declaration wins. This query returns false for invalid one-based indices. */
+int PMOSSongVisible(const PMOSSession *session, int song);
 /* Pass the zero-based element index (handler flags a Lua callback or a playable
    static challenge, both dispatched via PMOSClick). Static actions
    are supported too. song defaults to 0, dest and element to -1. For show/hide,

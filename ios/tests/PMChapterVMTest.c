@@ -23,7 +23,7 @@ static void expectAction(PMOSSession *s, int node, int song, int dest) {
     PMOSAction a;
     memset(&a, 0x55, sizeof(a));
     assert(PMOSClick(s, node, &a));
-    assert(!a.challenge && !a.checkpoint && !a.difficulty[0]);
+    assert(!a.unlockAnimation && !a.challenge && !a.checkpoint && !a.difficulty[0]);
     assert(a.song == song && a.dest == dest && a.element == -1 && !a.visible && !a.error[0]);
 }
 
@@ -31,7 +31,7 @@ static void expectFailure(PMOSSession *s, int node, const char *message) {
     PMOSAction a;
     memset(&a, 0x55, sizeof(a));
     assert(!PMOSClick(s, node, &a));
-    assert(!a.challenge && !a.checkpoint && !a.difficulty[0]);
+    assert(!a.unlockAnimation && !a.challenge && !a.checkpoint && !a.difficulty[0]);
     assert(!a.song && a.dest == -1 && a.element == -1 && !a.visible && a.error[0] && strstr(a.error, message));
 }
 
@@ -666,6 +666,148 @@ static void testPauseAndReplay(void){
  const char *cases[]={"noPause=true,replaySongs={{song=2,difficulty='IN'},{song=2,difficulty='AT'}}", "noPause=false", "", "noPause=1", "replaySongs={[2]={song=1}}", "replaySongs={{song=4}}", "replaySongs={{song=1,bogus=true}}", "replaySongs={{song=1},{song=1},{song=1},{song=1},{song=1},{song=1},{song=1},{song=1},{song=1}}"};
  for(size_t i=0;i<sizeof(cases)/sizeof(*cases);++i){char code[512];snprintf(code,sizeof code,"%s%s}",base,cases[i]);assert(!!run(code)==(i<3));if(i<3){assert(p.challenges[0].noPause==(i==0));assert(p.challenges[0].replayCount==(i==0?2:0));if(i==0){assert(p.challenges[0].replaySongs[0].song==2&&!strcmp(p.challenges[0].replaySongs[0].difficulty,"IN"));assert(p.challenges[0].replaySongs[1].song==2&&!strcmp(p.challenges[0].replaySongs[1].difficulty,"AT"));}}}
 }
+static void expectUnlock(PMOSSession *session, int node, int index) {
+    PMOSAction action;
+    memset(&action, 0x55, sizeof(action));
+    assert(PMOSClick(session, node, &action));
+    assert(action.unlockAnimation == index && !action.error[0] && !action.song &&
+           action.dest == -1 && action.element == -1 && !action.challenge && !action.checkpoint);
+}
+
+static void testUnlockDeclarations(void) {
+    const char *source =
+        "if progress.get('ready') ~= 0 then "
+        "unlockAnimation{id='arrival',style='c5',song=2};"
+        "unlockAnimation{id='tap',style='mod',song=1,when='event',once=false,src='movie.Mp4',"
+        "after=.5,infoAt=1.5,infoUntil=3,duration=3};"
+        "unlockAnimation{id='end',style='c9',song=3,src='@stock/c9/to-phase-2',when='enter'}; end";
+    TestStore store = {0};
+    PMOSSession *session = startProgress(source, &store);
+    assert(session && !p.unlockAnimationCount && store.reads == 1 && !store.commits);
+    PMOSStop(session);
+    store.entries[store.count++] = (PMOSProgressChange){"ready", 1};
+    session = startProgress(source, &store);
+    assert(session && p.unlockAnimationCount == 3);
+    const PMOSUnlockAnimation *scenes = p.unlockAnimations;
+    assert(!strcmp(scenes[0].id, "arrival") && !strcmp(scenes[0].progressKey, "unlock.arrival"));
+    assert(scenes[0].when == PMOSUnlockEnter && scenes[0].style == PMOSUnlockC5 &&
+           scenes[0].song == 2 && scenes[0].once && !scenes[0].seen && !scenes[0].src[0]);
+    assert(!scenes[0].hasInfoAt && !scenes[0].hasInfoUntil);
+    assert(scenes[0].after == 0 && scenes[0].infoAt == -1 && scenes[0].infoUntil == -1 && scenes[0].duration == 0);
+    assert(!strcmp(scenes[1].id, "tap") && !strcmp(scenes[1].src, "movie.Mp4") && !scenes[1].once &&
+           scenes[1].when == PMOSUnlockEvent && scenes[1].style == PMOSUnlockMod && !scenes[1].seen);
+    assert(scenes[1].hasInfoAt && scenes[1].hasInfoUntil);
+    assert(scenes[1].after == .5 && scenes[1].infoAt == 1.5 && scenes[1].infoUntil == 3 && scenes[1].duration == 3);
+    assert(!strcmp(scenes[2].id, "end") && !strcmp(scenes[2].src, "@stock/c9/to-phase-2") &&
+           scenes[2].when == PMOSUnlockEnter && scenes[2].style == PMOSUnlockC9 && !scenes[2].seen);
+    PMOSStop(session);
+
+    store.entries[store.count++] = (PMOSProgressChange){"unlock.arrival", 1};
+    session = startProgress(source, &store);
+    assert(session && p.unlockAnimationCount == 3 && p.unlockAnimations[0].seen && !p.unlockAnimations[2].seen);
+    PMOSStop(session);
+    session = startProgress("unlockAnimation{id='arrival',song=1,style='c9',once=false}", &store);
+    assert(session && !p.unlockAnimations[0].seen && !store.commits);
+    PMOSStop(session);
+
+    assert(run("unlockAnimation{id='start',song=1,style='c8',infoAt=0};"
+               "unlockAnimation{id='end',song=1,style='c9',infoUntil=0}"));
+    assert(scenes[0].hasInfoAt && scenes[0].infoAt == 0 && !scenes[0].hasInfoUntil && scenes[0].infoUntil == -1);
+    assert(!scenes[1].hasInfoAt && scenes[1].infoAt == -1 && scenes[1].hasInfoUntil && scenes[1].infoUntil == 0);
+
+    assert(run("for i=5,9 do unlockAnimation{id='scene'..i,song=1,style='c'..i} end"));
+    for (int i = 0; i < 5; ++i) assert(p.unlockAnimations[i].style == PMOSUnlockC5 + i);
+    assert(run("unlockAnimation{id='stock',song=3,style='mod',src='@stock/c8/321-unlock'}"));
+}
+
+static void testUnlockEvents(void) {
+    const char *source =
+        "local function tap(id) hotspot{onClick=function() return {unlockAnimation=id} end} end;"
+        "tap('first'); tap('repeat'); tap('enter'); tap('missing');"
+        "hotspot{onClick=function() progress.set('unlock.first',0); return {unlockAnimation='first'} end};"
+        "hotspot{onClick=function() progress.set('other',1); return {unlockAnimation='first',open=1} end};"
+        "hotspot{onClick=function() unlockAnimation{} end};"
+        "unlockAnimation{id='enter',song=1,style='c6'};"
+        "unlockAnimation{id='first',song=2,style='c7',when='event'};"
+        "unlockAnimation{id='repeat',song=3,style='c8',when='event',once=false};"
+        "progress.set('unlock.enter',1)";
+    TestStore store = {0};
+    store.entries[store.count++] = (PMOSProgressChange){"unlock.repeat", 1};
+    PMOSSession *session = startProgress(source, &store);
+    assert(session && p.unlockAnimations[0].seen && !p.unlockAnimations[1].seen && !p.unlockAnimations[2].seen);
+    assert(store.reads == 1 && store.commits == 1); /* Staged enter key, live once event, repeat ignores storage. */
+    memset(&p, 0, sizeof(p)); /* Session-owned action lookup must survive release of the parsed page. */
+    expectUnlock(session, 0, 2);
+    expectUnlock(session, 0, 2);
+    assert(store.commits == 1 && store.count == 2);
+    store.entries[store.count++] = (PMOSProgressChange){"unlock.first", -1}; /* Presenter completed it. */
+    expectUnlock(session, 0, 0);
+    store.failRead = 1;
+    expectUnlock(session, 1, 3);
+    expectUnlock(session, 1, 3);
+    expectFailure(session, 0, "progress read failed");
+    expectFailure(session, 2, "event scene");
+    expectFailure(session, 3, "unknown unlockAnimation");
+    expectFailure(session, 6, "declarations are closed");
+    store.failRead = 0;
+    expectFailure(session, 5, "exactly one field");
+    assert(store.commits == 1 && store.count == 3);
+    store.failCommit = 1;
+    expectFailure(session, 4, "commit failed");
+    expectUnlock(session, 0, 0);
+    store.failCommit = 0;
+    expectUnlock(session, 4, 2); /* Read sees zero staged by this handler. */
+    expectUnlock(session, 0, 2);
+    PMOSStop(session);
+
+    session = start("hotspot{onClick=function() return {unlockAnimation='e'} end};"
+        "unlockAnimation{id='e',song=1,style='c5',when='event'}");
+    assert(session && !p.unlockAnimations[0].seen);
+    expectUnlock(session, 0, 1);
+    PMOSStop(session);
+}
+
+static void testUnlockValidation(void) {
+    const char *invalid[] = {
+        "d.id=nil", "d.id=''", "d.id='bad/key'", "d.id='a\\0b'", "d.id=1", "d.song=nil", "d.song='2'",
+        "d.song=0", "d.song=4", "d.song=1.5", "d.style=nil", "d.style='mod'", "d.style='c4'", "d.style=5",
+        "d.src=false", "d.src='a.gif'", "d.src='.hidden.mp4'", "d.src='../a.mp4'", "d.src='a\\\\b.mp4'",
+        "d.src='a:b.mp4'", "d.src='@stock/c9/no-such-clip'", "d.src='a\\0.mp4'", "d.src='bad\\255.mp4'",
+        "d.src='bad\\127.mp4'", "d.when='click'", "d.when=false", "d.once=0", "d.extra=true", "d[1]=1",
+        "d.after=-1", "d.after=86401", "d.after='1'", "d.infoAt=0/0", "d.infoUntil=1/0", "d.infoUntil=-1",
+        "d.duration=0", "d.infoAt=2; d.duration=2", "d.infoAt=1; d.infoUntil=1", "d.infoUntil=3; d.duration=2",
+        "unlockAnimation(d)", "unlockAnimation(d,d)"
+    };
+    for (size_t i = 0; i < sizeof(invalid)/sizeof(invalid[0]); ++i) {
+        char source[256];
+        snprintf(source, sizeof(source), "local d={id='a',song=2,style='c7'}; %s; unlockAnimation(d)", invalid[i]);
+        assert(!run(source) && p.error[0] && !p.unlockAnimationCount);
+    }
+    char source[1024];
+    snprintf(source, sizeof(source), "for i=1,%d do unlockAnimation{id='s'..i,song=1,style='c5'} end", PMOSMaxUnlockAnimations);
+    assert(run(source) && p.unlockAnimationCount == PMOSMaxUnlockAnimations);
+    strcat(source, ";unlockAnimation{id='extra',song=1,style='c5'}");
+    assert(!run(source) && !p.unlockAnimationCount);
+    char id[PMOSUnlockIdMax + 2], name[257];
+    memset(id, 'a', sizeof(id)); id[PMOSUnlockIdMax] = 0;
+    memset(name, 'b', sizeof(name)); strcpy(name+251, ".mp4");
+    const char *decl = "unlockAnimation{id='%s',song=2,style='mod',src='%s',duration=86400}";
+    snprintf(source, sizeof(source), decl, id, name);
+    assert(run(source) && strlen(p.unlockAnimations[0].progressKey) == PMOSProgressKeyMax && strlen(p.unlockAnimations[0].src) == 255);
+    strcpy(id+PMOSUnlockIdMax, "x");
+    snprintf(source, sizeof(source), decl, id, name);
+    assert(!run(source));
+    strcpy(name+251, "x.mp4");
+    snprintf(source, sizeof(source), decl, "valid", name);
+    assert(!run(source));
+
+    TestStore store = {0};
+    store.failRead = 1;
+    assert(!startProgress("progress.set('other',1);unlockAnimation{id='key',song=1,style='c5'}", &store));
+    assert(!store.commits && !p.unlockAnimationCount);
+    snprintf(source, sizeof(source), "for i=1,%d do progress.get('other') end;unlockAnimation{id='x',song=1,style='c5'}", PMOSProgressAccessLimit);
+    assert(!run(source) && strstr(p.error, "progress access limit"));
+}
 static void testEntryMovie(void){
  assert(run("onEnterMovie{key='center',src='center.mp4'}"));
  assert(!strcmp(p.entryMovieKey,"movie.center") && !strcmp(p.entryMovieName,"center.mp4") && !p.entryMovieSeen);
@@ -673,5 +815,5 @@ static void testEntryMovie(void){
  assert(!run("onEnterMovie{key='center',src='../other.mp4'}"));
  assert(!run("onEnterMovie{key='a',src='a.mp4'};onEnterMovie{key='b',src='b.mp4'}"));
 }
-int main(void){testEntryMovie();assert(run("home('os')") && p.nativeChapter==9);assert(run("nativeChapter(8)") && p.nativeChapter==8);assert(run("nativeChapter(9)") && p.nativeChapter==9);assert(!run("nativeChapter(7)"));assert(!run("nativeChapter('8')"));testPauseAndReplay();testSwitchAndCourse();testCoverPreview();testReveal();testPuzzleChallengeSequence();testChallengeCues();testChallengeBindings();testChallengeProgress();testChallengeActions();testChallengeValidation();testLayout();testPersistentClicks();testHandlerFailures();testCheckpoints();testProgressTransactions();testProgressValidation();testProgressBudget();testNodeTiming();testVisibility();testClickBudgets();assert(run("return {}")&&!p.listFirst&&!p.count);assert(run("home('list'); for i=1,song_count do card(i,'Title','Body') end"));assert(p.listFirst&&p.count==3&&p.cards[2].song==3&&!strcmp(p.cards[1].caption,"Body"));
+int main(void){testUnlockDeclarations();testUnlockEvents();testUnlockValidation();testEntryMovie();assert(run("home('os')") && p.nativeChapter==9);assert(run("nativeChapter(8)") && p.nativeChapter==8);assert(run("nativeChapter(9)") && p.nativeChapter==9);assert(!run("nativeChapter(7)"));assert(!run("nativeChapter('8')"));testPauseAndReplay();testSwitchAndCourse();testCoverPreview();testReveal();testPuzzleChallengeSequence();testChallengeCues();testChallengeBindings();testChallengeProgress();testChallengeActions();testChallengeValidation();testLayout();testPersistentClicks();testHandlerFailures();testCheckpoints();testProgressTransactions();testProgressValidation();testProgressBudget();testNodeTiming();testVisibility();testClickBudgets();assert(run("return {}")&&!p.listFirst&&!p.count);assert(run("home('list'); for i=1,song_count do card(i,'Title','Body') end"));assert(p.listFirst&&p.count==3&&p.cards[2].song==3&&!strcmp(p.cards[1].caption,"Body"));
  assert(!run("card(4)")&&strstr(p.error,"os.lua:1:"));assert(!run("home('bad')"));assert(!run("while true do end")&&strstr(p.error,"limit"));assert(!run("local t='a';for i=1,30 do t=t..t end"));assert(!run("require('os')"));assert(!run("for i=1,129 do card(1) end"));assert(!run("card("));assert(!run("\033Lua"));assert(run("card(2)")&&p.count==1);puts("chapter OS Lua tests passed");return 0;}

@@ -226,6 +226,7 @@ int preflight(const PMOSPage &page, NSArray<NSDictionary *> *models, NSMutableSe
         if (n.screen < 0 || n.screen >= page.screens || n.parent < -1 || n.parent >= i ||
             (n.parent >= 0 && (page.elements[n.parent].screen != n.screen || page.elements[n.parent].kind != PMOSFrame)))
             throw std::runtime_error("Map node has invalid screen or parent");
+        if (n.songSuppressed) continue;
         NSDictionary *model = models[i];
         if (n.dropIndex < -1 || n.dropIndex >= page.nodes || (n.dropIndex >= 0 && page.elements[n.dropIndex].screen != n.screen))
             throw std::runtime_error("Invalid map drop target");
@@ -295,6 +296,7 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
     bool hasBacking = false;
     for (int i = 0; i < page.nodes; ++i) {
         NSString *path = models[i][@"path"];
+        if (page.elements[i].songSuppressed) continue;
         if (page.elements[i].dropIndex >= 0 && !hasBacking) {
             P backing = add(r,m.get(root.go),"UnityEngine.UI","Image");
             hasBacking = true;
@@ -307,6 +309,11 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
     for (int i = 0; i < page.nodes; ++i) @autoreleasepool {
         const PMOSNode &n = page.elements[i];
         Item item;
+        if (n.songSuppressed) {
+            item.active = false;
+            m.items.push_back(item); // Reserve the index without creating Unity objects.
+            continue;
+        }
         item.screen = n.screen; item.parent = n.parent; item.manual = !n.hidden;
         NSString *path = models[i][@"path"];
         bool animated = isAnimated(path);
@@ -376,6 +383,7 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
         if (!item.motion.tapTime || !item.motion.tapFlash) continue;
         int face = page.elements[i].tapFaceIndex;
         const Item &target = m.items.at(face);
+        if (!target.rect) continue;
         bool masked = page.elements[i].tapFace[0] && page.elements[face].kind == PMOSImage && target.pictureRect;
         Handle rect = masked ? target.pictureRect : target.rect;
         Object overlay = child(m, m.get(rect), "Tap flash");
@@ -395,6 +403,7 @@ void refresh(Map &m, double t) {
     if (!m.r.alive(m.get(m.root))) throw std::runtime_error("Map scene has unloaded");
     for (size_t i = 0; i < m.items.size(); ++i) {
         Item &item = m.items[i];
+        if (!item.object) continue;
         const Item *parent = item.parent < 0 ? nullptr : &m.items[item.parent];
         float alpha = layout::opacity(t, item.start, item.duration, item.fade);
         auto state = layout::sample(alpha, item.screen == m.page, item.manual,
@@ -485,7 +494,7 @@ bool displayPage(Runtime &r, Visit id, int screen) {
     });
 }
 bool setElement(Runtime &r, Visit id, int index, bool visible) {
-    if (!matches(r,id) || index < 0 || size_t(index) >= current->items.size()) return false;
+    if (!matches(r,id) || index < 0 || size_t(index) >= current->items.size() || !current->items[index].object) return false;
     return change(r,id,[&](Map &m){
         auto &item = m.items[index];
         if (visible && !item.manual) item.manualSince = m.time();

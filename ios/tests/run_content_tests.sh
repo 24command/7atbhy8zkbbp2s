@@ -19,6 +19,8 @@ clang++ -std=c++17 -fobjc-arc -DPMDOOR_RUN_HOST_TEST -framework Foundation -fram
   clang -std=c99 -O2 -c "$ROOT"/PhiMod/Vendor/lua54/*.c "$ROOT/PhiMod/Core/PMChapterVM.c"
   clang -std=c99 -O2 "$ROOT/tests/PMChapterVMTest.c" ./*.o -o chaptervm
   ./chaptervm
+  clang -std=c99 -O2 "$ROOT/tests/PMChapterSongVisibilityTest.c" ./*.o -o chaptervm
+  ./chaptervm
   clang -std=c99 -O2 "$ROOT/tests/PMChapterC8WaveformTest.c" ./*.o -o c8waveform
   ./c8waveform
   python3 "$ROOT/tests/test_native_os_c8_waveform.py"

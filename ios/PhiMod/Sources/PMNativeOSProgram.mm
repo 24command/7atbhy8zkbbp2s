@@ -1,6 +1,7 @@
 #import "PMNativeOSProgram.h"
 #import "PMChapterArt.h"
 #import "PMChapterEditing.h"
+#include "PMContentRuntime.hpp"
 #import "PMChapterScript.h"
 #import "PMContentStore.h"
 #import "PMDoorRun.h"
@@ -39,6 +40,7 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
     PMOSSession *_session;
     std::unique_ptr<const PMOSPage> _plan;
     dispatch_queue_t _events;
+    NSArray<NSDictionary *> *_unlockFields;
 }
 
 + (void)loadChapter:(NSString *)chapter completion:(PMNativeOSLoadCompletion)completion {
@@ -119,6 +121,7 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
     NSMutableSet *overridden = [NSMutableSet set];
     for (NSUInteger i = 0, n = plan->count ? (NSUInteger)plan->count : order.count; i < n; i++) {
         const PMOSCard *c = plan->count ? &plan->cards[i] : nullptr;
+        if (!c && !PMOSSongVisible(_session, (int)i + 1)) continue;
         NSString *sid = order[c ? c->song - 1 : i];
         NSMutableDictionary *row = [bySong[sid] mutableCopy];
         if (c && c->title[0])
@@ -137,6 +140,8 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
     }
     for (int i = 0; i < plan->count; i++) {
         NSString *sid = order[plan->cards[i].song - 1];
+        // A suppressed challenge card must not supply the title/artwork of another visible card.
+        if (plan->cards[i].songSuppressed && PMOSSongVisible(_session, plan->cards[i].song)) continue;
         if (![overridden containsObject:sid]) {
             bySong[sid] = cards[i];
             [overridden addObject:sid];
@@ -146,6 +151,10 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
     NSMutableArray *challengeRows = [NSMutableArray arrayWithCapacity:plan->challengeCount];
     for (int i = 0; i < plan->challengeCount; i++) {
         const PMOSChallenge &challenge = plan->challenges[i];
+        if (challenge.songSuppressed) {
+            [challengeRows addObject:@{}]; // Keep the one-based challenge binding stable.
+            continue;
+        }
         const PMOSChallengeTier *tier = &challenge.tiers[0];
         for (int j = 1; j < challenge.tierCount && challenge.tiers[j].after <= challenge.failures; ++j)
             tier = &challenge.tiers[j];
@@ -230,7 +239,12 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
         }
         [challengeRows addObject:[row copy]];
     }
+    NSMutableIndexSet *suppressedCards = [NSMutableIndexSet indexSet];
     for (int i = 0; i < plan->count; i++) {
+        if (plan->cards[i].songSuppressed) {
+            [suppressedCards addIndex:(NSUInteger)i];
+            continue;
+        }
         int binding = plan->cards[i].challenge;
         if (binding <= 0)
             continue;
@@ -251,9 +265,14 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
         }
         cards[i] = [card copy];
     }
+    [cards removeObjectsAtIndexes:suppressedCards];
     NSMutableArray *nodes = [NSMutableArray new];
     for (int i = 0; i < plan->nodes; i++) {
         const PMOSNode &n = plan->elements[i];
+        if (n.songSuppressed) {
+            [nodes addObject:@{}]; // VM callbacks, parents and drag targets use declaration indices.
+            continue;
+        }
         NSMutableDictionary *model = [@{
             @"parent" : @(n.parent),
             @"screen" : @(n.screen),
@@ -296,12 +315,29 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
         [nodes addObject:[model copy]];
     }
 
+    // Authored indexes can refer to official songs moved into this chapter, too.
+    NSDictionary *retail = PMOfficialSongMap(pmcontent::cachedOfficialSnapshot());
+    NSMutableArray *fields=[NSMutableArray arrayWithCapacity:order.count];
+    for(NSString *sid in order){
+        NSDictionary *chart=songs[sid], *stock=retail[sid];
+        NSString *title=bySong[sid][@"title"];
+        if(!title.length || [title isEqual:sid])title=chart[@"title"] ?: stock[@"songsName"] ?: sid;
+        NSString *level=[chart[@"difficultyText"] description] ?: [chart[@"difficulty"] description];
+        [fields addObject:@{@"title":title, @"artist":chart[@"composer"] ?: stock[@"composer"] ?: @"",
+                            @"difficulty":chart[@"level"] ?: @"", @"level":level ?: @"",
+                            @"charter":chart[@"charter"] ?: @"", @"illustrator":chart[@"illustrator"] ?: stock[@"illustrator"] ?: @""}];
+    }
+    _unlockFields=[fields copy];
     _chapter = [chapter copy];
     _chapterName = [name copy] ?: _chapter;
     _scriptHash = PMChapterScriptDigest(source);
     _screens = [screens copy];
     _order = [order copy];
     _bySong = [bySong copy];
+    NSMutableDictionary *visible = [NSMutableDictionary dictionary];
+    for (NSUInteger i = 0; i < order.count; ++i)
+        if (PMOSSongVisible(_session, (int)i + 1)) visible[order[i]] = bySong[order[i]];
+    _visibleBySong = [visible copy];
     _cards = [cards copy];
     _nodes = [nodes copy];
     _challengeRows = [challengeRows copy];
@@ -318,6 +354,17 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
     return _plan.get();
 }
 
+- (NSDictionary<NSString *,NSString *> *)unlockFieldsForSong:(NSInteger)song {
+    return song>0 && (NSUInteger)song<=_unlockFields.count ? _unlockFields[song-1] : @{};
+}
+- (void)markUnlockSeen:(NSInteger)index completion:(void (^)(BOOL))completion {
+    if(index<0 || index>=_plan->unlockAnimationCount){completion(NO);return;}
+    NSString *key=@(_plan->unlockAnimations[index].progressKey);
+    dispatch_async(_events, ^{
+        BOOL ok=[self->_progress commitValues:@{key:@1}];
+        dispatch_async(dispatch_get_main_queue(), ^{completion(ok);});
+    });
+}
 - (void)markEntryMovieSeen:(void (^)(BOOL))completion {
     NSString *key = @(_plan->entryMovieKey);
     dispatch_async(_events, ^{

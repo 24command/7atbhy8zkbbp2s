@@ -7,6 +7,10 @@
 #import "PMStockIntroResolver.hpp"
 #import "PMUnlockMedia.h"
 #import "PMUnlockRuntime.hpp"
+#import "PMStockUnlockPresenter.h"
+#include "PMStockUnlockLayout.hpp"
+#import "PMChapterC8C9UnlockInfo.hpp"
+#import <AVFoundation/AVFoundation.h>
 #include <memory>
 
 namespace {
@@ -152,6 +156,8 @@ CGRect focusRect(CGRect bounds, double aspect, CGRect rect) {
     open(card[@"challengeDetail"] ?: card);
 }
 
+#include "PMNativeOSUnlockPlayback.inc"
+
 - (BOOL)playEntryMovie:(void (^)(BOOL))completion {
     if (![self ready] || !gameWindow()) return NO;
     const PMOSPage *page = _program.page;
@@ -239,7 +245,8 @@ CGRect focusRect(CGRect bounds, double aspect, CGRect rect) {
     NSInteger target = action->element;
     if (index < 0 || index >= page.nodes || target < 0 || target >= page.nodes ||
         page.elements[index].screen != page.elements[target].screen || action->song < 0 ||
-        (NSUInteger)action->song > _program.order.count) return NO;
+        (NSUInteger)action->song > _program.order.count || page.elements[index].songSuppressed ||
+        page.elements[target].songSuppressed || (action->song && !_program.visibleBySong[_program.order[action->song - 1]])) return NO;
     UIWindow *host = gameWindow();
     CGRect start = normalizedRect(page, index), end = normalizedRect(page, target);
     NSString *title = [NSString stringWithUTF8String:action->revealTitle];
@@ -281,7 +288,9 @@ CGRect focusRect(CGRect bounds, double aspect, CGRect rect) {
     NSMutableDictionary *fields = [@{@"chapter":_program.chapter, @"scriptHash":_program.scriptHash,
                                      @"token":NSUUID.UUID.UUIDString} mutableCopy];
     if (action->song > 0 && (NSUInteger)action->song <= _program.order.count && action->dest == -1) {
-        fields[@"songID"] = _program.order[action->song - 1];
+        NSString *sid = _program.order[action->song - 1];
+        if (!_program.visibleBySong[sid]) return NO;
+        fields[@"songID"] = sid;
         if (action->difficulty[0]) {
             NSString *difficulty = [NSString stringWithUTF8String:action->difficulty];
             if (!difficulty) return NO;

@@ -8,17 +8,25 @@
 
 enum { MemoryLimit = 8 * 1024 * 1024, SourceLimit = 2 * 1024 * 1024, InstructionLimit = 150000 };
 
-typedef struct { int ref, song, dest, screen, challenge; char id[sizeof(((PMOSNode *)0)->id)]; } ClickTarget;
+typedef struct { int ref, song, dest, screen, challenge, songSuppressed; char id[sizeof(((PMOSNode *)0)->id)]; } ClickTarget;
+typedef struct {
+    char progressKey[PMOSProgressKeyMax + 1];
+    PMOSUnlockWhen when;
+    int once;
+} UnlockBinding;
 struct PMOSSession {
     lua_State *L;
     size_t bytes;
     int songs, nodes, screens;
+    unsigned char *hiddenSongs;
     char names[PMOSMaxScreens][PMOSScreenNameSize];
     ClickTarget clicks[PMOSMaxNodes];
     int challengeCount;
     struct { char id[PMOSChallengeIdMax + 1]; PMOSChallengeState state; } challenges[PMOSMaxChallenges];
     char listSwitchKey[PMOSProgressKeyMax+1];
     int listSwitchHidden, lifeChoice, lifeCeiling;
+    int unlockAnimationCount;
+    UnlockBinding unlockBindings[PMOSMaxUnlockAnimations];
     PMOSPage *declaring;
     PMOSProgress progress;
     size_t accesses, changeCount;
@@ -230,6 +238,17 @@ static int chapterCover(lua_State *L) {
     return 0;
 }
 
+#include "PMChapterSongVisibility.inc"
+
+static int actionSong(lua_State *L, const PMOSSession *s, const char *action) {
+    luaL_checktype(L, -1, LUA_TNUMBER);
+    lua_Integer n = luaL_checkinteger(L, -1);
+    if (n < 1 || n > s->songs) return luaL_error(L, "invalid song number in %s", action);
+    return (int)n;
+}
+
+#include "PMChapterUnlockAnimation.inc"
+
 typedef struct { const char *source; size_t length; } Script;
 
 static int evaluate(lua_State *L) {
@@ -242,6 +261,7 @@ static int evaluate(lua_State *L) {
     lua_setglobal(L, "card");
     lua_pushinteger(L, session(L)->songs);
     lua_setglobal(L, "song_count");
+    lua_pushcfunction(L, declareSongVisible); lua_setglobal(L, "songVisible");
     lua_createtable(L, 0, 2);
     lua_pushcfunction(L, progressGet);
     lua_setfield(L, -2, "get");
@@ -253,6 +273,7 @@ static int evaluate(lua_State *L) {
     lua_pushcfunction(L, challengeProgress);
     lua_setglobal(L, "challengeProgress");
     lua_pushcfunction(L,listSwitchAfter); lua_setglobal(L,"listSwitchAfter");
+    lua_pushcfunction(L, declareUnlockAnimation); lua_setglobal(L, "unlockAnimation");
     registerLayout(L);
     registerPuzzle(L);
     lua_pushcfunction(L, chapterLife); lua_setglobal(L, "chapterLife");
@@ -261,9 +282,11 @@ static int evaluate(lua_State *L) {
     lua_call(L, 0, 0);
     resolveLinks(L);
     resolveChallengeBindings(L, declarationPage(L));
+    resolveSongVisibility(session(L), declarationPage(L));
     PMOSSession *s=session(L);
     s->listSwitchHidden = s->listSwitchKey[0] && !readProgress(L,s,s->listSwitchKey);
     PMOSPage *page = declarationPage(L);
+    resolveUnlockAnimations(L, s, page);
     page->listSwitchHidden = s->listSwitchHidden;
     for (int i=0; i<page->challengeCount; ++i) if (page->challenges[i].courseCount && page->challenges[i].lifeTier<0) {
         s->lifeCeiling=readProgress(L,s,PMChapterLifeCeilingKey);
@@ -349,14 +372,14 @@ PMOSSession *PMOSStartWithProgress(const char *src, size_t len, int songs,
     int ok = runProtected(s, 1, page->error, sizeof(page->error));
     s->declaring = NULL;
     if (!ok) {
-        page->count = page->nodes = page->screens = page->challengeCount = 0;
+        page->count = page->nodes = page->screens = page->challengeCount = page->unlockAnimationCount = 0;
         PMOSStop(s);
         return NULL;
     }
     s->challengeCount = page->challengeCount;
     for (int i = 0; i < s->challengeCount; ++i) {
         strcpy(s->challenges[i].id, page->challenges[i].id);
-        s->challenges[i].state = page->challenges[i].state;
+        s->challenges[i].state = page->challenges[i].songSuppressed ? PMOSChallengeLocked : page->challenges[i].state;
     }
     s->nodes = page->nodes;
     s->screens = page->screens;
@@ -365,19 +388,13 @@ PMOSSession *PMOSStartWithProgress(const char *src, size_t len, int songs,
         const PMOSNode *node = &page->elements[i];
         ClickTarget *target = &s->clicks[i];
         target->challenge = node->handler ? node->challenge : 0;
+        target->songSuppressed = node->songSuppressed;
         target->song = node->open;
         target->dest = node->dest;
         target->screen = node->screen;
         memcpy(target->id, node->id, sizeof(target->id));
     }
     return s;
-}
-
-static int actionSong(lua_State *L, const PMOSSession *s, const char *action) {
-    luaL_checktype(L, -1, LUA_TNUMBER);
-    lua_Integer n = luaL_checkinteger(L, -1);
-    if (n < 1 || n > s->songs) return luaL_error(L, "invalid song number in %s", action);
-    return (int)n;
 }
 
 static int actionScreen(lua_State *L, PMOSSession *s) {
@@ -432,10 +449,12 @@ static int invokeHandler(lua_State *L) {
 
     lua_pushnil(L);
     if (!lua_next(L, 1)) return luaL_error(L, "empty onClick action");
-    char key[sizeof("checkpoint")];
+    char key[sizeof("unlockAnimation")];
     word(L, -2, key, sizeof(key));
     if (!strcmp(key, "checkpoint")) {
         parseCheckpoint(L, s, action);
+    } else if (!strcmp(key, "unlockAnimation")) {
+        action->unlockAnimation = unlockAnimationAction(L, s);
     } else if (!strcmp(key, "reveal")) {
         parseReveal(L, s, target->screen, action);
     } else if (!strcmp(key, "challenge")) {
@@ -458,6 +477,9 @@ static int invokeHandler(lua_State *L) {
     } else return luaL_error(L, "unknown onClick action: %s", key);
     lua_pop(L, 1);
     if (lua_next(L, 1)) return luaL_error(L, "onClick action must have exactly one field");
+    if ((action->song && !PMOSSongVisible(s, action->song)) ||
+        (action->element >= 0 && s->clicks[action->element].songSuppressed))
+        return luaL_error(L, "action targets a hidden song or element");
     return 0;
 }
 
@@ -472,6 +494,7 @@ int PMOSClick(PMOSSession *s, int node, PMOSAction *out) {
     out->listSwitchHidden = s->listSwitchHidden;
     out->selectedLifeTier=PMChapterLifeRead(s->lifeCeiling,s->lifeChoice).selected;
     ClickTarget *target = &s->clicks[node];
+    if (target->songSuppressed) return 1;
     if (!target->ref) {
         out->challenge = target->challenge;
         out->song = target->song;

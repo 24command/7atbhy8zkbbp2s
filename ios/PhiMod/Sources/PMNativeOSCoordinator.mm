@@ -1,4 +1,6 @@
 #include "PMNativeOSCoordinator.hpp"
+#include <deque>
+#import <QuartzCore/QuartzCore.h>
 #include "PMIL2CPP.hpp"
 #include "PMNativeOSScene.hpp"
 #include "PMNativeOSMap.hpp"
@@ -34,7 +36,10 @@ BOOL (^mountMap)(void);
 BOOL (^applyCheckpoint)(NSDictionary *);
 dispatch_source_t clockSource;
 void stopClock(){if(clockSource){dispatch_source_cancel(clockSource);clockSource=nil;}}
-void clearScene(Runtime &r,uint64_t closingVisit=visit){stopClock(); [actions invalidate]; actions=nil; mountMap=nil; applyCheckpoint=nil; if(detailID)panel::close(r,detailID);detailID=0;if(mapID)map::close(r,mapID);mapID=0;if(closingVisit)chrome::close(r,closingVisit);chromeView={};rows::release();detail=nil;selected=nil;choices=nil;busy=false;}
+struct ScheduledUnlock { int index; double remaining; };
+std::deque<ScheduledUnlock> unlockQueue;
+double previousUnlockTick=0;
+void clearScene(Runtime &r,uint64_t closingVisit=visit){unlockQueue.clear();previousUnlockTick=0;stopClock(); [actions invalidate]; actions=nil; mountMap=nil; applyCheckpoint=nil; if(detailID)panel::close(r,detailID);detailID=0;if(mapID)map::close(r,mapID);mapID=0;if(closingVisit)chrome::close(r,closingVisit);chromeView={};rows::release();detail=nil;selected=nil;choices=nil;busy=false;}
 NSDictionary *entry(NSDictionary *card){NSString *sid=card[@"sid"]?:card[@"installedID"];if(!sid)return nil;NSMutableDictionary *e=[@{@"songID":sid} mutableCopy];if(card[@"difficulty"])e[@"difficulty"]=card[@"difficulty"];return e;}
 NSArray *options(NSDictionary *card){NSArray *replays=card[@"replaySongs"];if(replays.count)return replays;NSDictionary *e=entry(card);return e?@[e]:@[];}
 void discardHandoff(){handoffScene=0;}
@@ -101,6 +106,33 @@ void showDetail(Runtime &r, NSDictionary *card) {
         presentMap(r);
     }
 }
+void scheduleUnlock(int index){
+ const auto *page=program.page;
+ if(!page || index<0 || index>=page->unlockAnimationCount)return;
+ const auto &spec=page->unlockAnimations[index];
+ if(spec.once && spec.seen)return;
+ for(const auto &queued:unlockQueue)if(queued.index==index)return;
+ unlockQueue.push_back({index,spec.after});
+}
+void tickUnlocks(Runtime &r){
+ double now=CACurrentMediaTime(),elapsed=previousUnlockTick?now-previousUnlockTick:0;
+ previousUnlockTick=now;
+ if(mode!=Mode::map || busy || unlockQueue.empty() || UIApplication.sharedApplication.applicationState!=UIApplicationStateActive)return;
+ auto &head=unlockQueue.front();
+ // Count time only while the map can accept input. Ignore suspended/background gaps.
+ if(elapsed>=0 && elapsed<1)head.remaining-=elapsed;
+ if(head.remaining>0)return;
+ int index=head.index;unlockQueue.pop_front();
+ uint64_t token=visit,epoch=generation;
+ busy=true;
+ map::present(r,mapID,true,false,false);chrome::present(r,visit,chrome::Face::Map,false);
+ BOOL accepted=[actions playUnlockAtIndex:index completion:^(BOOL ok){
+   if(token!=visit || epoch!=generation || mode!=Mode::map)return;
+   if(!ok)PMDiagnosticsWrite("Chapter OS: unlock animation interrupted or unavailable");
+   presentMap(*game);
+ }];
+ if(!accepted)presentMap(r);
+}
 void activate(uint64_t mapVisit, int index) {
     if (mode != Mode::map || busy || mapID != mapVisit) return;
     if (actions.cardOnly) {
@@ -117,6 +149,7 @@ void activate(uint64_t mapVisit, int index) {
         gated=a->listSwitchHidden; lifeTier=a->selectedLifeTier;
         Runtime &r=*game;
         chrome::present(r,visit,chrome::Face::Map,true,0,!gated);
+        if(a->unlockAnimation){scheduleUnlock(a->unlockAnimation-1);return;}
         if (a->checkpoint || a->revealTitle[0]) {
             busy=true;
             map::present(r,mapID,true,false,false);
@@ -127,7 +160,7 @@ void activate(uint64_t mapVisit, int index) {
                     if (!applyCheckpoint || !applyCheckpoint(record)) presentMap(*game);
                 } leave:^{ if (!leave(*game,gated)) presentMap(*game); }];
             } else {
-                NSDictionary *card = a->song>0 && NSUInteger(a->song)<=program.order.count ? program.bySong[program.order[a->song-1]] : nil;
+                NSDictionary *card = a->song>0 && NSUInteger(a->song)<=program.order.count ? program.visibleBySong[program.order[a->song-1]] : nil;
                 shown=[actions reveal:a fromNode:index completion:^(PMNativeRevealChoice choice){
                     if (!presentMap(*game) || !card || choice==PMNativeRevealContinue) return;
                     NSDictionary *e=entry(card);
@@ -139,7 +172,7 @@ void activate(uint64_t mapVisit, int index) {
             return;
         }
         if (a->challenge>0 && NSUInteger(a->challenge)<=program.challengeRows.count) { showDetail(r,program.challengeRows[a->challenge-1]); return; }
-        if (a->song>0 && NSUInteger(a->song)<=program.order.count) { showDetail(r,program.bySong[program.order[a->song-1]]); return; }
+        if (a->song>0 && NSUInteger(a->song)<=program.order.count) { showDetail(r,program.visibleBySong[program.order[a->song-1]]); return; }
         if (a->dest>=0) map::displayPage(r,mapID,a->dest);
         else if (a->element>=0) map::setElement(r,mapID,a->element,a->visible);
     }];
@@ -195,7 +228,7 @@ void arrived(Runtime &r,uint64_t token,scene::Route route,P root){
          return index<program.screens.count && map::displayPage(*game,mapID,(int)index) && presentMap(*game);
      }
      NSString *sid=record[@"songID"];
-     NSDictionary *card=sid ? program.bySong[sid] : nil;
+     NSDictionary *card=sid ? program.visibleBySong[sid] : nil;
      if (!card) return NO;
      NSMutableDictionary *e=[@{@"songID":sid} mutableCopy];
      if (record[@"difficulty"]) e[@"difficulty"]=record[@"difficulty"];
@@ -208,9 +241,12 @@ void arrived(Runtime &r,uint64_t token,scene::Route route,P root){
      if (!applied) PMDiagnosticsWrite("Native chapter checkpoint destination changed or unavailable");
      if (mode!=Mode::map) return;
  }
+ for(int i=0;i<program.page->unlockAnimationCount;++i)
+     if(program.page->unlockAnimations[i].when==PMOSUnlockEnter)scheduleUnlock(i);
+ previousUnlockTick=CACurrentMediaTime();
  clockSource=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());
  dispatch_source_set_timer(clockSource,DISPATCH_TIME_NOW,NSEC_PER_SEC/30,NSEC_PER_MSEC*3);
- dispatch_source_set_event_handler(clockSource,^{if(visit==token && mode==Mode::map)map::tick(*game,mapID);});dispatch_resume(clockSource);
+ dispatch_source_set_event_handler(clockSource,^{if(visit!=token)return;tickUnlocks(*game);if(mode==Mode::map)map::tick(*game,mapID);});dispatch_resume(clockSource);
  };
  if(program.page->entryMovieKey[0] && !program.page->entryMovieSeen){
      mode=Mode::map;busy=true;
@@ -234,7 +270,10 @@ void enter(Runtime &r){
  NSMutableOrderedSet *targets=[NSMutableOrderedSet orderedSet];
  if (program.nodes.count) {
      // A Lua callback may return a song that has no static map node.
-     for (NSString *sid in program.order) [targets addObjectsFromArray:options(program.bySong[sid])];
+     for (NSString *sid in program.order) {
+         NSDictionary *card = program.visibleBySong[sid];
+         if (card) [targets addObjectsFromArray:options(card)];
+     }
      for (NSUInteger i=0; i<program.challengeRows.count; ++i)
          if (program.page->challenges[i].state!=PMOSChallengeLocked)
              [targets addObjectsFromArray:options(program.challengeRows[i])];
@@ -266,7 +305,7 @@ bool armGameplay(NSDictionary *card,const rows::Start &song){
 }
 
 bool playSelection(Runtime &r,NSDictionary *card,NSDictionary *choice){
- if(!card || !choice || busy || (mode!=Mode::map && mode!=Mode::detail) ||
+ if(!card || !choice || !program.visibleBySong[choice[@"songID"]] || busy || (mode!=Mode::map && mode!=Mode::detail) ||
     revision!=PMContentStore.shared.revision || !scene::activeRoot(r) || PMUnlockMediaBusy())return false;
  if(card[@"secretCourse"]){
   NSInteger tier=[card[@"lifeTier"] integerValue];busy=true;

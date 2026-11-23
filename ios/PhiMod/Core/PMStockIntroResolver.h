@@ -9,6 +9,14 @@ typedef struct {
 /* Verified serialized VideoClip resource spans, 4.0.4 build 3. */
 static inline const PMStockIntro *PMStockIntroForName(const char *name) {
     static const PMStockIntro clips[] = {
+        {"@stock/c5/spas-unlock", "sharedassets14.resource",
+         "71ac85d8a3096d6bc5d3c94bf0b1c648ff222f13054ca9256eda43a36ad8638f", 18053964, 1005344, 19059308},
+        {"@stock/c6/iga-main", "sharedassets15.resource",
+         "c9aa34541167f361df6cf2b92ba04a42330c0e06559394eafec98d1f25f44d7e", 12184002, 241056, 15262561},
+        {"@stock/c6/iga-loop", "sharedassets15.resource",
+         "839b988324a0b98e4302c452886fd39eb1282cfd12105c78ecbb4b4bdd0a6ab8", 2837503, 12425058, 15262561},
+        {"@stock/c7/rrharil-unlock", "sharedassets20.resource",
+         "2ce00608a0357d915d67e322a3ed908dfb80e58864610e2a7daec59e65c2de23", 22487452, 0, 22487452},
         {"@stock/c8/321-unlock", "sharedassets24.resource",
          "190c4afffdfe7e3e9dc590641ade998001e6cea8e50d94bdd62d00e6de07cad6", 17776256, 0, 17776256},
         {"@stock/c8/qd-unlock", "sharedassets26.resource",

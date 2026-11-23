@@ -17,6 +17,8 @@ typedef void (^PMNativeOSClickCompletion)(BOOL success, const PMOSAction *action
 @property(nonatomic, readonly, copy) NSArray<NSString *> *screens;
 @property(nonatomic, readonly, copy) NSArray<NSString *> *order;
 @property(nonatomic, readonly, copy) NSDictionary<NSString *, NSDictionary *> *bySong;
+// bySong retains presentation metadata for unlock scenes. Interactive routes use visibleBySong.
+@property(nonatomic, readonly, copy) NSDictionary<NSString *, NSDictionary *> *visibleBySong;
 @property(nonatomic, readonly, copy) NSArray<NSDictionary *> *cards;
 @property(nonatomic, readonly, copy) NSArray<NSDictionary *> *nodes;
 @property(nonatomic, readonly, copy) NSArray<NSDictionary *> *challengeRows;
@@ -30,6 +32,8 @@ typedef void (^PMNativeOSClickCompletion)(BOOL success, const PMOSAction *action
 // Each load owns an independent VM and chapter progress context. Both methods complete
 // asynchronously on the main queue. Click indices are zero-based and execute in FIFO order.
 + (void)loadChapter:(NSString *)chapter completion:(PMNativeOSLoadCompletion)completion;
+- (NSDictionary<NSString *,NSString *> *)unlockFieldsForSong:(NSInteger)song;
+- (void)markUnlockSeen:(NSInteger)index completion:(void (^)(BOOL))completion;
 - (void)markEntryMovieSeen:(void (^)(BOOL))completion;
 - (void)clickNode:(NSInteger)index completion:(PMNativeOSClickCompletion)completion;
 - (instancetype)init NS_UNAVAILABLE;

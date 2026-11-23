@@ -18,6 +18,7 @@ typedef NS_ENUM(NSInteger, PMNativeRevealChoice) {
 - (void)activateCardNode:(NSInteger)index open:(void (^)(NSDictionary *row))open rebuild:(void (^)(void))rebuild;
 // YES accepts the presentation. Keep map input/clock paused until completion. A rejected
 // request has no callback. invalidate cancels an accepted request without a continuation.
+- (BOOL)playUnlockAtIndex:(NSUInteger)index completion:(void (^)(BOOL completed))completion;
 - (BOOL)playEntryMovie:(void (^)(BOOL completed))completion;
 - (BOOL)playIntro:(NSDictionary *)row completion:(void (^)(BOOL completed))completion;
 - (BOOL)reveal:(const PMOSAction *)action fromNode:(NSInteger)index completion:(void (^)(PMNativeRevealChoice choice))completion;

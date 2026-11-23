@@ -6,6 +6,9 @@
 
 @interface PMUnlockMediaView : UIView
 @property(nonatomic) BOOL strict;
+@property(nonatomic,strong) UIView *timelineOverlay;
+@property(nonatomic,copy) void (^sample)(double);
+@property(nonatomic) double durationLimit;
 @property(nonatomic,strong) AVPlayer *player;
 @property(nonatomic,strong) AVPlayerLayer *video;
 @property(nonatomic,strong) UIImageView *image;
@@ -24,9 +27,9 @@
 @end
 static PMUnlockMediaView *activeMedia;
 @implementation PMUnlockMediaView
-- (void)layoutSubviews{[super layoutSubviews];self.image.frame=self.bounds;self.video.frame=self.bounds;self.message.frame=CGRectInset(self.bounds,40,80);UIView*skip=[self viewWithTag:101];skip.frame=CGRectMake(MAX(12,self.bounds.size.width-132),MAX(12,self.safeAreaInsets.top+8),112,44);}
+- (void)layoutSubviews{[super layoutSubviews];self.image.frame=self.bounds;self.video.frame=self.bounds;self.timelineOverlay.frame=self.bounds;self.message.frame=CGRectInset(self.bounds,40,80);UIView*skip=[self viewWithTag:101];skip.frame=CGRectMake(MAX(12,self.bounds.size.width-132),MAX(12,self.safeAreaInsets.top+8),112,44);}
 - (void)showFallback{
- self.fallback=YES;self.began=CACurrentMediaTime();[self.player pause];[self.video removeFromSuperlayer];self.video=nil;
+ self.timelineOverlay.hidden=YES;self.fallback=YES;self.began=CACurrentMediaTime();[self.player pause];[self.video removeFromSuperlayer];self.video=nil;
  self.image.image=[UIImage imageWithContentsOfFile:self.cover];self.image.hidden=NO;
  self.message.text=@"Unlocked — tap Skip to continue";self.message.hidden=NO;
 }
@@ -41,6 +44,13 @@ static PMUnlockMediaView *activeMedia;
  }else if(self.player){
   if(self.player.status==AVPlayerStatusFailed||self.player.currentItem.status==AVPlayerItemStatusFailed){[self showFallback];return;}
   if(self.player.currentItem.status==AVPlayerItemStatusReadyToPlay&&!self.began){self.began=clock.timestamp;[self.player play];}
+  if(self.began && self.sample){
+   double seconds=CMTimeGetSeconds(self.player.currentTime);
+   if(std::isfinite(seconds) && seconds>=0){
+    if(self.durationLimit>0 && seconds>=self.durationLimit){[self finish:YES];return;}
+    self.sample(seconds);
+   }
+  }
   if((!self.began&&clock.timestamp-self.created>20)||(self.began&&clock.timestamp-self.began>610))[self showFallback];
  }
 }
@@ -53,6 +63,17 @@ static PMUnlockMediaView *activeMedia;
 }
 @end
 BOOL PMUnlockMediaBusy(void){return activeMedia!=nil;}
+void PMConfigureUnlockTimeline(UIView *overlay,double duration,void (^sample)(double)){
+ PMUnlockMediaView *view=activeMedia;
+ if(!view || !view.player || !sample)return;
+ view.durationLimit=duration;
+ view.timelineOverlay=overlay;
+ if(overlay){
+  overlay.frame=view.bounds;overlay.userInteractionEnabled=NO;
+  [view insertSubview:overlay belowSubview:[view viewWithTag:101]];
+ }
+ view.sample=sample;sample(0);
+}
 void PMCancelUnlockMedia(void){[activeMedia finish:NO];}
 BOOL PMPresentUnlockMedia(NSString*path,NSString*cover,NSString*title,void(^completion)(BOOL)){
  return PMPresentUnlockMediaWithPolicy(path,cover,title,NO,completion);
