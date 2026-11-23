@@ -33,11 +33,22 @@ inline id PMNormalizeUnlockRule(id raw){
  return rule;
 }
 
+// The persisted key is door.<id>.clear. Match the chapter VM's ASCII byte budget.
+inline NSString *PMUnlockChapterClearKey(id challenge) {
+ if (![challenge isKindOfClass:NSString.class] || ![challenge length] || [challenge length] > 64 - (sizeof("door..clear") - 1)) return nil;
+ static NSCharacterSet *invalid;
+ static dispatch_once_t once;
+ dispatch_once(&once, ^{ invalid = [[NSCharacterSet characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-"] invertedSet]; });
+ if ([challenge rangeOfCharacterFromSet:invalid].location != NSNotFound) return nil;
+ return [NSString stringWithFormat:@"door.%@.clear",challenge];
+}
+
 // Mirrors UnlockRules.validate in the Android chapter format.
 inline NSString *PMUnlockValidationError(id raw) {
  if (!raw) return nil;
  if (![raw isKindOfClass:NSDictionary.class]) return @"Unlock rule must be an object";
  NSDictionary *rule=raw;
+ if (rule[@"chapterClear"] && !PMUnlockChapterClearKey(rule[@"chapterClear"])) return @"Invalid chapter-local challenge ID";
  for(NSString *key in @[@"enabled",@"playTiming"])if(rule[key]&&![rule[key] isKindOfClass:NSNumber.class])return @"Invalid unlock rule value";
  NSInteger timing=[rule[@"playTiming"] integerValue];
  if(timing<0||timing>2)return @"Invalid unlock animation timing";

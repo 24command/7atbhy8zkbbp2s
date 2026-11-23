@@ -76,8 +76,13 @@ void beginManualCut(Runtime &r,Mode direction) {
         P owner = selector;
         if (direction == Mode::mapCut) {
             P root = scene::activeRoot(r);
-            P type = program.nativeChapter == 8 ? r.klass("Chapter8SelectMusicControl") :
-                r.type("Phigros2.Chapter9","Chapter9Phase1Control");
+            P type;
+            switch (chapterRoute()) {
+                case scene::Route::C8: type = r.klass("Chapter8SelectMusicControl"); break;
+                case scene::Route::C9: type = r.type("Phigros2.Chapter9","Chapter9Phase1Control"); break;
+                case scene::Route::C9Phase2: type = r.type("Phigros2.Chapter9.Scripts","Chapter9Phase2Control"); break;
+                default: throw std::runtime_error("Chapter OS: unknown switch source");
+            }
             bool inactive = true;
             owner = r.call(root,"GetComponentInChildren",{"System.Type","System.Boolean"},
                            {r.type_get_object(r.class_get_type(type)),&inactive});

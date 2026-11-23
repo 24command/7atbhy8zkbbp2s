@@ -73,7 +73,7 @@ void openPanel(Runtime &r,NSDictionary *card){
  // The detail copy belongs to this selection. Its creation must not block entry to the map.
  if(!chrome::resetDetail(r,visit)){presentMap(r);return;}
  map::present(r,mapID,false,false,false);chrome::present(r,visit,chrome::Face::Detail,false);
- panel::Speech speech{card[@"speechHeading"],card[@"caption"],[card[@"seconds"] doubleValue]};
+ panel::Speech speech{card[@"speechHeading"],card[@"caption"],[card[@"seconds"] doubleValue],card[@"waveform"]};
  detailID=panel::open(r,program.nativeChapter==8?panel::Style::c8:panel::Style::c9,chromeView.detailRoot,row.row,row.slot,speech,false,row.cover);
  if(!detailID){if(!presentMap(r))leave(r,false);return;}
  detail=card;selected=first;choices=available;mode=Mode::detail;
@@ -144,9 +144,13 @@ void activate(uint64_t mapVisit, int index) {
         else if (a->element>=0) map::setElement(r,mapID,a->element,a->visible);
     }];
 }
-void arrived(Runtime &r,uint64_t token,scene::Route,P root){
+scene::Route chapterRoute() {
+    if (program.nativeChapter == 8) return scene::Route::C8;
+    return program.page->nativePhase == 2 ? scene::Route::C9Phase2 : scene::Route::C9;
+}
+void arrived(Runtime &r,uint64_t token,scene::Route route,P root){
  if(mode!=Mode::entering||token!=visit)return;
- if(!root||!chrome::open(r,visit,program.nativeChapter==8?scene::Route::C8:scene::Route::C9,root,chromeView)){
+ if(!root||route!=chapterRoute()||!chrome::open(r,visit,route,root,chromeView)){
   PMDiagnosticsWrite(root?"Chapter OS: native chapter controls unavailable":"Chapter OS: loaded scene host unavailable");
   if(!leave(r,false)){
    clearScene(r);visit=0;
@@ -167,6 +171,9 @@ void arrived(Runtime &r,uint64_t token,scene::Route,P root){
      if (!mapID || !presentMap(*game)) { PMDiagnosticsWrite(reason.UTF8String?:"Native chapter map unavailable"); return NO; }
      return YES;
  };
+ auto startMap = ^{
+ if(visit!=token || generation!=epoch)return;
+ Runtime &r=*game;
  if (!mountMap()) { leave(r,false); return; }
  // The stock transition may leave a captured frame on the persistent RawImage.
  // Release it only after this visit owns a rendered map and its input controls.
@@ -204,6 +211,12 @@ void arrived(Runtime &r,uint64_t token,scene::Route,P root){
  clockSource=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());
  dispatch_source_set_timer(clockSource,DISPATCH_TIME_NOW,NSEC_PER_SEC/30,NSEC_PER_MSEC*3);
  dispatch_source_set_event_handler(clockSource,^{if(visit==token && mode==Mode::map)map::tick(*game,mapID);});dispatch_resume(clockSource);
+ };
+ if(program.page->entryMovieKey[0] && !program.page->entryMovieSeen){
+     mode=Mode::map;busy=true;
+     if([actions playEntryMovie:^(BOOL completed){ startMap(); }])return;
+ }
+ startMap();
 }
 // Both manual entry and the deferred automatic entry respect SongSelector.Update's gates.
 bool selectorReady(Runtime &r,P owner){
@@ -217,7 +230,7 @@ void enter(Runtime &r){
  if(mode==Mode::listPending){beginManualCut(r,Mode::listCut);return;}
  if((mode!=Mode::list && mode!=Mode::listCut)||!selector)return;
  if(revision!=PMContentStore.shared.revision){PMDiagnosticsWrite("Chapter OS: chapter library changed before entry");return;}
- PMDiagnosticsWrite([NSString stringWithFormat:@"Chapter OS: entering %@ with chapter %d layout",chapter,(int)program.nativeChapter].UTF8String);
+ PMDiagnosticsWrite([NSString stringWithFormat:@"Chapter OS: entering %@ with chapter %d phase %d layout",chapter,(int)program.nativeChapter,program.page->nativePhase].UTF8String);
  NSMutableOrderedSet *targets=[NSMutableOrderedSet orderedSet];
  if (program.nodes.count) {
      // A Lua callback may return a song that has no static map node.
@@ -236,7 +249,7 @@ void enter(Runtime &r){
  if(!rows::prepare(r,selector,chapter,entries)){
    PMDiagnosticsWrite("Chapter OS: selector changed before songs could be captured");return;
  }
- mode=Mode::entering;visit=scene::enter(r,program.nativeChapter==8?scene::Route::C8:scene::Route::C9,arrived);
+ mode=Mode::entering;visit=scene::enter(r,chapterRoute(),arrived);
  if(!visit){mode=Mode::list;rows::release();PMDiagnosticsWrite("Native chapter scene unavailable; check packaged scene resources");}
 }
 #include "PMNativeOSManualTransition.inc"

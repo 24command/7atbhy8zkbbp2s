@@ -3,6 +3,7 @@
 #include "../Core/PMUIInteraction.hpp"
 #import "PMContentStore.h"
 #import "PMUnlockRules.h"
+#import "PMOSAuthorProgress.h"
 #import "PMUnlockProgress.h"
 #import "PMUnlockMedia.h"
 #import "PMDoorRun.h"
@@ -27,12 +28,12 @@ namespace { PMUnlockProgress*progress=nil; Runtime*runtime=nullptr; NSMutableSet
 uint32_t resultOwner=0;void(^resultResume)(BOOL)=nil;
 bool mediaAudioOwned=false,previousAudioPause=false;float previousAudioVolume=1;
 void restoreMediaAudio(){if(!mediaAudioOwned||!runtime)return;mediaAudioOwned=false;auto&r=*runtime;P listener=r.type("UnityEngine","AudioListener");r.stat(listener,"set_pause",{"System.Boolean"},{&previousAudioPause});r.stat(listener,"set_volume",{"System.Single"},{&previousAudioVolume});}
-BOOL presentMedia(NSString*path,NSString*cover,NSString*title,void(^done)(BOOL)){
+BOOL presentMedia(NSString*path,NSString*cover,NSString*title,void(^done)(BOOL),bool strict=false){
  if(!runtime||PMUnlockMediaBusy())return NO;
  auto&r=*runtime;P listener=r.type("UnityEngine","AudioListener");
  bool wasOwned=mediaAudioOwned;if(!wasOwned){previousAudioPause=r.unbox<bool>(r.stat(listener,"get_pause"));previousAudioVolume=r.unbox<float>(r.stat(listener,"get_volume"));mediaAudioOwned=true;}
  bool paused=true;float muted=0;r.stat(listener,"set_pause",{"System.Boolean"},{&paused});r.stat(listener,"set_volume",{"System.Single"},{&muted});
- BOOL shown=PMPresentUnlockMedia(path,cover,title,^(BOOL completed){@try{if(done)done(completed);}@finally{if(!PMUnlockMediaBusy()&&(!completed||!pending.count||(!menuActive&&!resultResume)))restoreMediaAudio();}});
+ BOOL shown=PMPresentUnlockMediaWithPolicy(path,cover,title,strict,^(BOOL completed){@try{if(done)done(completed);}@finally{if(!PMUnlockMediaBusy()&&(!completed||!pending.count||(!menuActive&&!resultResume)))restoreMediaAudio();}});
  if(!shown&&!wasOwned)restoreMediaAudio();return shown;
 }
 void logf(const char*fmt,...){char b[768];va_list a;va_start(a,fmt);vsnprintf(b,sizeof(b),fmt,a);va_end(a);PMDiagnosticsWrite(b);}
@@ -41,14 +42,27 @@ NSString*slotName(int slot){return @[@"EZ",@"HD",@"IN",@"AT"][std::clamp(slot,0,
 // snapshot() serializes the entire library. Reuse it for read-only unlock
 // queries until an import/edit commits a new revision.
 NSDictionary*unlockEntities=nil,*unlockSongGroups=nil,*unlockChaptersBySong=nil,*unlockScoreAliases=nil;
+NSDictionary *chapterClearKeys; // Exact imported chart ID -> chapter-local progress key.
 NSDictionary*unlockLibrary(){static NSDictionary*db=nil;static NSUInteger revision=NSUIntegerMax;NSUInteger current=PMContentStore.shared.revision;if(!db||revision!=current){
  db=[PMContentStore.shared snapshot];revision=current;NSMutableDictionary*entities=[NSMutableDictionary new],*groups=[NSMutableDictionary new],*chapterGroups=[NSMutableDictionary new];
  for(NSDictionary*song in db[@"songs"]){NSString*identifier=song[@"id"],*group=song[@"groupId"];if(!identifier.length)continue;if(!entities[identifier])entities[identifier]=song;
   for(NSString*key in (group.length&&![group isEqualToString:identifier]?@[identifier,group]:@[identifier])){if(!groups[key])groups[key]=[NSMutableArray new];[groups[key]addObject:song];}
  }
+ NSMutableDictionary *clearKeys = [NSMutableDictionary new];
  for(NSDictionary*chapter in db[@"chapters"]){NSString*identifier=chapter[@"id"];if(identifier.length&&!entities[identifier])entities[identifier]=chapter;
+  for (NSString *sid in chapter[@"songs"]) {
+   NSDictionary *song = entities[sid];
+   if (![song[@"targetChapter"] isEqual:identifier]) continue;
+   NSDictionary *rule = song[@"unlock"];
+   if (![rule isKindOfClass:NSDictionary.class] || ![rule[@"enabled"] boolValue]) continue;
+   NSString *key = PMUnlockChapterClearKey(rule[@"chapterClear"]);
+   if (!key) continue;
+   clearKeys[sid] = key;
+   PMOSCachedChapterFlag(PMContentStore.shared.root,current,identifier,key);
+  }
   if([chapter[@"unlock"][@"enabled"]boolValue])for(NSString*song in chapter[@"songs"]){if(!chapterGroups[song])chapterGroups[song]=[NSMutableArray new];[chapterGroups[song]addObject:chapter];}
  }
+ chapterClearKeys = [clearKeys copy];
  unlockScoreAliases=PMUnlockScoreAliases(db[@"songs"]);
  unlockEntities=entities;unlockSongGroups=groups;unlockChaptersBySong=chapterGroups;
  }return db;}
@@ -98,14 +112,21 @@ bool passes(Runtime&r,NSDictionary*rule){
  for(NSDictionary*c in rule[@"conditions"]){bool pass=recordPass(r,c);if(any&&pass)return true;if(!any&&!pass)return false;}
  return !any;
 }
-bool opened(Runtime&r,NSString*id,bool persist=true){
- NSDictionary*rule=ruleFor(id);if(PMUnlockValidationError(rule))return false;
+bool ordinaryRuleOpened(Runtime&r,NSString*id,NSDictionary*rule,bool persist=true){
+ if(PMUnlockValidationError(rule))return false;
  if(![rule[@"enabled"] boolValue])return true;
  if(!progress)progress=[[PMUnlockProgress alloc]initWithRoot:PMContentStore.shared.root];
  if([progress isOpen:id rule:rule])return true;
  if(!persist||!passes(r,rule))return false;
  NSError*error=nil;if(![progress open:id rule:rule error:&error]){logf("Unlock progress save failed: %s",error.localizedDescription.UTF8String);return false;}if(!newlyOpened)newlyOpened=[NSMutableSet new];[newlyOpened addObject:id];
  return true;
+}
+bool opened(Runtime &r, NSString *id, bool persist=true) {
+ NSDictionary *rule = ruleFor(id);
+ NSString *key = id ? chapterClearKeys[id] : nil;
+ if (key && !PMUnlockValidationError(rule) && PMOSCachedChapterFlag(PMContentStore.shared.root,
+       PMContentStore.shared.revision, unlockEntities[id][@"targetChapter"], key)) return true;
+ return ordinaryRuleOpened(r,id,rule,persist);
 }
 // A chapter requirement applies to its members in every aggregate selector.
 bool chapterBlocked(Runtime&r,NSString*group,NSDictionary*subject,bool persist=true){
@@ -178,7 +199,7 @@ void enqueueReveals(Runtime&r,bool activateMenu=true){
  if(!pending)pending=[NSMutableArray new];
  NSDictionary*db=unlockLibrary();NSMutableArray*subjects=[db[@"songs"] mutableCopy];[subjects addObjectsFromArray:db[@"chapters"]];
  for(NSDictionary*subject in subjects){NSString*id=subject[@"id"];NSDictionary*rule=subject[@"unlock"];
-  if(![rule[@"enabled"] boolValue]||PMUnlockValidationError(rule)||[rule[@"playTiming"] intValue]==1||!opened(r,id)||[progress isSeen:id rule:rule])continue;
+  if(![rule[@"enabled"] boolValue]||PMUnlockValidationError(rule)||[rule[@"playTiming"] intValue]==1||!ordinaryRuleOpened(r,id,rule)||[progress isSeen:id rule:rule])continue;
   // A difficulty with no assigned media must not replay a sibling's reveal.
   // Keep its unlock and chain state; an empty animation is a silent unlock.
   if(![rule[@"animation"]length]){NSError*error=nil;[progress seen:id signature:PMUnlockSignature(rule) error:&error];if(activateMenu)continueChain(id);continue;}
@@ -192,13 +213,13 @@ bool courseMemberOpen(Runtime &r,NSString *group,NSDictionary *chart,bool persis
  // The queue resolves a chart ID, not the selector's current AT binding.
  return !chapterBlocked(r,group,chart,persist) && (!chart || opened(r,chart[@"id"],persist));
 }
-bool playChapterStoryMedia(NSString *path, NSString *cover, NSString *title, void (^done)(BOOL)) {
+bool playChapterStoryMedia(NSString *path, NSString *cover, NSString *title, void (^done)(BOOL),bool strict) {
  if (!NSThread.isMainThread) return false;
  return presentMedia(path,cover,title,^(BOOL completed){
   // Restore the selector before done starts the next movie or launches a song.
   restoreMediaAudio();
   if(done)done(completed);
- });
+ },strict);
 }
 NSString*coverPath(Runtime&r,NSString*identifier,bool persist){
  NSString*folder=[PMContentStore.shared coverFolder:identifier];NSDictionary*subject=entity(identifier);NSString*variant=@"image";
@@ -213,6 +234,9 @@ NSString*coverPath(Runtime&r,NSString*identifier,bool persist){
 bool chapterStartIntro(Runtime &r,NSString *identifier,BOOL (^valid)(void),void (^done)(BOOL)){
  NSDictionary *subject=entity(identifier), *rule=subject[@"unlock"];
  if(![rule[@"enabled"] boolValue] || [rule[@"playTiming"] intValue]==0 || ![rule[@"animation"] length])return false;
+ // Only a qualifying ordinary rule owns its native play intro. A chapter-only clear
+ // does not consume the ordinary reveal or change its open/seen signature.
+ if (chapterClearKeys[identifier] && !ordinaryRuleOpened(r,identifier,rule)) return false;
  NSString *path=[[PMContentStore.shared asset:identifier] stringByAppendingPathComponent:rule[@"animation"]];
  NSString *signature=PMUnlockSignature(rule);
  menuActive=false;

@@ -46,14 +46,39 @@ void inputsOff(Runtime &r,P root){
         for(uintptr_t i=0;all&&i<r.array_length(all);++i)setBool(r,r.arrayAt(all,int(i)),"set_enabled",false);
     }
 }
+// Chrome sanitizes every WaveSource and WaveDisplay before the clone activates.
+// Enable only this private graphic, after its serialized samples have been replaced.
+void c8Waveform(Runtime &r, P root, P hint, NSData *samples) {
+    P wave = member(r,hint,"waveDisplay");
+    within(r,root,wave);
+    P object = gameObject(r,wave);
+    if (!samples.length) {
+        active(r,object,false);
+        return;
+    }
+    need(samples.length % sizeof(float) == 0 && samples.length / sizeof(float) <= INT32_MAX,
+         "detail: invalid C8 waveform length");
+    int count = int(samples.length / sizeof(float)), start = 0;
+    Root data(r);
+    data.set(r.array_new(r.type("System","Single"),count));
+    need(data.get(),"detail: C8 waveform allocation failed");
+    const void *source = samples.bytes;
+    r.stat(r.type("System.Runtime.InteropServices","Marshal"),"copy_from_unmanaged",
+           {"System.IntPtr","System.Int32","System.Array","System.Int32"},{&source,&start,data.get(),&count});
+    r.put(wave,"data",data.get());
+    setBool(r,wave,"set_raycastTarget",false);
+    active(r,object,true);
+    setBool(r,wave,"set_enabled",true);
+    r.call(wave,"SetVerticesDirty");
+}
 void c8Speech(Runtime &r,P root,P hint,const Speech &s){
     P content=member(r,hint,"content");within(r,root,content);
-    bool show=s.heading.length||s.transcript.length||s.seconds>0;
+    bool show=s.heading.length||s.transcript.length||s.seconds>0||s.waveform.length;
     active(r,content,show);
-    for(const char *key:{"hintLB","hintC","lengthText","contentText","waveDisplay"}){
+    c8Waveform(r,root,hint,s.waveform);
+    for(const char *key:{"hintLB","hintC","lengthText","contentText"}){
         P c=member(r,hint,key);within(r,root,c);
-        // No authored waveform samples: never show a stock recording's waveform.
-        bool visible=show&&strcmp(key,"waveDisplay")&&strcmp(key,"hintLB");
+        bool visible=false;
         if(!strcmp(key,"hintC")){visible=s.heading.length;label(r,c,s.heading);}
         if(!strcmp(key,"contentText")){visible=s.transcript.length;label(r,c,s.transcript);}
         if(!strcmp(key,"lengthText")){

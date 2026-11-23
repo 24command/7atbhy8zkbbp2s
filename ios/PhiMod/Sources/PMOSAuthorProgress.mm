@@ -123,7 +123,52 @@ bool replaceValues(int directory, NSString *name, NSDictionary *values) {
 }
 } // namespace
 
+// Keys are scoped to the installed library. A pending token prevents an older disk
+// read from replacing a newer commit, including across library edits and imports.
+namespace {
+NSMutableDictionary *flagSnapshots() {
+    static NSMutableDictionary *snapshots;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ snapshots = [NSMutableDictionary new]; });
+    return snapshots;
+}
+NSString *flagRoot;
+NSUInteger flagLibraryRevision;
+void publishChapterFlags(NSString *root, NSString *chapter, NSDictionary *merged) {
+    NSMutableDictionary *cache = flagSnapshots();
+    @synchronized (cache) {
+        if ([root isEqual:flagRoot] && cache[chapter]) cache[chapter] = [merged copy];
+    }
+}
+}
+BOOL PMOSCachedChapterFlag(NSString *root, NSUInteger revision, NSString *chapter, NSString *key) {
+    if (!root.length || !chapter.length || !key.length) return NO;
+    NSString *owner = chapter.precomposedStringWithCanonicalMapping;
+    NSMutableDictionary *cache = flagSnapshots();
+    @synchronized (cache) {
+        if (revision != flagLibraryRevision || ![root isEqual:flagRoot]) {
+            [cache removeAllObjects];
+            flagRoot = [root copy];
+            flagLibraryRevision = revision;
+        }
+        id snapshot = cache[owner];
+        if ([snapshot isKindOfClass:NSDictionary.class]) return [snapshot[key] intValue] == 1;
+        if (snapshot) return NO;
+        NSObject *request = [NSObject new];
+        cache[owner] = request;
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ @autoreleasepool {
+            PMOSAuthorProgress *store = [[PMOSAuthorProgress alloc] initWithRoot:root chapter:owner];
+            NSDictionary *values = [store snapshotValues];
+            @synchronized (cache) {
+                if (cache[owner] == request) cache[owner] = values ?: @{};
+            }
+        }});
+        return NO;
+    }
+}
+
 @implementation PMOSAuthorProgress {
+    NSString *_root;
     NSString *_chapter;
     NSString *_directory;
     NSString *_name;
@@ -134,6 +179,7 @@ bool replaceValues(int directory, NSString *name, NSDictionary *values) {
     if (!(self = [super init])) return nil;
     NSString *stem = chapterStem(chapter);
     if (![root isKindOfClass:NSString.class] || !root.isAbsolutePath || !stem) return nil;
+    _root = [root copy];
     _chapter = [chapter copy];
     _directory = [root stringByAppendingPathComponent:@"author-progress"];
     _name = [stem stringByAppendingPathExtension:@"plist"];
@@ -193,6 +239,7 @@ bool replaceValues(int directory, NSString *name, NSDictionary *values) {
     [merged addEntriesFromDictionary:values];
     if ([previous isEqualToDictionary:merged]) return YES;
     if (merged.count > maxKeys || !replaceValues(directory.fd, _name, merged)) return NO;
+    publishChapterFlags(_root, _chapter.precomposedStringWithCanonicalMapping, merged);
     NSMutableDictionary *versions = chapterRevisions();
     @synchronized (versions) { versions[_chapter.precomposedStringWithCanonicalMapping] = @(++authorRevision); }
     NSString *chapter = _chapter;

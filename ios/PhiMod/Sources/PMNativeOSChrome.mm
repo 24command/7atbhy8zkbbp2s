@@ -26,7 +26,7 @@ struct Chrome {
     Runtime &r;
     uint64_t id;
     Route route;
-    P host{}, stage{}, parking{}, canvas{}, detail{}, model{}, copy{}, group{}, map{}, font{};
+    P host{}, stage{}, parking{}, canvas{}, detail{}, model{}, copy{}, group{}, map{}, backdrop{}, font{};
     std::vector<Control> fixed, detailButtons;
     Face face = Face::Hidden;
     bool input = false;
@@ -236,6 +236,7 @@ void freshDetail(Chrome &c) {
 P selectBranch(Chrome &c,P parent,P child) {
     parkChildren(c,parent); move(c.r,child,parent); active(c.r,parent,true); return parent;
 }
+#include "PMNativeOSC9Backdrop.inc"
 void bootstrap(Chrome &c) {
     Runtime &r=c.r;
     P camera=find(r,c.host,"Main Camera"), event=find(r,c.host,"EventSystem");
@@ -265,6 +266,7 @@ void bootstrap(Chrome &c) {
     }
     parkChildren(c,c.canvas);
     c.map=container(c,c.canvas,"PMMapParent",true); active(r,c.map,true);
+    if (c.route==Route::C9Phase2) c.backdrop=mountPhaseTwoBackdrop(c);
     if (c.detail) move(r,c.detail,c.canvas);
     if (menu) move(r,menu,c.canvas);
     move(r,back,c.canvas);
@@ -320,6 +322,7 @@ void verifyLiveStage(Chrome &c) {
 }
 void apply(Chrome &c,Face face,bool input,unsigned mask) {
     Runtime &r=c.r; c.input=false;
+    if (c.backdrop) active(r,c.backdrop,face==Face::Map);
     flag(r,component(r,c.canvas,ui,"GraphicRaycaster"),"set_enabled",face!=Face::Hidden && input);
     auto setGroup=[&](P obj,bool shown,bool enabled){
         P g=r.component(obj,r.type(engine,"CanvasGroup")); if(!g) return;

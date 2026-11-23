@@ -18,7 +18,18 @@ class NativeOSRows(unittest.TestCase):
         self.assertIn('courseMemberOpen(r,group,authored,!resolveSiblings)', gate[1].split('return collect(',1)[0])
         unlock = (SRC / 'PMUnlockRuntime.mm').read_text('utf8')
         opened = unlock.split('bool opened(',1)[1].split('bool chapterBlocked(',1)[0]
-        self.assertLess(opened.index('!persist'), opened.index('[progress open:'))
+        ordinary = unlock.split('bool ordinaryRuleOpened(',1)[1].split('bool opened(',1)[0]
+        # A read-only row can consume either persisted permission. It cannot
+        # evaluate live scores, write ordinary progress, or consume a cutscene.
+        self.assertIn('if([progress isOpen:id rule:rule])return true;', ordinary)
+        guard = ordinary.index('if(!persist||!passes(r,rule))return false;')
+        self.assertLess(ordinary.index('[progress isOpen:'), guard)
+        self.assertLess(guard, ordinary.index('[progress open:'))
+        self.assertIn('chapterClearKeys[id]', opened)
+        self.assertRegex(opened, r'PMOSCachedChapterFlag\([^;]+targetChapter[^;]+key\)\) return true;')
+        self.assertIn('return ordinaryRuleOpened(r,id,rule,persist);', opened)
+        self.assertNotIn('[progress ', opened)
+        self.assertNotIn('seen:', opened)
         self.assertIn('chapterBlocked(r,group,chart,persist)',unlock)
         self.assertIn('opened(r,chart[@"id"],persist)',unlock)
         self.assertIn('coverPath(next.r,identifier,false)',ROWS)

@@ -6,7 +6,11 @@ extern "C" {
 /* On cards and nodes, challenge is 0 when unbound, otherwise a one-based index
    into page->challenges, including locked entries. A bound card keeps its song
    for presentation; activation uses the challenge and is inert when locked. */
-typedef struct {int song,speech; double seconds;char speechHeading[192];char title[256], caption[1024];int challenge;} PMOSCard;
+typedef struct {int song,speech; double seconds;char speechHeading[192];char title[256], caption[1024];int challenge;
+    /* Ordered C8 WaveDisplay bar heights in [0,1]. The 4.0.4 donor has 100 bars. */
+    int waveformCount;
+    float waveform[100];
+} PMOSCard;
 enum {PMOSFrame, PMOSImage, PMOSHotspot};
 enum { PMOSMaxNodes = 256, PMOSMaxScreens = 32, PMOSScreenNameSize = 64 };
 /* Optional layout motion. Times use the screen clock. bob is measured in node
@@ -57,7 +61,9 @@ typedef struct {
 typedef struct {int nodes,screens;double aspect;char names[PMOSMaxScreens][PMOSScreenNameSize];PMOSNode elements[PMOSMaxNodes];int listFirst,count,listSwitchHidden,selectedLifeTier; int nativeChapter; /* 8 or 9, defaults to 9. */ PMOSCard cards[128];char error[384];
     int cueCount; PMOSChallengeCue cues[PMOSMaxChallengeCues];
     int challengeCount; PMOSChallenge challenges[PMOSMaxChallenges];
+    char entryMovieKey[65],entryMovieName[256]; int entryMovieSeen;
     char chapterCover[256]; /* Last chapterCover(stillBasename) during declaration; empty = configured art. */
+    int nativePhase; /* 1 by default, or 2 for nativeChapter(9, 2). */
 } PMOSPage;
 typedef struct PMOSSession PMOSSession;
 typedef struct {int song, dest, element, visible; char error[384]; int checkpoint; char difficulty[96]; int challenge;

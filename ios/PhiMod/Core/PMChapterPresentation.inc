@@ -1,8 +1,8 @@
 #include "PMStockIntroResolver.h"
 
 /* Optional lists leave their table (or nil) on the stack for ordered reads. */
-static int presentationArray(lua_State *L, const char *field, int limit) {
-    lua_getfield(L, 1, field);
+static int presentationArrayAt(lua_State *L, int table, const char *field, int limit) {
+    lua_getfield(L, table, field);
     if (lua_isnil(L, -1)) return 0;
     if (!lua_istable(L, -1)) return luaL_error(L, "%s must be an array", field);
     size_t length = lua_rawlen(L, -1);
@@ -18,6 +18,56 @@ static int presentationArray(lua_State *L, const char *field, int limit) {
     }
     if ((size_t)count != length) return luaL_error(L, "%s must be a dense array", field);
     return count;
+}
+
+static int presentationArray(lua_State *L, const char *field, int limit) {
+    return presentationArrayAt(L, 1, field, limit);
+}
+
+static int card(lua_State *L) {
+    PMOSPage *page = declarationPage(L);
+    lua_Integer index = luaL_checkinteger(L, 1);
+    if (index < 1 || index > session(L)->songs) return luaL_error(L, "song number outside chapter order");
+    if (page->count >= 128) return luaL_error(L, "too many cards");
+    PMOSCard *c = &page->cards[page->count++];
+    c->song = (int)index;
+    text(L, 2, c->title, sizeof(c->title));
+    text(L, 3, c->caption, sizeof(c->caption));
+    if (!lua_isnoneornil(L, 4)) {
+        luaL_checktype(L, 4, LUA_TTABLE);
+        c->challenge = challengeBindingRef(L, 4);
+        c->speech = !c->challenge; /* A legacy options table, even {}, enables speech. */
+        if (c->challenge) {
+            lua_pushnil(L);
+            while (lua_next(L, 4)) {
+                char key[sizeof("challenge")];
+                word(L, -2, key, sizeof(key));
+                if (!strcmp(key, "seconds") || !strcmp(key, "heading") || !strcmp(key, "waveform")) c->speech = 1;
+                else if (strcmp(key, "challenge")) return luaL_error(L, "unknown card challenge option: %s", key);
+                lua_pop(L, 1);
+            }
+            if (!c->speech) return 0;
+        }
+        c->waveformCount = presentationArrayAt(L, 4, "waveform", sizeof(c->waveform) / sizeof(c->waveform[0]));
+        if (!lua_isnil(L, -1) && !c->waveformCount) return luaL_error(L, "waveform must contain samples");
+        for (int i = 0; i < c->waveformCount; ++i) {
+            lua_rawgeti(L, -1, i + 1);
+            luaL_checktype(L, -1, LUA_TNUMBER);
+            lua_Number amplitude = lua_tonumber(L, -1);
+            if (!(amplitude >= 0 && amplitude <= 1)) return luaL_error(L, "waveform amplitude outside [0, 1]");
+            c->waveform[i] = (float)amplitude;
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        lua_getfield(L, 4, "seconds");
+        c->seconds = luaL_optnumber(L, -1, 0);
+        lua_pop(L, 1);
+        if (!(c->seconds >= 0 && c->seconds <= 86400)) return luaL_error(L, "invalid speech length");
+        lua_getfield(L, 4, "heading");
+        text(L, -1, c->speechHeading, sizeof(c->speechHeading));
+        lua_pop(L, 1);
+    }
+    return 0;
 }
 
 /* Lua strings are bytes. Reject malformed UTF-8 before passing text to the player. */

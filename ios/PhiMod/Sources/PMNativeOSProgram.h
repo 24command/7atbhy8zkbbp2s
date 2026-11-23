@@ -30,6 +30,7 @@ typedef void (^PMNativeOSClickCompletion)(BOOL success, const PMOSAction *action
 // Each load owns an independent VM and chapter progress context. Both methods complete
 // asynchronously on the main queue. Click indices are zero-based and execute in FIFO order.
 + (void)loadChapter:(NSString *)chapter completion:(PMNativeOSLoadCompletion)completion;
+- (void)markEntryMovieSeen:(void (^)(BOOL))completion;
 - (void)clickNode:(NSInteger)index completion:(PMNativeOSClickCompletion)completion;
 - (instancetype)init NS_UNAVAILABLE;
 + (instancetype)new NS_UNAVAILABLE;

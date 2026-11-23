@@ -126,6 +126,8 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
         if (c && c->caption[0])
             row[@"caption"] = [NSString stringWithUTF8String:c->caption] ?: @"";
         if (c && c->speech) {
+            if (c->waveformCount)
+                row[@"waveform"] = [NSData dataWithBytes:c->waveform length:c->waveformCount * sizeof(float)];
             row[@"seconds"] = @(c->seconds);
             row[@"speechHeading"] =
                 (c->speechHeading[0] ? [NSString stringWithUTF8String:c->speechHeading] : nil)
@@ -239,6 +241,8 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
             NSDictionary *target = challengeRows[binding - 1];
             NSMutableDictionary *detail = [target mutableCopy];
             if (plan->cards[i].song == plan->challenges[binding - 1].song) {
+                // A second card for the same song can omit the first card's waveform.
+                detail[@"waveform"] = card[@"waveform"];
                 for (NSString *key in @[ @"title", @"caption", @"speechHeading", @"seconds" ])
                     if (card[key])
                         detail[key] = card[key];
@@ -312,6 +316,14 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
 
 - (const PMOSPage *)page {
     return _plan.get();
+}
+
+- (void)markEntryMovieSeen:(void (^)(BOOL))completion {
+    NSString *key = @(_plan->entryMovieKey);
+    dispatch_async(_events, ^{
+        BOOL ok = [self->_progress commitValues:@{key:@1}];
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(ok); });
+    });
 }
 
 - (void)clickNode:(NSInteger)index completion:(PMNativeOSClickCompletion)completion {

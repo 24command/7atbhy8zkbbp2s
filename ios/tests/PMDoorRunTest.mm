@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
+#include <chrono>
 
 #ifndef PMDOOR_RUN_HOST_TEST
 #error Build the door run test and implementation with PMDOOR_RUN_HOST_TEST.
@@ -47,6 +48,7 @@ int main() {
     @autoreleasepool {
         testRoot = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         double hp = 0, delta[4] = {};
+        CHECK(!PMOSCachedChapterFlag(testRoot,1,@"chapter",@"door.gate.clear"));
         arm();
         CHECK(!PMDoorBeginExactTrack(@"song", 2, @"chart-AT", &hp, delta));
         CHECK(!PMDoorActive());
@@ -68,11 +70,20 @@ int main() {
         CHECK(!PMDoorActive());
         PMDoorFinish(NO);
         expectProgress(1, 0);
+        CHECK(!PMOSCachedChapterFlag(testRoot,1,@"chapter",@"door.gate.clear"));
 
         begin();
         PMDoorFinish(YES);
         expectProgress(1, 1);
 
+        CHECK(PMOSCachedChapterFlag(testRoot,1,@"chapter",@"door.gate.clear"));
+        CHECK(!PMOSCachedChapterFlag(testRoot,1,@"chapter",@"door.Gate.clear"));
+        CHECK(!PMOSCachedChapterFlag(testRoot,1,@"otherChapter",@"door.gate.clear"));
+        // A new library revision must reload the persisted flag on a worker.
+        CHECK(!PMOSCachedChapterFlag(testRoot,2,@"chapter",@"door.gate.clear"));
+        for (int i=0; i<200 && !PMOSCachedChapterFlag(testRoot,2,@"chapter",@"door.gate.clear"); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        CHECK(PMOSCachedChapterFlag(testRoot,2,@"chapter",@"door.gate.clear"));
         // The replay token matches once and has no outcome owner. Native
         // cancellation or a different chart must never affect the next play.
         CHECK(PMDoorArmReplay(@"song",3,@"AT-extra"));

@@ -6,7 +6,7 @@
 namespace pmnativedetail {
 using pmbridge::P; using pmbridge::Runtime;
 enum class Style { c8, c9 };
-struct Speech { NSString *heading=nil; NSString *transcript=nil; double seconds=0; };
+struct Speech { NSString *heading=nil; NSString *transcript=nil; double seconds=0; NSData *waveform=nil; };
 // Find exactly one serialized controller under a host-owned GameObject,
 // including inactive children. No global search and no additive scene loads.
 P findDonor(Runtime&, P donorRoot, Style);

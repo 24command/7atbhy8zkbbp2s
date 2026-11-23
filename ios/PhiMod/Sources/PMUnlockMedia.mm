@@ -5,6 +5,7 @@
 #include <cmath>
 
 @interface PMUnlockMediaView : UIView
+@property(nonatomic) BOOL strict;
 @property(nonatomic,strong) AVPlayer *player;
 @property(nonatomic,strong) AVPlayerLayer *video;
 @property(nonatomic,strong) UIImageView *image;
@@ -29,10 +30,10 @@ static PMUnlockMediaView *activeMedia;
  self.image.image=[UIImage imageWithContentsOfFile:self.cover];self.image.hidden=NO;
  self.message.text=@"Unlocked — tap Skip to continue";self.message.hidden=NO;
 }
-- (void)skip{[self finish:YES];}
+- (void)skip{[self finish:!(self.strict && self.fallback)];}
 - (void)step:(CADisplayLink*)clock{
  if(UIApplication.sharedApplication.applicationState!=UIApplicationStateActive){[self finish:NO];return;}
- if(self.fallback){if(clock.timestamp-self.began>.75)[self finish:YES];return;}
+ if(self.fallback){if(clock.timestamp-self.began>.75)[self finish:!self.strict];return;}
  if(self.gif){
   double elapsed=clock.timestamp-self.began;if(elapsed>=[self.ends.lastObject doubleValue]){[self finish:YES];return;}
   NSUInteger i=0;while(i+1<self.ends.count&&elapsed>=[self.ends[i] doubleValue])++i;
@@ -54,12 +55,15 @@ static PMUnlockMediaView *activeMedia;
 BOOL PMUnlockMediaBusy(void){return activeMedia!=nil;}
 void PMCancelUnlockMedia(void){[activeMedia finish:NO];}
 BOOL PMPresentUnlockMedia(NSString*path,NSString*cover,NSString*title,void(^completion)(BOOL)){
+ return PMPresentUnlockMediaWithPolicy(path,cover,title,NO,completion);
+}
+BOOL PMPresentUnlockMediaWithPolicy(NSString*path,NSString*cover,NSString*title,BOOL strict,void(^completion)(BOOL)){
  if(!NSThread.isMainThread||activeMedia||UIApplication.sharedApplication.applicationState!=UIApplicationStateActive)return NO;
  UIWindow*window=nil;for(UIScene*scene in UIApplication.sharedApplication.connectedScenes)if(scene.activationState==UISceneActivationStateForegroundActive&&[scene isKindOfClass:UIWindowScene.class])for(UIWindow*w in ((UIWindowScene*)scene).windows)if(w.isKeyWindow)window=w;
  if(!window||window.rootViewController.presentedViewController)return NO;
  PMUnlockMediaView*v=[[PMUnlockMediaView alloc]initWithFrame:window.bounds];v.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;v.backgroundColor=UIColor.blackColor;v.accessibilityViewIsModal=YES;v.completion=completion;v.cover=cover;v.created=CACurrentMediaTime();v.lastFrame=NSNotFound;
  v.image=[UIImageView new];v.image.contentMode=UIViewContentModeScaleAspectFit;[v addSubview:v.image];
- v.message=[UILabel new];v.message.text=title;v.message.textAlignment=NSTextAlignmentCenter;v.message.textColor=UIColor.whiteColor;v.message.numberOfLines=0;v.message.hidden=YES;[v addSubview:v.message];
+ v.strict=strict;v.message=[UILabel new];v.message.text=title;v.message.textAlignment=NSTextAlignmentCenter;v.message.textColor=UIColor.whiteColor;v.message.numberOfLines=0;v.message.hidden=YES;[v addSubview:v.message];
  UIButton*skip=[UIButton buttonWithType:UIButtonTypeSystem];skip.tag=101;[skip setTitle:@"Skip / 继续" forState:UIControlStateNormal];skip.tintColor=UIColor.whiteColor;skip.backgroundColor=[UIColor colorWithWhite:.2 alpha:.85];[skip addTarget:v action:@selector(skip) forControlEvents:UIControlEventTouchUpInside];[v addSubview:skip];
  activeMedia=v;[window addSubview:v];
  if([path.pathExtension.lowercaseString isEqualToString:@"gif"]){

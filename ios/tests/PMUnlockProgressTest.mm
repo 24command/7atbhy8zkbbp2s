@@ -10,6 +10,15 @@ int main(){@autoreleasepool{
  assert(PMUnlockValidationError(PMNormalizeUnlockRule(@{@"enabled":@YES,@"conditions":@[@{@"type":@"unknown",@"ref":@"pm_dep"}]}))!=nil);
  assert(PMUnlockValidationError(PMNormalizeUnlockRule(@"broken"))!=nil);
 
+ NSMutableDictionary *alternative=[compatible mutableCopy];
+ alternative[@"chapterClear"]=@"towerBlackbox";
+ assert([PMUnlockChapterClearKey(alternative[@"chapterClear"]) isEqual:@"door.towerBlackbox.clear"]);
+ assert(!PMUnlockValidationError(alternative));
+ assert([PMUnlockSignature(compatible) isEqual:PMUnlockSignature(alternative)]);
+ for(id invalid in @[@"",@"a/b",@"tower Blackbox",@42,NSNull.null,[@"" stringByPaddingToLength:54 withString:@"x" startingAtIndex:0]]) {
+  alternative[@"chapterClear"]=invalid;
+  assert(PMUnlockValidationError(alternative));
+ }
  // An imported SP chart and the official IN chart persist under distinct keys.
  NSDictionary*extra=@{@"id":@"custom-sp",@"groupId":@"official",@"level":@"SP"};
  NSDictionary*officialSong=@{@"songsId":@"official",@"difficulty":@[@0,@0,@12,@0]};

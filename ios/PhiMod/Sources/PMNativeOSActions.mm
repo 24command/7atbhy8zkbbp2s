@@ -2,6 +2,7 @@
 #import "PMChapterArt.h"
 #import "PMContentStore.h"
 #import "PMOSCheckpoint.h"
+#import "PMDiagnostics.h"
 #import "PMOSRevealView.h"
 #import "PMStockIntroResolver.hpp"
 #import "PMUnlockMedia.h"
@@ -149,6 +150,33 @@ CGRect focusRect(CGRect bounds, double aspect, CGRect rect) {
     }
     NSDictionary *card = _program.cards[route];
     open(card[@"challengeDetail"] ?: card);
+}
+
+- (BOOL)playEntryMovie:(void (^)(BOOL))completion {
+    if (![self ready] || !gameWindow()) return NO;
+    const PMOSPage *page = _program.page;
+    if (!page->entryMovieKey[0] || page->entryMovieSeen) return NO;
+    NSString *path = PMOSArtPath([PMContentStore.shared asset:_program.chapter], @(page->entryMovieName));
+    if (!path || ![[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil][NSFileType] isEqual:NSFileTypeRegular]) {
+        PMDiagnosticsWrite("Chapter OS: entry movie unavailable"); return NO;
+    }
+    __weak PMNativeOSActions *weak = self;
+    _intro = YES;
+    _ownsMedia = pmunlock::playChapterStoryMedia(path,nil,_program.chapterName,^(BOOL played){
+        PMNativeOSActions *owner = weak;
+        if (![owner isCurrent]) return;
+        owner->_ownsMedia = NO;
+        if (!played) { owner->_intro=NO; completion(NO); return; }
+        [owner->_program markEntryMovieSeen:^(BOOL saved){
+            PMNativeOSActions *active=weak;
+            if (![active isCurrent]) return;
+            active->_intro=NO;
+            if (!saved) PMDiagnosticsWrite("Chapter OS: could not persist entry movie completion");
+            completion(saved);
+        }];
+    },true);
+    if (!_ownsMedia) _intro=NO;
+    return _ownsMedia;
 }
 
 - (BOOL)playIntro:(NSDictionary *)row completion:(void (^)(BOOL))completion {

@@ -15,10 +15,16 @@ clang++ -std=c++17 -fobjc-arc -DPMDOOR_RUN_HOST_TEST -framework Foundation -fram
 # Compile the C VM once for both the portable and Foundation host suites.
 (
   cd "$OUT"
-  trap 'rm -f ./*.o ./chaptercover ./chapterlife ./nativemap ./mapflash' EXIT
+  trap 'rm -f ./*.o ./chaptercover ./chapterlife ./c8waveform ./nativemap ./mapflash' EXIT
   clang -std=c99 -O2 -c "$ROOT"/PhiMod/Vendor/lua54/*.c "$ROOT/PhiMod/Core/PMChapterVM.c"
   clang -std=c99 -O2 "$ROOT/tests/PMChapterVMTest.c" ./*.o -o chaptervm
   ./chaptervm
+  clang -std=c99 -O2 "$ROOT/tests/PMChapterC8WaveformTest.c" ./*.o -o c8waveform
+  ./c8waveform
+  python3 "$ROOT/tests/test_native_os_c8_waveform.py"
+  clang -std=c99 -O2 "$ROOT/tests/PMChapterC9RouteTest.c" ./*.o -o chaptervm
+  ./chaptervm
+  python3 "$ROOT/tests/test_native_os_c9_route.py"
   clang++ -std=c++17 -O2 "$ROOT/tests/PMNativeOSMapTest.cpp" ./*.o -o nativemap
   ./nativemap
   clang++ -std=c++17 -O2 "$ROOT/tests/PMNativeOSMapFlashTest.cpp" -framework CoreGraphics -o mapflash

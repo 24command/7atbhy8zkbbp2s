@@ -132,15 +132,25 @@ static int listSwitchAfter(lua_State *L) {
     return 0;
 }
 
-static int nativeChapter(lua_State *L) {
+static int onEnterMovie(lua_State *L) {
     PMOSPage *page = declarationPage(L);
-    if (lua_gettop(L) != 1 || !lua_isinteger(L, 1))
-        return luaL_error(L, "nativeChapter expects 8 or 9");
-    lua_Integer chapter = lua_tointeger(L, 1);
-    if (chapter != 8 && chapter != 9) return luaL_error(L, "nativeChapter expects 8 or 9");
-    page->nativeChapter = (int)chapter;
+    luaL_checktype(L, 1, LUA_TTABLE);
+    if (page->entryMovieKey[0]) return luaL_error(L,"only one active onEnterMovie per declaration");
+    lua_getfield(L,1,"key"); size_t n; luaL_checktype(L,-1,LUA_TSTRING);
+    const char *key = lua_tolstring(L,-1,&n);
+    if (!n || n > sizeof(page->entryMovieKey)-sizeof("movie.")) return luaL_error(L,"invalid entry movie key");
+    validateKeyChars(L,key,n);
+    memcpy(page->entryMovieKey,"movie.",6); memcpy(page->entryMovieKey+6,key,n+1); lua_pop(L,1);
+    lua_getfield(L,1,"src"); luaL_checktype(L,-1,LUA_TSTRING);
+    const char *name=lua_tolstring(L,-1,&n);
+    if (n<5 || n>=sizeof(page->entryMovieName) || name[0]=='.' || strlen(name)!=n ||
+        strpbrk(name,"/\\:") || strcmp(name+n-4,".mp4")) return luaL_error(L,"entry movie expects a local .mp4 filename");
+    for(size_t i=0;i<n;i++) if((unsigned char)name[i]<32 || name[i]==127) return luaL_error(L,"invalid movie filename");
+    memcpy(page->entryMovieName,name,n+1);lua_pop(L,1);
+    page->entryMovieSeen=readProgress(L,session(L),page->entryMovieKey)!=0;
     return 0;
 }
+#include "PMChapterRoute.inc"
 
 static int home(lua_State *L) {
     PMOSPage *page = declarationPage(L);
@@ -178,41 +188,6 @@ static int challengeBindingRef(lua_State *L, int table) {
 }
 
 #include "PMChapterLayout.inc"
-
-static int card(lua_State *L) {
-    PMOSPage *page = declarationPage(L);
-    lua_Integer index = luaL_checkinteger(L, 1);
-    if (index < 1 || index > session(L)->songs) return luaL_error(L, "song number outside chapter order");
-    if (page->count >= 128) return luaL_error(L, "too many cards");
-    PMOSCard *c = &page->cards[page->count++];
-    c->song = (int)index;
-    text(L, 2, c->title, sizeof(c->title));
-    text(L, 3, c->caption, sizeof(c->caption));
-    if (!lua_isnoneornil(L, 4)) {
-        luaL_checktype(L, 4, LUA_TTABLE);
-        c->challenge = challengeBindingRef(L, 4);
-        c->speech = !c->challenge; /* A legacy options table, even {}, enables speech. */
-        if (c->challenge) {
-            lua_pushnil(L);
-            while (lua_next(L, 4)) {
-                char key[sizeof("challenge")];
-                word(L, -2, key, sizeof(key));
-                if (!strcmp(key, "seconds") || !strcmp(key, "heading")) c->speech = 1;
-                else if (strcmp(key, "challenge")) return luaL_error(L, "unknown card challenge option: %s", key);
-                lua_pop(L, 1);
-            }
-            if (!c->speech) return 0;
-        }
-        lua_getfield(L, 4, "seconds");
-        c->seconds = luaL_optnumber(L, -1, 0);
-        lua_pop(L, 1);
-        if (!(c->seconds >= 0 && c->seconds <= 86400)) return luaL_error(L, "invalid speech length");
-        lua_getfield(L, 4, "heading");
-        text(L, -1, c->speechHeading, sizeof(c->speechHeading));
-        lua_pop(L, 1);
-    }
-    return 0;
-}
 
 #include "PMChapterChallenge.inc"
 #define PM_CHAPTER_LIFE_LUA
@@ -259,6 +234,7 @@ typedef struct { const char *source; size_t length; } Script;
 
 static int evaluate(lua_State *L) {
     const Script *script = lua_touserdata(L, 1);
+    lua_pushcfunction(L,onEnterMovie); lua_setglobal(L,"onEnterMovie");
     lua_pushcfunction(L, nativeChapter); lua_setglobal(L, "nativeChapter");
     lua_pushcfunction(L, home);
     lua_setglobal(L, "home");
@@ -353,6 +329,7 @@ PMOSSession *PMOSStartWithProgress(const char *src, size_t len, int songs,
     if (!page) return NULL;
     memset(page, 0, sizeof(*page));
     page->nativeChapter = 9;
+    page->nativePhase = 1;
     if (!src || !len || len > SourceLimit || songs < 0) {
         snprintf(page->error, sizeof(page->error), "invalid OS input");
         return NULL;

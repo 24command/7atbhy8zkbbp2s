@@ -38,14 +38,14 @@ int main(){@autoreleasepool{
  // Exercise the resolver with a private fixture, without a game install or save.
  NSString *dataDir=[root stringByAppendingPathComponent:@"Data"], *cache=[root stringByAppendingPathComponent:@"cache"];
  assert([f createDirectoryAtPath:dataDir withIntermediateDirectories:YES attributes:nil error:nil]);
- const PMStockIntro fixture={"@stock/test", "sample.resource", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", 3};
+ const PMStockIntro fixture={"@stock/test", "sample.resource", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", 3, 2, 7};
  NSString *sample=[dataDir stringByAppendingPathComponent:@"sample.resource"];
  assert(!PMStockIntroCopy(&fixture,dataDir,cache));
- assert([@"abc" writeToFile:sample atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+ assert([@"xxabcxx" writeToFile:sample atomically:YES encoding:NSUTF8StringEncoding error:nil]);
  NSString *movie=PMStockIntroCopy(&fixture,dataDir,cache);
  assert([movie.pathExtension isEqual:@"mp4"] && [PMFileSHA256(movie) isEqual:@(fixture.sha256)]);
  assert([movie isEqual:PMStockIntroCopy(&fixture,dataDir,cache)]);
- assert([@"xyz" writeToFile:sample atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+ assert([@"xxxyzxx" writeToFile:sample atomically:YES encoding:NSUTF8StringEncoding error:nil]);
  assert(!PMStockIntroCopy(&fixture,dataDir,cache)); // same size, wrong digest
  assert([f removeItemAtPath:sample error:nil] && [f createSymbolicLinkAtPath:sample withDestinationPath:movie error:nil]);
  assert(!PMStockIntroCopy(&fixture,dataDir,cache));

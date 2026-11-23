@@ -8,6 +8,9 @@ FOUNDATION_EXPORT NSNotificationName const PMOSAuthorProgressChanged;
 FOUNDATION_EXPORT uint64_t PMOSAuthorProgressRevision(void);
 // In-memory stamp for a single canonical chapter. No file I/O.
 FOUNDATION_EXPORT uint64_t PMOSChapterProgressRevision(NSString *chapter);
+// Main-thread native unlock reader. A cold lookup schedules one worker snapshot per
+// installed chapter/library revision. Successful local commits publish synchronously.
+FOUNDATION_EXPORT BOOL PMOSCachedChapterFlag(NSString *root, NSUInteger libraryRevision, NSString *chapter, NSString *key);
 @interface PMOSAuthorProgress : NSObject
 // root is the absolute PhiMod store root. Initialization performs no disk I/O.
 - (nullable instancetype)initWithRoot:(NSString *)root chapter:(NSString *)chapter NS_DESIGNATED_INITIALIZER;
