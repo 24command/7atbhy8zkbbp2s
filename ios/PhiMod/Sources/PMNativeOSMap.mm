@@ -539,14 +539,15 @@ ReadinessResult pollPrepared(Runtime &r, Visit id, uint64_t token) {
     if (!checked([&]{
         Map &m = *current;
         refresh(m,0); // Deliberately NOT tick: no input/Lua and no authored time.
-        unsigned total = 0, ready = 0, failed = 0;
+        unsigned total = 0, ready = 0, failed = 0, deferred = 0;
         for (auto &item : m.items) {
             if (!item.object || !item.active || !item.media) continue;
             ++total;
             if (item.media->failed) ++failed;
+            else if (item.media->deferred) ++deferred;
             else if (item.media->first.held()) ++ready;
         }
-        result = readiness::result(total,ready,failed);
+        result = readiness::result(total,ready,failed,deferred);
     })) { close(r,id); return {}; }
     return result;
 }
@@ -557,7 +558,7 @@ bool present(Runtime &r, Visit id, bool visible, bool runClock, bool input) {
         if (running && m.preparation.active()) {
             for (auto &item : m.items) {
                 if (item.media && item.media->first.started() && !item.media->first.held() && !item.media->failed)
-                    failMedia(m,*item.media,@"revealed before first frame was ready");
+                    deferMedia(*item.media,@"revealed before first frame was ready");
             }
             m.preparation.invalidate();
         }

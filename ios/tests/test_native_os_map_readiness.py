@@ -59,6 +59,17 @@ class MapReadinessAdapter(unittest.TestCase):
         self.assertIn('visible || m.preparation.active()', present)
         self.assertNotIn('stopMedia(', present)
 
+    def test_cover_timeout_does_not_permanently_disable_slow_media(self):
+        defer = between(MEDIA, 'void deferMedia(', 'void warmMedia(')
+        for forbidden in ('media.failed = true', 'first.reset()', '"Stop"', 'gif.reset()'):
+            self.assertNotIn(forbidden, defer)
+        warm = between(MEDIA, 'void warmMedia(', 'void syncMedia(')
+        self.assertIn('if (expired) { deferMedia(', warm)
+        sync = MEDIA.split('void syncMedia(', 1)[1]
+        self.assertLess(sync.index('warmMedia(m,media,false)'), sync.index('media.first.release()'))
+        self.assertIn('if(media.failed || !media.first.held())return;', sync)
+        self.assertIn('readiness::result(total,ready,failed,deferred)', MAP)
+
     def test_page_cancel_and_normal_hide_stop_staged_players(self):
         page = between(MAP, 'bool displayPage(', 'bool setElement(')
         self.assertIn('m.preparation.invalidate()', page)
@@ -80,7 +91,8 @@ class MapReadinessAdapter(unittest.TestCase):
         self.assertNotIn('destroy(', fallback)
         self.assertNotIn('close(', fallback)
         warm = between(MEDIA, 'void warmMedia(', 'void syncMedia(')
-        self.assertIn('media.first.poll(false,false,expired)', warm)
+        self.assertIn('if (expired) { deferMedia(', warm)
+        self.assertNotIn('poll(false,false,expired)', warm)
         self.assertIn('first-frame deadline (3s)', warm)
 
     def test_gif_does_not_prefetch_or_advance_while_held(self):

@@ -31,6 +31,10 @@ clang++ -std=c++17 -fobjc-arc -DPMDOOR_RUN_HOST_TEST -framework Foundation -fram
   python3 "$ROOT/tests/test_native_os_c9_route.py"
   clang++ -std=c++17 -O2 "$ROOT/tests/PMNativeOSMapTest.cpp" ./*.o -o nativemap
   ./nativemap
+  clang++ -std=c++17 -O2 "$ROOT/tests/PMNativeOSMapReadinessTest.cpp" -o nativemap
+  ./nativemap
+  clang++ -std=c++17 -O2 "$ROOT/tests/PMNativeOSEntryTimelineTest.cpp" -o nativemap
+  ./nativemap
   clang++ -std=c++17 -O2 "$ROOT/tests/PMNativeOSMapFlashTest.cpp" -framework CoreGraphics -o mapflash
   ./mapflash
   clang -std=c99 -O2 "$ROOT/tests/PMChapterLifeTest.c" ./*.o -o chapterlife

@@ -157,6 +157,15 @@ static void aggregation() {
     const auto degraded = result(3,2,1);
     assert(degraded.state == Readiness::Fallback && degraded.complete());
     assert(degraded.total == 3 && degraded.ready == 2 && degraded.failed == 1);
+    FirstFrame slow;
+    assert(slow.begin(true)==Action::Prepare);
+    const auto delayed=result(1,0,0,1);
+    assert(delayed.complete() && delayed.state==Readiness::Fallback && delayed.deferred==1 && delayed.failed==0);
+    assert(slow.phase==Phase::Preparing); // Cover budget did not kill the decoder.
+    assert(slow.poll(true,false,false)==Action::Play);
+    assert(slow.poll(false,true,false)==Action::Hold);
+    assert(slow.release() && !slow.release()); // Late first frame resumes once, no restart.
+
 }
 int main() {
     tickets(); videoFirstFrameAndResume(); mediaPresentationModes(); boundedFailures(); gifAndAuthoredTime();

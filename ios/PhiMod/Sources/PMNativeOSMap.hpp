@@ -123,11 +123,13 @@ bool setElement(Runtime &, Visit, int nodeIndex, bool visible);
 // keep the private scene/canvas alive and active. Same-token prepare is idempotent;
 // a new token replaces ownership without restarting already warmed media.
 // pollPrepared uploads/holds first frames; it never runs input or advances time.
-// A 3s monotonic deadline produces terminal Fallback (with counts), not a hang.
+// A 3s monotonic deadline produces revealable Fallback (with counts), not a hang.
+// Slow media retain their decoder work and continue warming behind the poster
+// after reveal; only actual missing/decode errors become terminal failures.
 // Invalid means wrong visit/token/page or consumed/cancelled staging; never reveal
 // based on Invalid. Ready/Fallback are revealable; total==0 is immediately Ready.
 // present(visible=true, runClock=true, ...) consumes the ticket and resumes held
-// media without Stop/Prepare. Early reveal abandons pending media to fallback.
+// media without Stop/Prepare. Early reveal defers pending media behind the poster.
 // present(..., visible, false, false) retains staging/held frames, including while
 // shown frozen under the cover. Failure is sticky for that media for this Visit;
 // its acquired frame/authored background is retained, not a synthesized poster.

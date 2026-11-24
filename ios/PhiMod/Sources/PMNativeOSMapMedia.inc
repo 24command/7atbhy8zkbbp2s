@@ -16,7 +16,7 @@ struct Media {
     NSString *path = nil;
     Handle raw{}, fitter{}, player{}, texture{};
     int pixels{};
-    bool loop{}, playing{}, received{}, failed{}, slowStartReported{};
+    bool loop{}, playing{}, received{}, failed{}, deferred{}, slowStartReported{};
     double started{};
     P lastVideoTexture{}; // borrowed from VideoPlayer and RawImage
     std::shared_ptr<GifVisit> gif;
@@ -106,7 +106,7 @@ std::shared_ptr<Media> buildMedia(Map &m, P tr, NSString *path, bool cover, bool
 // "playing", so cancellation must not depend on the old playing edge alone.
 void stopMedia(Map &m, Media &media) {
     bool live = media.playing || media.first.started() || media.received || bool(media.gif);
-    media.playing = false;
+    media.playing = false; media.deferred = false;
     media.gif.reset(); // Invalidates decoder queue completions through their weak owner.
     media.first.reset();
     media.lastVideoTexture = nullptr; media.received = false;
@@ -118,7 +118,7 @@ void stopMedia(Map &m, Media &media) {
 }
 void failMedia(Map &m, Media &media, NSString *reason) {
     if (media.failed) return;
-    media.failed = true; media.playing = false;
+    media.failed = true; media.deferred = false; media.playing = false;
     media.first.phase = readiness::Phase::Failed;
     media.gif.reset();
     PMDiagnosticsWrite([[NSString stringWithFormat:@"Map media fallback (%@): %@", media.path, reason] UTF8String]);
@@ -137,11 +137,15 @@ void attachMedia(Map &m, Media &media, P texture, float aspect) {
     if (!media.received) flag(m.r,m.get(media.raw),"set_enabled",true);
     media.received = true;
 }
+void deferMedia(Media &media, NSString *reason) {
+    if(media.failed || media.deferred || media.first.held())return;
+    media.deferred=true;
+    PMDiagnosticsWrite([[NSString stringWithFormat:@"Map media still preparing (%@): %@; continue behind poster",media.path,reason] UTF8String]);
+    // A deadline is NOT a decoder failure. Retain Prepare/GIF work and ownership.
+}
 void warmMedia(Map &m, Media &media, bool expired) {
     if (media.failed || media.first.held()) return;
-    if (media.first.poll(false,false,expired) == readiness::Action::Fail) {
-        failMedia(m,media,@"first-frame deadline (3s)"); return;
-    }
+    if (expired) { deferMedia(media,@"first-frame deadline (3s)"); return; }
     NSString *reason = nil;
     if (!checked([&]{
         Runtime &r = m.r;
@@ -187,6 +191,11 @@ void warmMedia(Map &m, Media &media, bool expired) {
 void syncMedia(Map &m, Media &media, bool play, double t) {
     if (!play) { stopMedia(m,media); return; }
     if (media.failed) return;
+    if(media.deferred){
+        warmMedia(m,media,false);
+        if(media.failed || !media.first.held())return;
+        media.deferred=false;
+    }
     NSString *reason = nil;
     if (!checked([&]{
         Runtime &r = m.r;

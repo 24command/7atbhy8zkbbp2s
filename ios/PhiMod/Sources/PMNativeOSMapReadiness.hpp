@@ -5,7 +5,7 @@ namespace pmnativeosmap {
 enum class Readiness { Invalid, Pending, Ready, Fallback };
 struct ReadinessResult {
     Readiness state = Readiness::Invalid;
-    unsigned total = 0, ready = 0, failed = 0;
+    unsigned total = 0, ready = 0, failed = 0, deferred = 0;
     bool complete() const { return state == Readiness::Ready || state == Readiness::Fallback; }
 };
 namespace readiness {
@@ -67,9 +67,9 @@ struct FirstFrame {
     }
     void reset() { phase = Phase::Cold; }
 };
-inline ReadinessResult result(unsigned total, unsigned ready, unsigned failed) {
-    return {ready + failed < total ? Readiness::Pending :
-            failed ? Readiness::Fallback : Readiness::Ready, total, ready, failed};
+inline ReadinessResult result(unsigned total, unsigned ready, unsigned failed, unsigned deferred = 0) {
+    return {ready + failed + deferred < total ? Readiness::Pending :
+            (failed || deferred) ? Readiness::Fallback : Readiness::Ready, total, ready, failed, deferred};
 }
 } // namespace readiness
 } // namespace pmnativeosmap
