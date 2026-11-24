@@ -1,4 +1,5 @@
 #include "PMNativeOSCoordinator.hpp"
+#include "PMContentRuntime.hpp"
 #include <deque>
 #import <QuartzCore/QuartzCore.h>
 #include "PMIL2CPP.hpp"
