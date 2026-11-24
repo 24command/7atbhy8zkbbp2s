@@ -21,6 +21,8 @@ void *activeRoot(Runtime&);
 using ArmPlay = bool (^)(Runtime&, void *levelStartInfo);
 using PlayFinished = void (^)(bool routed);
 bool play(Runtime&, uint64_t visit, void *levelStartInfo, ArmPlay arm, PlayFinished finished);
+// Cancels only this visit before gameplay has claimed the launch.
+bool cancelPreparingPlay(Runtime&,uint64_t visit);
 #endif
 // Optional notification once the return operation finishes and the selector is active.
 // False means there is no selector handoff (chapter Back or an interrupted load).

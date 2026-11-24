@@ -49,6 +49,17 @@ class BoundaryTests(unittest.TestCase):
                           'chrome::close(', 'rows::release()'):
             self.assertIn(operation, clear)
 
+    def test_back_can_cancel_an_uncommitted_entrance(self):
+        busy = definition(COORD, 'void dispatchOwned(').split('if(busy){', 1)[1].split('if(mode==Mode::map && map::press', 1)[0]
+        self.assertIn('chrome::press(r,b).intent==chrome::Intent::Back', busy)
+        self.assertIn('scene::cancelPreparingPlay(r,visit)', busy)
+        self.assertIn('if(mode==Mode::detail)closePanel(r)', busy)
+        self.assertIn('else if(mode==Mode::map)leave(r,true)', busy)
+        scene = (SRC/'PMNativeOSScene.mm').read_text('utf8')
+        cancel = definition(scene, 'bool cancelPreparingPlay(')
+        self.assertIn('play->visit!=visit || play->committed', cancel)
+        self.assertIn('entrance::finish(play,false)', cancel)
+
     def test_default_entry_before_first_render(self):
         hook = definition(HOOK, 'void onOSSceneLoaded(')
         self.assertIn('mode==0 && !pmnativecoordinator::transitioning()', hook)

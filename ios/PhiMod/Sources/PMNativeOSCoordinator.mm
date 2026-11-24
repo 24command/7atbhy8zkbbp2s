@@ -309,7 +309,8 @@ bool playSelection(Runtime &r,NSDictionary *card,NSDictionary *choice){
     revision!=PMContentStore.shared.revision || !scene::activeRoot(r) || PMUnlockMediaBusy())return false;
  if(card[@"secretCourse"]){
   NSInteger tier=[card[@"lifeTier"] integerValue];busy=true;
-  bool started=PMChapterStartSecretCourseWithPauseLock(chapter,card[@"challengeID"],card[@"secretCourse"],tier<0?lifeTier:tier,[card[@"noPause"] boolValue]);
+  bool started=false;
+  cutChecked([&]{started=PMChapterStartSecretCourseWithPauseLock(chapter,card[@"challengeID"],card[@"secretCourse"],tier<0?lifeTier:tier,[card[@"noPause"] boolValue]);});
   if(!started)busy=false;
   return started;
  }
@@ -328,7 +329,8 @@ bool playSelection(Runtime &r,NSDictionary *card,NSDictionary *choice){
    if(!routed && armed){PMDoorCancelPending();pmstory::cancelLaunch();armed=false;}
    if(!routed && sameFace())busy=false;
   };
-  if(completed && valid()){
+  cutChecked(^{
+   if(!completed || !valid())return;
    auto arm=^bool(Runtime &gameRuntime,P info){
     if(!valid())return false;
     auto exact=rows::resolveStart(gameRuntime,sid,diff);
@@ -336,10 +338,12 @@ bool playSelection(Runtime &r,NSDictionary *card,NSDictionary *choice){
     armed=armGameplay(card,exact);return armed;
    };
    started=scene::play(*rt,token,song.info,arm,finished);
-  }
+  });
   if(!started)finished(false);
  };
- if(pmunlock::chapterStartIntro(r,song.chartID,valid,resume))return true;
+ bool intro=false;
+ if(!cutChecked([&]{intro=pmunlock::chapterStartIntro(r,song.chartID,valid,resume);})){busy=false;return false;}
+ if(intro)return true;
  resume(YES);
  return started;
 }
@@ -484,7 +488,16 @@ void dispatchOwned(Runtime &r,P b){
   return;
  }
  if(mode==Mode::listPending || transitioning())return;
- if(busy)return;
+ if(busy){
+  // Loading the two cover textures and the C9 capture can span frames. Back
+  // cancels a pending native entrance; duplicate Start and slot taps stay consumed.
+  if((mode==Mode::detail || mode==Mode::map) && chrome::press(r,b).intent==chrome::Intent::Back &&
+     scene::cancelPreparingPlay(r,visit)){
+   if(mode==Mode::detail)closePanel(r);
+   else if(mode==Mode::map)leave(r,true);
+  }
+  return;
+ }
  if(mode==Mode::map && map::press(r,b))return;
  auto action=chrome::press(r,b);switch(action.intent){
  case chrome::Intent::Back:if(mode==Mode::detail)closePanel(r);else leave(r,true);break;

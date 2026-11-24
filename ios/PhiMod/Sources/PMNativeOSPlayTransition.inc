@@ -139,7 +139,8 @@ void prepare(Play &p,P host) {
     P blurs=r.children(p.panel,r.type(blurNS,"TranslucentImage"));
     for(uintptr_t i=0;i<r.array_length(blurs);++i)r.put(r.arrayAt(blurs,i),"source",p.mapSource);
     p.cover=p.keep(component(r,child(r,face,"SongsCover/Cover"),"","AddressableImageLoaderWithLowResPreview"));
-    p.runner=p.cover;
+    // The 4.0.4 entrance canvases have a scaler above the animated cover hierarchy.
+    p.runner=p.keep(component(r,p.panel,"UnityEngine.UI","CanvasScaler"));
     if(p.c8){
         // A cold private component supplies the iterator's serialized fields.
         // Its GameObject stays inactive for the entire visit.
@@ -169,15 +170,24 @@ void prepare(Play &p,P host) {
     }
     // Keep the new renderer transparent until its exact illustration is ready.
     p.bg=p.keep(copy(r,donor->prefab)); p.bgGO=p.keep(r.call(p.bg,"get_gameObject"));
-    r.call(p.bg,"CheckInitialized");r.put(p.bg,"disappearBeforeLoaded",true);
+    r.put(p.bg,"disappearBeforeLoaded",true);
+    require(r.unbox<bool>(r.call(p.bg,"CheckInitialized")),"Play: missing background renderer");
     float zero=0;r.call(p.bg,"set_Alpha",{"System.Single"},{&zero});
     int layer=p.c8?8:18;r.call(p.bgGO,"set_layer",{"System.Int32"},{&layer});
-    P blurKey=imageKey(r,p.info,true);r.call(p.bg,"set_Code",{"System.String"},{blurKey});
     // Preload the private canvas while invisible. It can render the existing
     // chapter all the way through the asset wait, including slow local imports.
     alpha(r,component(r,p.panel,engine,"CanvasGroup"),0);flag(r,p.parking,"SetActive",true);
-    r.call(p.cover,"CheckInitialized");r.call(p.cover,"SetLowResImage",{"System.String"},{blurKey});
-    r.call(p.cover,"set_Code",{"System.String"},{imageKey(r,p.info,false)});
+    require(r.unbox<bool>(r.call(p.runner,"get_isActiveAndEnabled")),"Play: inactive entrance runner");
+    require(r.unbox<bool>(r.call(p.cover,"CheckInitialized")),"Play: missing cover image");
+    // Run one LoadImage per clone. The base setter schedules work on GameInformation,
+    // and the preview setter uses the cover itself. Neither owns this visit's lifetime.
+    for(P loader:{p.bg,p.cover}){
+        P key=imageKey(r,p.info,loader==p.bg);
+        P load=r.call(loader,"LoadImage",{"System.String"},{key});
+        // An imported sprite can already be in AssetRef.obj and finish without yielding.
+        P job=r.call(p.runner,"StartCoroutine",{"System.Collections.IEnumerator"},{load});
+        require(job || r.unbox<bool>(r.call(loader,"get_ImageLoaded")),"Play: image load rejected");
+    }
 }
 float clock(Runtime &r) { return r.unbox<float>(r.stat(r.type(engine,"Time"),"get_time")); }
 void startAnimation(Play &p) {
@@ -205,13 +215,18 @@ void startAnimation(Play &p) {
     // stack. All later animation, fade, wait and capture code is the player’s.
     r.put(p.routine,"<>1__state",1);r.put(p.routine,"<nowTime>5__2",clock(r));
     p.shown=true;
+    p.deadline=NSProcessInfo.processInfo.systemUptime+15;
 }
 void finish(std::shared_ptr<Play> p,bool routed) {
     Runtime &r=p->r;
-    if(live==p)live.reset();
+    if(live!=p)return;
+    live.reset();
     // The persistent renderer and captured frame now belong to Level. Destroy
     // only allocations still owned by this attempt, including on early reject.
     if(!routed){
+        // This scaler belongs exclusively to the private entrance canvas. Stop loads,
+        // capture and any end-of-frame handoff before releasing their Unity objects.
+        checked([&]{if(r.alive(p->runner))r.call(p->runner,"StopAllCoroutines");});
         checked([&]{ if(r.alive(p->parking))flag(r,p->parking,"SetActive",false); });
         checked([&]{ if(p->committed){P g=r.mainGame();
             if(r.get<P>(g,"levelStartInfo")==p->info){
@@ -281,11 +296,12 @@ void tick(std::shared_ptr<Play> p) {
             require(NSProcessInfo.processInfo.systemUptime<p->deadline,"Play: Level load interrupted"); return;
         }
         require(current.id==p->visit && activeHandle(r)==current.handle,"Play: source visit interrupted");
+        require(NSProcessInfo.processInfo.systemUptime<p->deadline,
+                p->shown?"Play: entrance animation timed out":"Play: entrance art or capture timed out");
         if(!p->shown){
-            require(NSProcessInfo.processInfo.systemUptime<p->deadline,"Play: entrance art did not load");
-            if(!r.get<bool>(p->bg,"<ImageLoaded>k__BackingField") || !r.get<bool>(p->cover,"loadImageOver"))return;
+            if(!r.unbox<bool>(r.call(p->bg,"get_ImageLoaded")) || !r.unbox<bool>(r.call(p->cover,"get_ImageLoaded")))return;
             require(r.alive(r.call(p->bg,"get__settedFile")) &&
-                    r.alive(r.call(r.get<P>(p->cover,"_image"),"get_sprite")),"Play: illustration is unavailable");
+                    r.alive(r.call(p->cover,"get__settedFile")),"Play: illustration is unavailable");
             if(!p->c8){
                 if(!p->capturing){
                     int version=r.get<int>(p->controller,"backgroundPrepareVersion");

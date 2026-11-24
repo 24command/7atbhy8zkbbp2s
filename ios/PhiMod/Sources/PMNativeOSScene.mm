@@ -88,6 +88,14 @@ void notify(Runtime &r, Arrived cb, uint64_t id, Route route, P root) {
 
 #include "PMNativeOSPlayTransition.inc"
 
+bool cancelPreparingPlay(Runtime &r,uint64_t visit){
+    auto play=entrance::live;
+    if(!NSThread.isMainThread || !play || &play->r!=&r || !visit || play->visit!=visit || play->committed)return false;
+    entrance::finish(play,false);
+    return true;
+}
+
+
 static void finishLoad(Runtime &r, int handle) {
     if (returning.id) {
         const ReturnTrip trip = returning;
