@@ -44,8 +44,15 @@ class ExtraDifficultyRouting(unittest.TestCase):
   self.assertIn('Quad{cut,0,0,1},Quad{0,0,1,1},Quad{-cut,0,1,0}',page)
   hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text('utf8')
   update=hook.split('void onSelector(',1)[1].split('void onSelectorOff(',1)[0]
-  self.assertLess(update.index('difficultyInput'),update.index('orig<VoidFn>'))
+  self.assertLess(update.index('difficultyInput'),update.rindex('orig<VoidFn>'))
   self.assertIn('if(!difficultyTouch)orig<VoidFn>',update)
+  # Covered initialization calls a separate deferred trampoline with raw input disabled.
+  coordinator=(ROOT/'PhiMod/Sources/PMNativeOSCoordinator.mm').read_text('utf8')
+  staged=coordinator.split('bool stageSelector(',1)[1].split('void detach(',1)[0]
+  self.assertLess(staged.index('r.put(owner,"disableSongSelector",true)'),staged.index('if(nativeUpdate)nativeUpdate()'))
+  self.assertNotIn('difficultyInput(',staged)
+  self.assertGreater(staged.index('pmcontent::difficultyTransitionLabel'),staged.index('if(nativeUpdate)nativeUpdate()'))
+
  def test_transition_and_result_display_use_metadata_not_numeric_transport(self):
   page=(ROOT/'PhiMod/Sources/PMDifficultyPager.inc').read_text('utf8')
   transition=page.split('void difficultyTransitionLabel(',1)[1].split('void difficultyResultLabel(',1)[0]
@@ -56,7 +63,7 @@ class ExtraDifficultyRouting(unittest.TestCase):
   start=hook.split('void onNormalStart(',1)[1].split('using MainlineCheckFn',1)[0]
   self.assertEqual(start.count('difficultyTransitionLabel'),2)
   selector=hook.split('void onSelector(',1)[1].split('void onSelectorOff(',1)[0]
-  self.assertGreater(selector.index('difficultyTransitionLabel'),selector.index('orig<VoidFn>'))
+  self.assertGreater(selector.index('difficultyTransitionLabel'),selector.rindex('orig<VoidFn>'))
  def test_current_chart_reconciles_cached_button_restoration(self):
   source=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text('utf8')
   self.assertIn('maintainSparseSlots(r);reconcileDifficultyButtons(r,selector);return;',source)

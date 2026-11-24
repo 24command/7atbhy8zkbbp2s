@@ -15,7 +15,11 @@ class LogicalRowsAndZeroSkew(unittest.TestCase):
   self.assertIn('if(logicalChanged)r.call(item,"SetText"',row)
  def test_mask_restoration_precedes_native_list_update(self):
   hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text('utf8').split('void onSelector(',1)[1].split('void onSelectorOff(',1)[0]
-  self.assertLess(hook.index('restoreSelectorRowVisibility'),hook.index('orig<VoidFn>'))
+  self.assertLess(hook.index('restoreSelectorRowVisibility'),hook.rindex('orig<VoidFn>'))
+  coordinator=(ROOT/'PhiMod/Sources/PMNativeOSCoordinator.mm').read_text('utf8')
+  staged=coordinator.split('bool stageSelector(',1)[1].split('void detach(',1)[0]
+  self.assertLess(staged.index('pmcontent::restoreSelectorRowVisibility'),staged.index('if(nativeUpdate)nativeUpdate()'))
+  self.assertLess(staged.index('pmscene::selectorFrame'),staged.index('targetReady(r)'))
   source=(ROOT/'PhiMod/Sources/PMContentRuntime.mm').read_text('utf8')
   self.assertIn('clearSelectorRowPresentation(r)',source.split('void selectorLoadingEnd(',1)[1])
  def test_zero_skew_keeps_nonzero_and_cleanup_paths(self):

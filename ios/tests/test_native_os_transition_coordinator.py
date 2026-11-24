@@ -93,8 +93,11 @@ namespace map {
         mapVisible=visible;mapRunning=running;mapInput=input;calls.push_back(input?"map-input":"map-reveal");return true;
     }
 }
+namespace pmscene {void selectorFrame(Runtime&,P){calls.push_back("shortcuts");}}
 namespace pmcontent {
     int work=0;
+    void restoreSelectorRowVisibility(Runtime&,P){calls.push_back("row-restore");}
+    void difficultyTransitionLabel(Runtime&,P){calls.push_back("difficulty-label");}
     void prepareSelectorItems(Runtime&,P){++work;}
     void selectorLoadingBegin(Runtime&,P){++work;}
     void selectorFrame(Runtime&,P){++work;}

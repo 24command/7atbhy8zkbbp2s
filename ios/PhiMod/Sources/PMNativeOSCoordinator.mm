@@ -1,5 +1,6 @@
 #include "PMNativeOSCoordinator.hpp"
 #include "PMContentRuntime.hpp"
+#include "PMSceneUI.hpp"
 #include <deque>
 #import <QuartzCore/QuartzCore.h>
 #include "PMIL2CPP.hpp"
@@ -484,6 +485,7 @@ bool stageSelector(Runtime&r,P owner,void (^nativeUpdate)(void)){
          if(cutTicket)cancelRouteCut();else abortSelectorEntry(r);
          return;
      }
+     pmcontent::restoreSelectorRowVisibility(r,owner);
      pmcontent::prepareSelectorItems(r,owner);
      pmcontent::selectorLoadingBegin(r,owner);
      // Verified 4.0.4: disableSongSelector skips Update's input branch, NOT its
@@ -495,6 +497,8 @@ bool stageSelector(Runtime&r,P owner,void (^nativeUpdate)(void)){
          r.put(owner,"disableSongSelector",true);
          if(nativeUpdate)nativeUpdate();
      }
+     pmcontent::difficultyTransitionLabel(r,owner);
+     pmscene::selectorFrame(r,owner);
      pmcontent::selectorFrame(r,owner);
      pmcontent::selectorLoadingFrame(r,owner);
      pmcontent::selectorDifficultyUI(r,owner);
