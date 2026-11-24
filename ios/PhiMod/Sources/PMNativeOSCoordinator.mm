@@ -3,6 +3,8 @@
 #import <QuartzCore/QuartzCore.h>
 #include "PMIL2CPP.hpp"
 #include "PMNativeOSScene.hpp"
+#include "PMNativeOSTransition.hpp"
+#import "PMNativeOSEntryTimeline.h"
 #include "PMNativeOSMap.hpp"
 #include "PMNativeOSDetail.hpp"
 #include "PMNativeOSChrome.hpp"
@@ -21,7 +23,7 @@
 #include "PMUnlockRuntime.hpp"
 namespace pmnativecoordinator {
 using pmbridge::Runtime; using pmbridge::P;
-namespace scene=pmnativeosscene; namespace chrome=pmnativechrome; namespace map=pmnativeosmap; namespace rows=pmnativeosrows; namespace panel=pmnativedetail; namespace toggle=pmnativeswitch;
+namespace scene=pmnativeosscene; namespace chrome=pmnativechrome; namespace map=pmnativeosmap; namespace rows=pmnativeosrows; namespace panel=pmnativedetail; namespace toggle=pmnativeswitch; namespace transition=pmnativeostran;
 namespace {
 enum class Mode { idle, loading, list, listPending, listCut, entering, map, mapCut, detail, returning };
 Mode mode=Mode::idle;
@@ -35,11 +37,20 @@ PMNativeOSActions *actions;
 BOOL (^mountMap)(void);
 BOOL (^applyCheckpoint)(NSDictionary *);
 dispatch_source_t clockSource;
+transition::Ticket cutTicket=0;
+bool listStaging=false, targetPrepared=false, cutToList=false;
+int stableListFrames=0;
+void (^resumeAuthoredLoad)(BOOL)=nil;
+void (^mapRevealed)(void)=nil;
+void cancelRouteCut();
+void targetReady(Runtime&);
+void pollPreparedMap(Runtime*,uint64_t,uint64_t,transition::Ticket);
+void beginChapterCut(Runtime&);
 void stopClock(){if(clockSource){dispatch_source_cancel(clockSource);clockSource=nil;}}
 struct ScheduledUnlock { int index; double remaining; };
 std::deque<ScheduledUnlock> unlockQueue;
 double previousUnlockTick=0;
-void clearScene(Runtime &r,uint64_t closingVisit=visit){unlockQueue.clear();previousUnlockTick=0;stopClock(); [actions invalidate]; actions=nil; mountMap=nil; applyCheckpoint=nil; if(detailID)panel::close(r,detailID);detailID=0;if(mapID)map::close(r,mapID);mapID=0;if(closingVisit)chrome::close(r,closingVisit);chromeView={};rows::release();detail=nil;selected=nil;choices=nil;busy=false;}
+void clearScene(Runtime &r,uint64_t closingVisit=visit){mapRevealed=nil;unlockQueue.clear();previousUnlockTick=0;stopClock(); [actions invalidate]; actions=nil; mountMap=nil; applyCheckpoint=nil; if(detailID)panel::close(r,detailID);detailID=0;if(mapID)map::close(r,mapID);mapID=0;if(closingVisit)chrome::close(r,closingVisit);chromeView={};rows::release();detail=nil;selected=nil;choices=nil;busy=false;}
 NSDictionary *entry(NSDictionary *card){NSString *sid=card[@"sid"]?:card[@"installedID"];if(!sid)return nil;NSMutableDictionary *e=[@{@"songID":sid} mutableCopy];if(card[@"difficulty"])e[@"difficulty"]=card[@"difficulty"];return e;}
 NSArray *options(NSDictionary *card){NSArray *replays=card[@"replaySongs"];if(replays.count)return replays;NSDictionary *e=entry(card);return e?@[e]:@[];}
 void discardHandoff(){handoffScene=0;}
@@ -59,7 +70,7 @@ void returned(Runtime &r,uint64_t token,bool ok){
      try { handoffScene=sceneHandle(r,r.stat(r.type("UnityEngine.SceneManagement","SceneManager"),"GetActiveScene")); }
      catch(const std::exception &e){PMDiagnosticsWrite(e.what());}
  }
- if(!handoffScene)discardHandoff();
+ if(!handoffScene){discardHandoff();if(listStaging)cancelRouteCut();}
 }
 bool leave(Runtime &r,bool back){
  if(mode!=Mode::detail&&mode!=Mode::map&&mode!=Mode::mapCut&&mode!=Mode::entering)return false;
@@ -184,6 +195,7 @@ scene::Route chapterRoute() {
 void arrived(Runtime &r,uint64_t token,scene::Route route,P root){
  if(mode!=Mode::entering||token!=visit)return;
  if(!root||route!=chapterRoute()||!chrome::open(r,visit,route,root,chromeView)){
+  cancelRouteCut();
   PMDiagnosticsWrite(root?"Chapter OS: native chapter controls unavailable":"Chapter OS: loaded scene host unavailable");
   if(!leave(r,false)){
    clearScene(r);visit=0;
@@ -201,13 +213,20 @@ void arrived(Runtime &r,uint64_t token,scene::Route route,P root){
      if (mapID) map::close(*game,mapID);
      NSString *reason=nil;
      mapID=map::open(*game,chromeView.parent,*actions.page,actions.nodes,chromeView.font,^(uint64_t m,int i){activate(m,i);},&reason);
-     if (!mapID || !presentMap(*game)) { PMDiagnosticsWrite(reason.UTF8String?:"Native chapter map unavailable"); return NO; }
+     if (!mapID) { PMDiagnosticsWrite(reason.UTF8String?:"Native chapter map unavailable"); return NO; }
+     if(cutTicket){
+         if(!chrome::present(*game,visit,chrome::Face::Map,false,0,!gated) ||
+            !map::prepare(*game,mapID,cutTicket))return NO;
+     } else if(!presentMap(*game))return NO;
      return YES;
  };
  auto startMap = ^{
  if(visit!=token || generation!=epoch)return;
  Runtime &r=*game;
- if (!mountMap()) { leave(r,false); return; }
+ if (!mountMap()) { cancelRouteCut();leave(r,false); return; }
+ auto revealed = ^{
+ if(visit!=token || generation!=epoch)return;
+ if(!presentMap(*game)){leave(*game,false);return;}
  // The stock transition may leave a captured frame on the persistent RawImage.
  // Release it only after this visit owns a rendered map and its input controls.
  try{
@@ -248,10 +267,15 @@ void arrived(Runtime &r,uint64_t token,scene::Route route,P root){
  dispatch_source_set_timer(clockSource,DISPATCH_TIME_NOW,NSEC_PER_SEC/30,NSEC_PER_MSEC*3);
  dispatch_source_set_event_handler(clockSource,^{if(visit!=token)return;tickUnlocks(*game);if(mode==Mode::map)map::tick(*game,mapID);});dispatch_resume(clockSource);
  };
- if(program.page->entryMovieKey[0] && !program.page->entryMovieSeen){
+ if(cutTicket){mapRevealed=[revealed copy];pollPreparedMap(game,token,epoch,cutTicket);}
+ else {
+     // Recovery after an accepted load outlives its cancelled cover.
      mode=Mode::map;busy=true;
-     if([actions playEntryMovie:^(BOOL completed){ startMap(); }])return;
+     if(program.page->entryMovieKey[0] && !program.page->entryMovieSeen &&
+        [actions playEntryMovie:^(BOOL completed){revealed();}])return;
+     revealed();
  }
+ };
  startMap();
 }
 // Both manual entry and the deferred automatic entry respect SongSelector.Update's gates.
@@ -363,6 +387,7 @@ void selectorPreloaded(uint64_t ticket,PMNativeOSProgram *p,NSError *err){
 }
 }
 void selectorLoaded(Runtime &r,int handle,NSString *key){
+ transition::rememberReveal(r);
  if(!handle || bridge.handle==handle || handle==handoffScene || transitioning() || mode==Mode::map || mode==Mode::detail)return;
  resetEntryBridge(r);
  bridge.runtime=&r;
@@ -378,14 +403,14 @@ void selectorLoaded(Runtime &r,int handle,NSString *key){
      selectorPreloaded(ticket,p,err);
  }];
  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,8*NSEC_PER_SEC),dispatch_get_main_queue(),^{
-     if(bridge.ticket==ticket && bridge.cover && mode!=Mode::entering){
+     if(bridge.ticket==ticket && bridge.cover && mode!=Mode::entering && !cutTicket){
          PMDiagnosticsWrite("Chapter OS: selector readiness timed out");
          releaseEntryCover(*bridge.runtime); // Stop obscuring input while stock readiness is pending.
      }
  });
 }
 void abortSelectorEntry(Runtime &r){
- if(!bridge.cover || mode==Mode::entering)return;
+ if(!bridge.cover || mode==Mode::entering || cutTicket)return;
  requestedEntry=0;
  releaseEntryCover(r);
 }
@@ -439,8 +464,49 @@ void selectorFrame(Runtime &r,P owner){
  if(!cutChecked([&]{
      if(!selectorReady(r,owner))return;
      requestedEntry=0;
-     enter(r);
+     if(mode==Mode::listPending)enter(r);
+     else beginChapterCut(r);
  }) || !requestedEntry)abortSelectorEntry(r);
+}
+bool stageSelector(Runtime&r,P owner,void (^nativeUpdate)(void)){
+ const bool returningList=listStaging && cutTicket && &r==game;
+ const bool candidate=bridge.cover && bridge.runtime==&r && !cutTicket;
+ if(!returningList && !candidate)return false;
+ if(candidate && PMUnlockMediaBusy())return false; // Existing unlock modal keeps its original priority.
+ if(returningList && mode==Mode::returning)return true; // Wait for the exact AsyncOperation/scene handoff.
+ if(!cutChecked([&]{
+     int handle=sceneHandle(r,r.call(r.call(owner,"get_gameObject"),"get_scene"));
+     if(!scene::isSongSelector(r,handle) || handle!=activeCutScene(r))throw std::runtime_error("Chapter OS: unexpected return selector");
+     if(returningList && revision!=PMContentStore.shared.revision)throw std::runtime_error("Chapter OS: library changed during return");
+     if(candidate && pmunlock::selectorModalUpdate(r,owner)){abortSelectorEntry(r);return;}
+     if(!pmunlock::selectorAccess(r,owner)){
+         if(cutTicket)cancelRouteCut();else abortSelectorEntry(r);
+         return;
+     }
+     pmcontent::prepareSelectorItems(r,owner);
+     pmcontent::selectorLoadingBegin(r,owner);
+     // Verified 4.0.4: disableSongSelector skips Update's input branch, NOT its
+     // SetPosition tail. That tail publishes Loading.loadOver after cover readiness.
+     // Suppressing the entire original Update would deadlock this handoff.
+     {
+         struct Restore {Runtime&r;P owner;bool previous;~Restore(){cutChecked([&]{if(r.alive(owner))r.put(owner,"disableSongSelector",previous);});}};
+         Restore restore{r,owner,r.get<bool>(owner,"disableSongSelector")};
+         r.put(owner,"disableSongSelector",true);
+         if(nativeUpdate)nativeUpdate();
+     }
+     pmcontent::selectorFrame(r,owner);
+     pmcontent::selectorLoadingFrame(r,owner);
+     pmcontent::selectorDifficultyUI(r,owner);
+     if(returningList){
+         if(!targetPrepared && mode==Mode::list && selector==owner && selectorReady(r,owner) && pmcontent::selectorVisualReady(r,owner)){
+             if(++stableListFrames>=2)targetReady(r);
+         }else if(!targetPrepared)stableListFrames=0;
+     }else selectorFrame(r,owner);
+ })){
+     if(cutTicket)cancelRouteCut();else abortSelectorEntry(r);
+ }
+ return true; // This Update already ran, even if the cover completed/cancelled.
+
 }
 void detach(Runtime &r){
  if(&r!=game)return;
@@ -454,6 +520,7 @@ void detach(Runtime &r){
  program=nil;
  mode=Mode::idle;
 }
+bool transitionCoverActive(){return cutTicket!=0 || bridge.cover!=0;}
 bool transitioning(){return mode==Mode::listCut || mode==Mode::mapCut || mode==Mode::entering || mode==Mode::returning;}
 void sceneUnloaded(Runtime &r,int handle,bool owned){
  if(handle && handle==bridge.handle)resetEntryBridge(r);
@@ -465,6 +532,7 @@ void sceneUnloaded(Runtime &r,int handle,bool owned){
  // leave() already closed this graph. Keep its token until returned() can
  // compare and consume it, including when a different Single load wins.
  if(!visit || mode==Mode::returning)return;
+ cancelRouteCut();
  // Consume the visit before cleanup can trigger any more Unity callbacks.
  const uint64_t closingVisit=visit;
  visit=0;
@@ -477,12 +545,13 @@ void sceneUnloaded(Runtime &r,int handle,bool owned){
 }
 namespace {
 bool claims(Runtime &r,P button){
+ if(cutTicket && &r==game)return true;
  if(bridge.cover && bridge.runtime==&r)return true;
  if(&r!=game || mode==Mode::idle || mode==Mode::loading)return false;
  return mode!=Mode::list || toggle::owns(r,button);
 }
 void dispatchOwned(Runtime &r,P b){
- if(bridge.cover)return;
+ if(bridge.cover || cutTicket)return;
  if(mode==Mode::list){
   if(toggle::press(r,b)==toggle::Press::OpenOS){PMDiagnosticsWrite("Chapter OS: list switch pressed");mode=Mode::listPending;requestedEntry=generation;}
   return;

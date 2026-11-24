@@ -26,6 +26,8 @@ clang++ -std=c++17 -fobjc-arc -DPMDOOR_RUN_HOST_TEST -framework Foundation -fram
   python3 "$ROOT/tests/test_native_os_c8_waveform.py"
   clang -std=c99 -O2 "$ROOT/tests/PMChapterC9RouteTest.c" ./*.o -o chaptervm
   ./chaptervm
+  clang -std=c99 -O2 -UNDEBUG "$ROOT/tests/PMChapterEntryTransitionTest.c" ./*.o -o chaptervm
+  ./chaptervm
   python3 "$ROOT/tests/test_native_os_c9_route.py"
   clang++ -std=c++17 -O2 "$ROOT/tests/PMNativeOSMapTest.cpp" ./*.o -o nativemap
   ./nativemap

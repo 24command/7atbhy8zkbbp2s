@@ -69,3 +69,50 @@ class ManualSwitch404(unittest.TestCase):
             self.assertEqual(struct.unpack_from('<iq',obj(11,95),28),(0,7))  # Animator controller
             self.assertIn(struct.pack('<iq',0,4),obj(7,91))
             self.assertIn(b'CutOut',obj(4,74))  # authored animation clip
+
+    @unittest.skipUnless(os.getenv('PHIGROS_404_ANALYSIS'), 'requires local 4.0.4 player')
+    def test_disabled_selector_preserves_native_layout_tail(self):
+        # Keep the original Update trampoline: disableSongSelector gates input,
+        # but branches into the layout tail rather than returning from Update.
+        base = Path(os.environ['PHIGROS_404_ANALYSIS'])
+        dump = (base / 'dump.cs').read_text('utf-8-sig')
+        selector = re.search(r'^public class SongSelector : .*?^}', dump, re.M | re.S)[0]
+        self.assertIn('private bool disableSongSelector; // 0x360', selector)
+        self.assertRegex(selector, r'RVA: 0x15B830C[^\n]*\n\s*private void SetPosition\(\)')
+        with (base / 'UnityFramework').open('rb') as binary:
+            def word(pc):
+                binary.seek(pc)
+                return struct.unpack('<I', binary.read(4))[0]
+            # LDRB W8,[X19,#0x360]; TBNZ W8,#0,0x15B77C0.
+            self.assertEqual(word(0x15B6B44), 0x394D8268)
+            self.assertEqual(word(0x15B6B48), 0x370063C8)
+            target = 0x15B6B48 + (((word(0x15B6B48) >> 5) & 0x3fff) << 2)
+            self.assertEqual(target, 0x15B77C0)
+            self.assertEqual(word(target), 0xF9402660) # layout tail reads SongItems, not an epilogue
+            # Update's tail jump still calls SongSelector.SetPosition after
+            # restoring its stack; bypassing the whole trampoline loses this.
+            self.assertEqual(word(0x15B7884), 0x14000000 | ((0x15B830C-0x15B7884)//4))
+            # The layout loop calls SongItem.SetPosition for each visible item.
+            self.assertEqual(word(0x15B8494), 0x94000000 | ((0x15C1598-0x15B8494)//4))
+
+    def test_persistent_cut_does_not_retain_the_source_controller(self):
+        source = (IOS / 'PhiMod/Sources/PMNativeOSTransition.mm').read_text('utf-8-sig')
+        # Asset identity/timing remains verified above; this checks the new
+        # lifetime adapter rather than removed ManualCut/advanceCut spellings.
+        from test_native_os_boundary import definition
+        begin = definition(source, 'Ticket begin(')
+        self.assertIn('c->keep(clone(r,prefab))', begin)
+        self.assertIn('persist(r,c->visual)', begin)
+        self.assertIn('"CutOut"', begin)
+        self.assertIn('32766', begin)
+        ticks = definition(source, 'void tick(')
+        self.assertIn('c->r.alive(c->visual)', ticks)
+        self.assertNotIn('selector', ticks)
+        self.assertNotIn('sourcePrefab', ticks)
+        clip = definition(source, 'P clip(')
+        self.assertIn('"set_fireEvents",false', clip)
+        self.assertIn('"set_enabled",false', clip)
+        donor = definition(source, 'void rememberReveal(')
+        self.assertIn('r.klass("DestroyThis")', donor)
+        self.assertIn('"set_enabled",false', donor)
+        self.assertIn('"CutInFromBlack"', donor)

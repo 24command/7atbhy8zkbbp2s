@@ -14,6 +14,8 @@ void levelInfo(pmbridge::Runtime&,void*song,int slot,void*info);
 void selectorSceneLoaded(pmbridge::Runtime&, int handle);
 void selectorLoadingBegin(pmbridge::Runtime&,void*selector);
 void selectorLoadingFrame(pmbridge::Runtime&,void*selector);
+// Covered OS return: selected cover/background only; never starts preview audio.
+bool selectorVisualReady(pmbridge::Runtime&,void*selector);
 NSString*selectorThumbnailKey(NSString*identifier);
 NSString*gameplayChartID(pmbridge::Runtime&);
 void selectorLoadingEnd(pmbridge::Runtime&,bool finishSelected);

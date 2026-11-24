@@ -87,9 +87,13 @@ CGRect focusRect(CGRect bounds, double aspect, CGRect rect) {
     if (!(self = [super init])) return nil;
     _program = program;
     _current = [current copy];
-    if (!program.page->nodes) {
+    bool hasMapNodes=false;
+    for(int i=0;i<program.page->nodes;++i)
+        if(program.page->elements[i].screen!=program.page->entryTransition.screen)hasMapNodes=true;
+    if (!hasMapNodes) {
         _sheet = std::make_unique<PMOSPage>(*program.page);
         _sheet->screens = 1;
+        _sheet->initialScreen=0;_sheet->entryTransition.screen=-1;
         strcpy(_sheet->names[0], "cards");
         [self buildSheet];
     }

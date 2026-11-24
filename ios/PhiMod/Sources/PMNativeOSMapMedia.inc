@@ -20,6 +20,7 @@ struct Media {
     double started{};
     P lastVideoTexture{}; // borrowed from VideoPlayer and RawImage
     std::shared_ptr<GifVisit> gif;
+    readiness::FirstFrame first;
 };
 bool isAnimated(NSString *path) {
     NSString *ext = path.pathExtension.lowercaseString;
@@ -64,6 +65,7 @@ void requestGif(Media &media) {
             if (!image) throw std::runtime_error("Map GIF frame decode failed");
             @try { aspect = float(CGImageGetWidth(image))/CGImageGetHeight(image); png = encodeImage(image); }
             @finally { CGImageRelease(image); CGImageSourceRemoveCacheAtIndex(decoder->source,frame); }
+            if (!png.length) throw std::runtime_error("Map GIF frame encode failed");
         });
         size_t count = decoder->count;
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -100,52 +102,135 @@ std::shared_ptr<Media> buildMedia(Map &m, P tr, NSString *path, bool cover, bool
     }
     return media;
 }
-void syncMedia(Map &m, Media &media, bool play, double t) {
-    if (media.failed) return;
-    Runtime &r = m.r;
+// Explicit cancellation is also used by displayPage; a staged player is not
+// "playing", so cancellation must not depend on the old playing edge alone.
+void stopMedia(Map &m, Media &media) {
+    bool live = media.playing || media.first.started() || media.received || bool(media.gif);
+    media.playing = false;
+    media.gif.reset(); // Invalidates decoder queue completions through their weak owner.
+    media.first.reset();
+    media.lastVideoTexture = nullptr; media.received = false;
+    if (!live) return;
     P raw = m.get(media.raw), player = m.get(media.player);
-    if (play != media.playing) {
-        media.playing = play;
-        if (!play) {
-            media.gif.reset(); media.lastVideoTexture = nullptr; media.received = false;
-            flag(r,raw,"set_enabled",false);
-            r.call(raw,"set_texture",{"UnityEngine.Texture"},{nullptr});
-            if (player) r.call(player,"Stop");
+    flag(m.r,raw,"set_enabled",false);
+    m.r.call(raw,"set_texture",{"UnityEngine.Texture"},{nullptr});
+    if (player) m.r.call(player,"Stop");
+}
+void failMedia(Map &m, Media &media, NSString *reason) {
+    if (media.failed) return;
+    media.failed = true; media.playing = false;
+    media.first.phase = readiness::Phase::Failed;
+    media.gif.reset();
+    PMDiagnosticsWrite([[NSString stringWithFormat:@"Map media fallback (%@): %@", media.path, reason] UTF8String]);
+    // Leave an uploaded frame (or authored still/background beneath the RawImage)
+    // in place. In particular, do not destroy the map on a bad media URL/codec.
+    P player = m.get(media.player);
+    if (player) checked([&]{ m.r.call(player,media.received ? "Pause" : "Stop"); });
+    if (!media.received) checked([&]{
+        flag(m.r,m.get(media.raw),"set_enabled",false);
+        m.r.call(m.get(media.raw),"set_texture",{"UnityEngine.Texture"},{nullptr});
+    });
+}
+void attachMedia(Map &m, Media &media, P texture, float aspect) {
+    m.r.call(m.get(media.fitter),"set_aspectRatio",{"System.Single"},{&aspect});
+    m.r.call(m.get(media.raw),"set_texture",{"UnityEngine.Texture"},{texture});
+    if (!media.received) flag(m.r,m.get(media.raw),"set_enabled",true);
+    media.received = true;
+}
+void warmMedia(Map &m, Media &media, bool expired) {
+    if (media.failed || media.first.held()) return;
+    if (media.first.poll(false,false,expired) == readiness::Action::Fail) {
+        failMedia(m,media,@"first-frame deadline (3s)"); return;
+    }
+    NSString *reason = nil;
+    if (!checked([&]{
+        Runtime &r = m.r;
+        P player = m.get(media.player);
+        if (!media.first.started()) {
+            auto action = media.first.begin(player != nullptr);
+            if (action == readiness::Action::Prepare) {
+                NSDictionary *attrs = [NSFileManager.defaultManager attributesOfItemAtPath:media.path error:nil];
+                if (![attrs[NSFileType] isEqual:NSFileTypeRegular] || ![attrs[NSFileSize] unsignedLongLongValue])
+                    throw std::runtime_error("Map video is missing or empty");
+                r.call(player,"Prepare");
+            } else media.gif = std::make_shared<GifVisit>();
+        }
+        if (player) {
+            if (media.first.phase == readiness::Phase::Preparing) {
+                bool prepared = r.unbox<bool>(r.call(player,"get_isPrepared"));
+                if (media.first.poll(prepared,false,false) == readiness::Action::Play) r.call(player,"Play");
+                return; // Prepared/allocated texture is not a decoded frame.
+            }
+            P texture = r.call(player,"get_texture");
+            if (!texture || r.unbox<int64_t>(r.call(player,"get_frame")) < 0) return;
+            int w = r.unbox<int>(r.call(texture,"get_width")), h = r.unbox<int>(r.call(texture,"get_height"));
+            if (w < 1 || h < 1) return;
+            attachMedia(m,media,texture,float(w)/h);
+            media.lastVideoTexture = texture;
+            r.call(player,"Pause"); // Keep the decoder and texture, never Stop at reveal.
+        } else {
+            auto &g = *media.gif;
+            if (g.failed) { failMedia(m,media,@"first GIF frame decode failed"); return; }
+            if (g.pending) return;
+            if (!g.ready) { requestGif(media); return; }
+            P texture = m.get(media.texture);
+            upload(r,texture,g.ready,false);
+            attachMedia(m,media,texture,g.aspect);
+            g.ready = nil; g.due = g.delay; // Authored t=0; never charge hidden wall time.
+            g.frame = playback::nextFrame(g.frame,g.count,media.loop);
+            g.finished = g.frame == g.count;
+            // Do not request/advance a second frame while covered.
+        }
+        media.first.poll(false,true,false);
+    },&reason)) failMedia(m,media,reason);
+}
+void syncMedia(Map &m, Media &media, bool play, double t) {
+    if (!play) { stopMedia(m,media); return; }
+    if (media.failed) return;
+    NSString *reason = nil;
+    if (!checked([&]{
+        Runtime &r = m.r;
+        P player = m.get(media.player);
+        if (media.first.release()) {
+            media.playing = true; media.started = t; media.slowStartReported = false;
+            if (player) r.call(player,"Play"); // Resume the paused first frame, no Stop/Prepare.
+            else {
+                auto &g = *media.gif;
+                g.due = t + g.delay;
+                if (!g.finished) requestGif(media);
+            }
             return;
         }
-        media.started = t;
-        media.slowStartReported = false;
-        if (player) r.call(player,"Play");
-        else media.gif = std::make_shared<GifVisit>();
-    }
-    if (!play) return;
-    P texture = nullptr;
-    float aspect = 1;
-    if (player) {
-        texture = r.call(player,"get_texture");
-        if (!texture && !media.received && !media.slowStartReported && t-media.started > 15) {
-            PMDiagnosticsWrite([[NSString stringWithFormat:@"Map VideoPlayer still waiting for %@",media.path.lastPathComponent] UTF8String]);
-            media.slowStartReported = true;
+        if (!media.playing) {
+            media.playing = true; media.started = t; media.slowStartReported = false;
+            if (player) r.call(player,"Play");
+            else media.gif = std::make_shared<GifVisit>();
         }
-        if (!texture || texture == media.lastVideoTexture) return;
-        int w = r.unbox<int>(r.call(texture,"get_width")), h = r.unbox<int>(r.call(texture,"get_height"));
-        if (w < 1 || h < 1) return;
-        aspect = float(w)/h; media.lastVideoTexture = texture;
-    } else {
-        auto &g = *media.gif;
-        if (g.failed) { media.failed = true; media.gif.reset(); return; }
-        if (g.finished || g.pending) return;
-        if (!g.ready) { requestGif(media); return; }
-        if (t < g.due) return;
-        texture = m.get(media.texture); aspect = g.aspect;
-        upload(r,texture,g.ready,false);
-        g.ready = nil; g.due = t + g.delay;
-        g.frame = playback::nextFrame(g.frame,g.count,media.loop);
-        g.finished = g.frame == g.count;
-        if (!g.finished) requestGif(media);
-    }
-    r.call(m.get(media.fitter),"set_aspectRatio",{"System.Single"},{&aspect});
-    r.call(raw,"set_texture",{"UnityEngine.Texture"},{texture});
-    if (!media.received) flag(r,raw,"set_enabled",true);
-    media.received = true;
+        P texture = nullptr;
+        float aspect = 1;
+        if (player) {
+            texture = r.call(player,"get_texture");
+            if (!texture && !media.received && !media.slowStartReported && t-media.started > 15) {
+                PMDiagnosticsWrite([[NSString stringWithFormat:@"Map VideoPlayer still waiting for %@",media.path.lastPathComponent] UTF8String]);
+                media.slowStartReported = true;
+            }
+            if (!texture || texture == media.lastVideoTexture) return;
+            int w = r.unbox<int>(r.call(texture,"get_width")), h = r.unbox<int>(r.call(texture,"get_height"));
+            if (w < 1 || h < 1) return;
+            aspect = float(w)/h; media.lastVideoTexture = texture;
+        } else {
+            auto &g = *media.gif;
+            if (g.failed) { failMedia(m,media,@"GIF frame decode failed"); return; }
+            if (g.finished || g.pending) return;
+            if (!g.ready) { requestGif(media); return; }
+            if (t < g.due) return;
+            texture = m.get(media.texture); aspect = g.aspect;
+            upload(r,texture,g.ready,false);
+            g.ready = nil; g.due = t + g.delay;
+            g.frame = playback::nextFrame(g.frame,g.count,media.loop);
+            g.finished = g.frame == g.count;
+            if (!g.finished) requestGif(media);
+        }
+        attachMedia(m,media,texture,aspect);
+    },&reason)) failMedia(m,media,reason);
 }

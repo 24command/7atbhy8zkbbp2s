@@ -39,10 +39,12 @@ struct Map {
     Visit id{};
     Activate activate = nil;
     layout::PendingTap tap;
+    readiness::Ticket preparation;
     Handle root{}, rootGroup{}, orphan{};
     std::vector<Handle> handles, assets;
     std::vector<Item> items;
     int layer{}, screens{}, page{};
+    int transitionScreen = -1;
     Handle rootRect{}, pointer{}, starts{}, ends{};
     int drag = -1;
     Point grab{}, dragSize{}, pieceSize{};
@@ -61,6 +63,7 @@ struct Map {
 };
 std::unique_ptr<Map> current;
 Visit sequence{};
+double wallTime() { return std::chrono::duration<double>(Clock::now().time_since_epoch()).count(); }
 
 P add(Runtime &r, P obj, const char *ns, const char *name) {
     return r.call(obj, "AddComponent", {"System.Type"}, {r.type_get_object(r.class_get_type(r.type(ns, name)))});
@@ -219,10 +222,15 @@ void applyPose(Map &m, Item &item, layout::Pose pose) {
 int preflight(const PMOSPage &page, NSArray<NSDictionary *> *models, NSMutableSet<NSString *> *maskPaths) {
     if (page.nodes <= 0 || page.nodes > PMOSMaxNodes || models.count != NSUInteger(page.nodes) ||
         page.screens <= 0 || page.screens > PMOSMaxScreens) throw std::runtime_error("Map declaration/model count mismatch");
+    int transition = layout::reservedScreen(page);
+    if (transition >= page.screens || transition < -1 || page.initialScreen < -1 ||
+        (page.initialScreen >= 0 && !layout::canDisplay(page.screens,transition,page.initialScreen)))
+        throw std::runtime_error("Map has an invalid initial or reserved screen");
     NSMutableSet<NSString *> *paths = [NSMutableSet set];
     NSUInteger animatedNodes = 0;
     for (int i = 0; i < page.nodes; ++i) {
         const auto &n = page.elements[i];
+        if (layout::reserved(page,n.screen)) continue; // Owned by the transition renderer, not this map.
         if (n.screen < 0 || n.screen >= page.screens || n.parent < -1 || n.parent >= i ||
             (n.parent >= 0 && (page.elements[n.parent].screen != n.screen || page.elements[n.parent].kind != PMOSFrame)))
             throw std::runtime_error("Map node has invalid screen or parent");
@@ -241,6 +249,7 @@ int preflight(const PMOSPage &page, NSArray<NSDictionary *> *models, NSMutableSe
     // Each distinct named still contributes one extra texture to the same pixel budget.
     for (int i = 0; i < page.nodes; ++i) {
         const auto &n = page.elements[i];
+        if (layout::suppressed(page,n)) continue;
         if (!n.tapFace[0] || !n.motion.tapTime || !n.motion.tapFlash) continue;
         if (n.tapFaceIndex <= i || n.tapFaceIndex >= page.nodes)
             throw std::runtime_error("Invalid map flash face");
@@ -284,6 +293,8 @@ void caption(Map &m, P parent, P font, const char *label) {
 void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *models, P font, int pixels, NSSet<NSString *> *maskPaths) {
     Runtime &r = m.r;
     m.screens = page.screens;
+    m.transitionScreen = layout::reservedScreen(page);
+    m.page = page.initialScreen; // -1 is the caller's card sheet, never the reserved timeline.
     m.layer = r.unbox<int>(r.call(r.call(parent, "get_gameObject"), "get_layer"));
     Object root = child(m, parent, "PhiMod Authored Map", true);
     m.rootRect = root.rect;
@@ -295,8 +306,8 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
     NSMutableSet *readable = [NSMutableSet set];
     bool hasBacking = false;
     for (int i = 0; i < page.nodes; ++i) {
+        if (layout::suppressed(page,page.elements[i])) continue;
         NSString *path = models[i][@"path"];
-        if (page.elements[i].songSuppressed) continue;
         if (page.elements[i].dropIndex >= 0 && !hasBacking) {
             P backing = add(r,m.get(root.go),"UnityEngine.UI","Image");
             hasBacking = true;
@@ -309,7 +320,7 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
     for (int i = 0; i < page.nodes; ++i) @autoreleasepool {
         const PMOSNode &n = page.elements[i];
         Item item;
-        if (n.songSuppressed) {
+        if (layout::suppressed(page,n)) {
             item.active = false;
             m.items.push_back(item); // Reserve the index without creating Unity objects.
             continue;
@@ -413,7 +424,11 @@ void refresh(Map &m, double t) {
             flag(m.r, m.get(item.object), "SetActive", active);
             item.active = active;
         }
-        if (item.media) syncMedia(m, *item.media, active && m.visible && m.running, t);
+        if (item.media) {
+            auto mode = readiness::mediaMode(active,m.preparation.active(),m.visible,m.running);
+            if (mode == readiness::MediaMode::Warm) warmMedia(m, *item.media, m.preparation.expired(wallTime()));
+            else syncMedia(m, *item.media, mode == readiness::MediaMode::Play, t);
+        }
         if (!active) continue;
         item.shownSince = std::max({item.start, item.manualSince, parent ? parent->shownSince : 0.});
         if (item.motion.enter || item.motion.bob || item.motion.tapTime) {
@@ -480,12 +495,14 @@ Visit open(Runtime &r, P parent, const PMOSPage &page, NSArray<NSDictionary *> *
     return sequence;
 }
 bool displayPage(Runtime &r, Visit id, int screen) {
-    if (!matches(r,id) || screen < 0 || screen >= current->screens) return false;
+    if (!matches(r,id) || !layout::canDisplay(current->screens,current->transitionScreen,screen)) return false;
     return change(r,id,[&](Map &m){
         m.tap.cancel();
         cancelDrag(m);
+        if (m.preparation.active() && !m.visible) flag(r,m.get(m.root),"SetActive",false);
+        m.preparation.invalidate();
         for (auto &item : m.items) {
-            if (item.media) syncMedia(m, *item.media, false, 0);
+            if (item.media) stopMedia(m, *item.media);
             item.manualSince = 0;
         }
         m.page = screen;
@@ -501,9 +518,49 @@ bool setElement(Runtime &r, Visit id, int index, bool visible) {
         item.manual = visible;
     });
 }
+bool prepare(Runtime &r, Visit id, uint64_t token) {
+    if (!matches(r,id) || !token || current->visible || current->running || current->elapsed != 0) return false;
+    return change(r,id,[&](Map &m){
+        m.preparation.begin(token,m.page,wallTime());
+        m.tap.cancel(); cancelDrag(m);
+        m.input = false;
+        flag(r,m.get(m.rootGroup),"set_interactable",false);
+        flag(r,m.get(m.rootGroup),"set_blocksRaycasts",false);
+        float alpha = 0;
+        r.call(m.get(m.rootGroup),"set_alpha",{"System.Single"},{&alpha});
+        // VideoPlayer Prepare/Play needs an active hierarchy. Rendering stays
+        // suppressed even if the transition cover has not been drawn yet.
+        flag(r,m.get(m.root),"SetActive",true);
+    });
+}
+ReadinessResult pollPrepared(Runtime &r, Visit id, uint64_t token) {
+    if (!matches(r,id) || !current->preparation.owns(token,current->page)) return {};
+    ReadinessResult result;
+    if (!checked([&]{
+        Map &m = *current;
+        refresh(m,0); // Deliberately NOT tick: no input/Lua and no authored time.
+        unsigned total = 0, ready = 0, failed = 0;
+        for (auto &item : m.items) {
+            if (!item.object || !item.active || !item.media) continue;
+            ++total;
+            if (item.media->failed) ++failed;
+            else if (item.media->first.held()) ++ready;
+        }
+        result = readiness::result(total,ready,failed);
+    })) { close(r,id); return {}; }
+    return result;
+}
 bool present(Runtime &r, Visit id, bool visible, bool runClock, bool input) {
     return change(r,id,[&](Map &m){
+        bool hierarchyWasActive = m.visible || m.preparation.active();
         bool running = visible && runClock;
+        if (running && m.preparation.active()) {
+            for (auto &item : m.items) {
+                if (item.media && item.media->first.started() && !item.media->first.held() && !item.media->failed)
+                    failMedia(m,*item.media,@"revealed before first frame was ready");
+            }
+            m.preparation.invalidate();
+        }
         if (m.running != running) {
             m.elapsed = m.time(); m.resumed = Clock::now(); m.running = running;
         }
@@ -513,7 +570,10 @@ bool present(Runtime &r, Visit id, bool visible, bool runClock, bool input) {
         m.input = acceptInput;
         flag(r, m.get(m.rootGroup), "set_interactable", m.input);
         flag(r, m.get(m.rootGroup), "set_blocksRaycasts", m.input);
-        if (m.visible != visible) flag(r, m.get(m.root), "SetActive", visible);
+        float alpha = visible ? 1.f : 0.f;
+        r.call(m.get(m.rootGroup),"set_alpha",{"System.Single"},{&alpha});
+        bool hierarchyActive = visible || m.preparation.active();
+        if (hierarchyWasActive != hierarchyActive) flag(r, m.get(m.root), "SetActive", hierarchyActive);
         m.visible = visible;
     });
 }

@@ -23,6 +23,25 @@ jobs:
           echo "Build host: $(uname -m); framework target: iOS arm64"
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
+      - name: Syntax-check native OS transitions
+        run: |
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          xcrun --sdk iphoneos clang++ -std=c++17 -fobjc-arc -fsyntax-only \
+            -arch arm64 -isysroot "$SDK" -miphoneos-version-min=15.0 \
+            -Iios/PhiMod/Vendor \
+            ios/PhiMod/Sources/PMNativeOSTransition.mm \
+            ios/PhiMod/Sources/PMNativeOSCoordinator.mm \
+            ios/PhiMod/Sources/PMNativeOSEntryTimeline.mm \
+            ios/PhiMod/Sources/PMNativeOSMap.mm \
+            ios/PhiMod/Sources/PMNativeOSProgram.mm \
+            ios/PhiMod/Sources/PMNativeOSActions.mm \
+            ios/PhiMod/Sources/PMUnlockMedia.mm \
+            ios/PhiMod/Sources/PMHookBackend.mm \
+            ios/PhiMod/Sources/PMContentRuntime.mm
+      - name: Test native OS transition boundaries
+        run: |
+          python3 -m unittest discover -s ios/tests -p 'test_native_os*.py'
+          python3 ios/tests/test_transition_media.py
       - name: Test portable gameplay core
         run: bash ios/tests/run_core_tests.sh
       - name: Test generated arm64 judge trampolines

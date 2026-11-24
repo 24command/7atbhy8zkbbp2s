@@ -18,6 +18,8 @@ struct PMOSSession {
     lua_State *L;
     size_t bytes;
     int songs, nodes, screens;
+    int transitionScreen; /* Reserved; never a map/callback destination. */
+    char entryUnsupported[PMOSMaxNodes][64]; /* Deferred, transition-only field validation. */
     unsigned char *hiddenSongs;
     char names[PMOSMaxScreens][PMOSScreenNameSize];
     ClickTarget clicks[PMOSMaxNodes];
@@ -248,12 +250,14 @@ static int actionSong(lua_State *L, const PMOSSession *s, const char *action) {
 }
 
 #include "PMChapterUnlockAnimation.inc"
+#include "PMChapterEntryTransition.inc"
 
 typedef struct { const char *source; size_t length; } Script;
 
 static int evaluate(lua_State *L) {
     const Script *script = lua_touserdata(L, 1);
     lua_pushcfunction(L,onEnterMovie); lua_setglobal(L,"onEnterMovie");
+    lua_pushcfunction(L, declareEntryTransition); lua_setglobal(L, "entryTransition");
     lua_pushcfunction(L, nativeChapter); lua_setglobal(L, "nativeChapter");
     lua_pushcfunction(L, home);
     lua_setglobal(L, "home");
@@ -281,6 +285,7 @@ static int evaluate(lua_State *L) {
     if (luaL_loadbufferx(L, script->source, script->length, "@os.lua", "t")) return lua_error(L);
     lua_call(L, 0, 0);
     resolveLinks(L);
+    resolveEntryTransition(L, declarationPage(L));
     resolveChallengeBindings(L, declarationPage(L));
     resolveSongVisibility(session(L), declarationPage(L));
     PMOSSession *s=session(L);
@@ -353,6 +358,7 @@ PMOSSession *PMOSStartWithProgress(const char *src, size_t len, int songs,
     memset(page, 0, sizeof(*page));
     page->nativeChapter = 9;
     page->nativePhase = 1;
+    page->initialScreen = page->entryTransition.screen = -1;
     if (!src || !len || len > SourceLimit || songs < 0) {
         snprintf(page->error, sizeof(page->error), "invalid OS input");
         return NULL;
@@ -363,6 +369,7 @@ PMOSSession *PMOSStartWithProgress(const char *src, size_t len, int songs,
         PMOSStop(s);
         return NULL;
     }
+    s->transitionScreen = -1;
     s->progress = callbacks;
     s->songs = songs;
     s->declaring = page;
@@ -381,6 +388,7 @@ PMOSSession *PMOSStartWithProgress(const char *src, size_t len, int songs,
         strcpy(s->challenges[i].id, page->challenges[i].id);
         s->challenges[i].state = page->challenges[i].songSuppressed ? PMOSChallengeLocked : page->challenges[i].state;
     }
+    s->transitionScreen = page->entryTransition.screen;
     s->nodes = page->nodes;
     s->screens = page->screens;
     memcpy(s->names, page->names, sizeof(s->names));
@@ -402,6 +410,7 @@ static int actionScreen(lua_State *L, PMOSSession *s) {
     word(L, -1, name, sizeof(name));
     int dest = findScreen(s->names, s->screens, name);
     if (dest < 0) return luaL_error(L, "unknown target screen: %s", name);
+    if (dest == s->transitionScreen) return luaL_error(L, "entryTransition screen is reserved: %s", name);
     return dest;
 }
 
@@ -494,6 +503,10 @@ int PMOSClick(PMOSSession *s, int node, PMOSAction *out) {
     out->listSwitchHidden = s->listSwitchHidden;
     out->selectedLifeTier=PMChapterLifeRead(s->lifeCeiling,s->lifeChoice).selected;
     ClickTarget *target = &s->clicks[node];
+    if (target->screen == s->transitionScreen) {
+        snprintf(out->error, sizeof(out->error), "entryTransition screen is noninteractive");
+        return 0;
+    }
     if (target->songSuppressed) return 1;
     if (!target->ref) {
         out->challenge = target->challenge;

@@ -1,5 +1,6 @@
 #import "PMNativeOSProgram.h"
 #import "PMChapterArt.h"
+#import "PMDiagnostics.h"
 #import "PMChapterEditing.h"
 #include "PMContentRuntime.hpp"
 #import "PMChapterScript.h"
@@ -9,6 +10,9 @@
 #import "PMStockIntroResolver.hpp"
 #import "PMStoryCueRun.h"
 #import <UIKit/UIGeometry.h>
+#import <AVFoundation/AVFoundation.h>
+#include <cmath>
+#include <algorithm>
 #include <memory>
 #include <utility>
 
@@ -266,9 +270,33 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
         cards[i] = [card copy];
     }
     [cards removeObjectsAtIndexes:suppressedCards];
+    auto transitionFailure = [&](NSString *message) {
+        if (_transitionError) return;
+        _transitionError = [message copy];
+        PMDiagnosticsWrite([NSString stringWithFormat:@"Chapter OS: entry transition unavailable (%@); using native covered entry", message].UTF8String);
+    };
+    const PMOSEntryTransition &entry = plan->entryTransition;
+    if (entry.kind == PMOSEntryTransitionVideo) {
+        NSString *path = PMOSEntryVideoPath(chapterDir, [NSString stringWithUTF8String:entry.src]);
+        if (!path || ![[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil][NSFileType]
+                         isEqual:NSFileTypeRegular]) {
+            transitionFailure([NSString stringWithFormat:@"Missing or invalid transition video: %s", entry.src]);
+        } else {
+            // This initializer runs on the existing background VM queue. Reject
+            // an unbounded/unsupported intrinsic timeline before covering the UI.
+            AVURLAsset *asset=[AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:path] options:nil];
+            double seconds=CMTimeGetSeconds(asset.duration);
+            double effective=entry.hasDuration?std::min(entry.duration,seconds):seconds;
+            if(![asset tracksWithMediaType:AVMediaTypeVideo].count || !std::isfinite(seconds) || seconds<=0 ||
+               !std::isfinite(effective) || effective<=0 || effective>PMOSEntryTransitionMaxSeconds)
+                transitionFailure(@"Invalid transition video or intrinsic duration exceeds 600 seconds; supply a valid duration cutoff");
+            else _transitionPath = [path copy];
+        }
+    }
     NSMutableArray *nodes = [NSMutableArray new];
     for (int i = 0; i < plan->nodes; i++) {
         const PMOSNode &n = plan->elements[i];
+        BOOL transitionNode = entry.kind == PMOSEntryTransitionTimeline && n.screen == entry.screen;
         if (n.songSuppressed) {
             [nodes addObject:@{}]; // VM callbacks, parents and drag targets use declaration indices.
             continue;
@@ -302,15 +330,24 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
             model[@"dropIndex"] = @(n.dropIndex);
             model[@"alphaHit"] = @(n.alphaHit != 0);
         }
-        if (n.cover)
-            model[@"path"] = bySong[order[n.cover - 1]][@"art"];
+        if (n.cover) {
+            NSString *path = bySong[order[n.cover - 1]][@"art"];
+            if (transitionNode && (!path ||
+                ![[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil][NSFileType] isEqual:NSFileTypeRegular])) {
+                transitionFailure([NSString stringWithFormat:@"Missing or invalid transition cover: %d", n.cover]);
+            } else {
+                model[@"path"] = path;
+            }
+        }
         if (n.src[0]) {
             NSString *path = PMOSArtPath(chapterDir, [NSString stringWithUTF8String:n.src]);
             if (!path || ![[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil][NSFileType]
                              isEqual:NSFileTypeRegular]) {
-                return fail([NSString stringWithFormat:@"Missing or invalid image: %s", n.src]);
+                if (!transitionNode) return fail([NSString stringWithFormat:@"Missing or invalid image: %s", n.src]);
+                transitionFailure([NSString stringWithFormat:@"Missing or invalid transition image: %s", n.src]);
+            } else {
+                model[@"path"] = path;
             }
-            model[@"path"] = path;
         }
         [nodes addObject:[model copy]];
     }

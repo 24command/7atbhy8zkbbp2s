@@ -51,10 +51,33 @@ static int setCanvas(lua_State *L){PMOSPage *p=declarationPage(L);double w=luaL_
 static int screen(lua_State *L){PMOSPage *p=declarationPage(L);char name[64];word(L,1,name,sizeof(name));
  if(p->screens>=PMOSMaxScreens)return luaL_error(L,"too many screens");for(int i=0;i<p->screens;i++)if(!strcmp(p->names[i],name))return luaL_error(L,"duplicate screen: %s",name);
  strcpy(p->names[p->screens++],name);return 0;}
+/* A timeline may be declared after its screen. Remember unsupported fields at
+   node declaration time, but preserve the ordinary map parser's permissiveness. */
+static void entryNodeFields(lua_State *L, int pos, int kind) {
+ const char *common[]={"id","parent","x","y","w","h","start","duration","fade","color","label","hidden",
+  "enter","bob","bobPeriod","tapTime","tapScale","tapFlash","tapFace","dropTarget","alphaHit",
+  "to","open","challenge","onClick"};
+ const char *image[]={"src","cover","fit","loop"};
+ lua_pushnil(L);
+ while(lua_next(L,1)){
+  const char *key=lua_type(L,-2)==LUA_TSTRING?lua_tostring(L,-2):NULL;
+  int known=0;
+  if(key && strlen(key)==lua_rawlen(L,-2)){
+   for(size_t i=0;i<sizeof(common)/sizeof(*common);++i)if(!strcmp(key,common[i]))known=1;
+   if(kind==PMOSImage)for(size_t i=0;i<sizeof(image)/sizeof(*image);++i)if(!strcmp(key,image[i]))known=1;
+  }
+  if(!known){
+   snprintf(session(L)->entryUnsupported[pos],sizeof(session(L)->entryUnsupported[pos]),"%s",key&&key[0]?key:"<non-string or empty key>");
+   lua_pop(L,2);return;
+  }
+  lua_pop(L,1);
+ }
+}
 static int layoutNode(lua_State *L){PMOSPage *p=declarationPage(L);luaL_checktype(L,1,LUA_TTABLE);if(p->nodes>=PMOSMaxNodes)return luaL_error(L,"too many layout elements");
  if(!p->screens)strcpy(p->names[p->screens++],"main");
  int pos=p->nodes;PMOSNode *n=&p->elements[pos];n->kind=(int)lua_tointeger(L,lua_upvalueindex(1));n->screen=p->screens-1;n->parent=n->dest=-1;
  n->dropIndex=-1;
+ entryNodeFields(L,pos,n->kind);
  readMotion(L,n);
  fieldText(L,"dropTarget",n->dropTarget,sizeof(n->dropTarget));
  n->alphaHit=fieldBool(L,"alphaHit");

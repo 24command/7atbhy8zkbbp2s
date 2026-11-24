@@ -605,7 +605,7 @@ void observeSelector(Runtime&r,P selector){
  int index=r.get<int>(selector,"nowSong"),slot=r.get<int>(selector,"nowLevel");float position=r.get<float>(selector,"nowSongSelectorValue");
  // Native transition flags can outlive positional movement while assets load.
  // Settle on actual position/selection changes and touches, not asset-dependent flags.
- bool moving=r.unbox<int>(r.stat(r.type("UnityEngine","Input"),"get_touchCount"))>0;
+ bool moving=!pmnativecoordinator::transitionCoverActive() && r.unbox<int>(r.stat(r.type("UnityEngine","Input"),"get_touchCount"))>0;
  bool changed=index!=loadingSong||slot!=loadingSlot||std::fabs(position-loadingPosition)>.001f;
  if(changed||moving)selectionChangedAt=selectorNow();
  selectorDragging=moving;loadingPosition=position;loadingSong=index;loadingSlot=slot;
@@ -718,9 +718,23 @@ void selectorLoadingFrame(Runtime&r,P selector){
  if(selectorDragging||selectorNow()-selectionChangedAt<.30)return;
  updateVariantCover(r,selector);
  // At most one expensive upload/decode per frame; cover before preview audio.
- for(bool music:{false,true})for(auto&entry:selectorAssets)if(entry.second.music==music&&selectedAssetIDs.count(entry.second.identifier)){
+ for(bool music:{false,true})for(auto&entry:selectorAssets)if(entry.second.music==music&&(!music||!pmnativecoordinator::transitionCoverActive())&&selectedAssetIDs.count(entry.second.identifier)){
   P asset=entry.first;completeSelectorAsset(r,asset);return;
  }
+}
+bool selectorVisualReady(Runtime&r,P selector){
+ if(target(r,loadingSelector)!=selector || r.get<bool>(selector,"exit") || r.get<bool>(selector,"isMoving"))return false;
+ P items=r.call(selector,"get_SongItems");int index=r.get<int>(selector,"nowSong");
+ if(index<0 || index>=r.count(items))return false;
+ observeSelector(r,selector);updateVariantCover(r,selector);
+ for(auto &asset:selectorAssets)if(!asset.second.music && selectedAssetIDs.count(asset.second.identifier))return false;
+ P item=r.at(items,index);
+ for(const char *field:{"cover","backgroundImage"}){
+     P loader=r.get<P>(item,field);
+     if(r.alive(loader) && r.unbox<bool>(r.call(r.call(loader,"get_gameObject"),"get_activeInHierarchy")) &&
+        !r.unbox<bool>(r.call(loader,"get_ImageLoaded")))return false;
+ }
+ return true;
 }
 P sparseSelector=nullptr,sparseItem=nullptr;int sparseSlot=-1,sparseCount=-1;NSUInteger sparseRevision=NSUIntegerMax;
 struct SparseButton{uint32_t root;bool previous,desired;};std::vector<SparseButton>sparseButtons;

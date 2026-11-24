@@ -1,11 +1,26 @@
 #pragma once
 #include "../Core/PMChapterVM.h"
+#include "PMNativeOSMapReadiness.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 
 namespace pmnativeosmap {
 namespace layout {
+inline int reservedScreen(const PMOSPage &page) {
+    return page.entryTransition.declared && page.entryTransition.kind == PMOSEntryTransitionTimeline
+        ? page.entryTransition.screen : -1;
+}
+inline bool reserved(const PMOSPage &page, int screen) {
+    int index = reservedScreen(page);
+    return index >= 0 && screen == index;
+}
+inline bool suppressed(const PMOSPage &page, const PMOSNode &node) {
+    return node.songSuppressed || reserved(page,node.screen);
+}
+inline bool canDisplay(int screens, int transitionScreen, int screen) {
+    return screen >= 0 && screen < screens && screen != transitionScreen;
+}
 struct Point { float x, y; };
 struct Anchors { Point low, high; };
 inline Anchors anchors(const PMOSNode &n) {
@@ -92,13 +107,35 @@ using Activate = void (^)(Visit, int nodeIndex);
 // map scene Canvas (with GraphicRaycaster/EventSystem). The caller owns routing.
 // font is a borrowed UnityEngine.Font used for visible authored labels. models
 // are indexed exactly like page.elements and supply the already resolved paths.
-// open builds hidden. Zero signals an acquisition error, with details in reason.
+// open builds hidden at page.initialScreen; -1 leaves the map empty for the
+// caller-owned card sheet. Reserved timeline nodes retain indices as empty items
+// and never acquire map resources. Zero signals an acquisition error in reason.
 // GIF and silent MP4 use the scene canvas. Drag releases dispatch the same node
 // callback as buttons, after the piece has been placed on its declared target.
 Visit open(Runtime &, void *parent, const PMOSPage &page, NSArray<NSDictionary *> *models,
            void *font, Activate activate, NSString **reason = nullptr);
-bool displayPage(Runtime &, Visit, int screen); // reset page time, retain visibility overrides
+bool displayPage(Runtime &, Visit, int screen); // reset time, retain overrides; reject reserved timeline screen
 bool setElement(Runtime &, Visit, int nodeIndex, bool visible);
+// Optional covered-transition staging. Call after open/displayPage, before any
+// authored time has run, with visible=false and a nonzero transition token.
+// prepare keeps the hierarchy active but alpha=0, clock=0 and input disabled.
+// Only t=0 active media (including zero-alpha fades) participate. The caller must
+// keep the private scene/canvas alive and active. Same-token prepare is idempotent;
+// a new token replaces ownership without restarting already warmed media.
+// pollPrepared uploads/holds first frames; it never runs input or advances time.
+// A 3s monotonic deadline produces terminal Fallback (with counts), not a hang.
+// Invalid means wrong visit/token/page or consumed/cancelled staging; never reveal
+// based on Invalid. Ready/Fallback are revealable; total==0 is immediately Ready.
+// present(visible=true, runClock=true, ...) consumes the ticket and resumes held
+// media without Stop/Prepare. Early reveal abandons pending media to fallback.
+// present(..., visible, false, false) retains staging/held frames, including while
+// shown frozen under the cover. Failure is sticky for that media for this Visit;
+// its acquired frame/authored background is retained, not a synthesized poster.
+// displayPage and close invalidate the ticket; ordinary show/hide semantics are
+// unchanged after reveal. No ownership of caller's transition/token is retained.
+bool prepare(Runtime &, Visit, uint64_t transitionToken);
+ReadinessResult pollPrepared(Runtime &, Visit, uint64_t transitionToken);
+
 // Pause for background/detail/reveal. A frozen map may remain visible underneath
 // a reveal. While awaiting a Lua action, pass input=false to prevent repeat input.
 bool present(Runtime &, Visit, bool visible, bool runClock, bool input);

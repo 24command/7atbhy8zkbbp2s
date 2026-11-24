@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from test_native_os_transition_support import compile_cpp, run_cpp
 
 SRC = Path(__file__).resolve().parents[1] / 'PhiMod/Sources'
 COORD = (SRC / 'PMNativeOSCoordinator.mm').read_text(encoding='utf-8-sig')
@@ -116,6 +117,10 @@ Runtime *game=&runtime;
 int handoffScene=0, actions=0, closes=0, releases=0, ownedButton, retailButton;
 P selector=nullptr, program=nullptr, chapter=nullptr;
 uint64_t generation=3,visit=0,requestedEntry=0;
+uint64_t cutTicket=0;
+bool listStaging=false;
+void cancelRouteCut(){cutTicket=0;}
+namespace transition {void rememberReveal(Runtime&){} }
 int entries=0;
 
 struct PMNativeOSProgram {bool listFirst=false,listSwitchHidden=false;int selectedLifeTier=0;} lua;
@@ -160,6 +165,7 @@ double now=0;
 double cutTime(Runtime&) {return now;}
 int activeCutScene(Runtime&r){return r.activeScene;}
 void enter(Runtime&){++entries;if(mode==Mode::listCut && !refuse)mode=Mode::entering;}
+void beginChapterCut(Runtime&r){enter(r);}
 namespace scene { P activeRoot(Runtime &r){return &r;} }
 bool leave(Runtime&,bool){++leaves;if(refuse)return false;mode=Mode::returning;return true;}
 bool presentMap(Runtime&){++restores;mode=Mode::map;return true;}
@@ -184,8 +190,6 @@ template<class F>bool cutChecked(F f){try{f();return true;}catch(...){return fal
         }.items():
             callbacks = callbacks.replace(objc, cpp)
         code += callbacks + '\n'
-        for method in ('struct ManualCut', 'enum class CutStep', 'CutStep advanceCut(', 'void finishCut('):
-            code += definition(CUT, method) + ';\n'
         code += r'''
 int main(){
     Runtime &r=runtime; P button=&ownedButton,event=&runtime;
@@ -225,30 +229,16 @@ int main(){
     sceneUnloaded(r,17,false);assert(!handoffScene);
     mode=Mode::returning;visit=35;returned(r,35,false);
     assert(!claims(r,button) && !handoffScene);
-    // Both manual directions claim retail input, wait through equality, and
-    // release the pin without removing an accepted load's outgoing visual.
+    // The persistent owner claims input across source destruction and modes.
+    // Timing, source/revision rejection, restoration, and stale callbacks now
+    // execute against Gate/requestCutTarget/finishRouteCut in transition tests.
     selector=button;
     for(auto dir:{Mode::listCut,Mode::mapCut}){
-        mode=dir;assert(transitioning() && claims(r,&retailButton));
-        ManualCut cut{dir,generation,visit,r.activeScene,1,1.67};
-        now=cut.deadline;assert(advanceCut(r,cut)==CutStep::waiting);
-        now+=0.016; assert(advanceCut(r,cut)==CutStep::accepted);
-        assert(advanceCut(r,cut)==CutStep::cancelled);
-        int priorDestroys=destroys;finishCut(r,cut,true);assert(destroys==priorDestroys);
-        mode=dir;refuse=true;assert(advanceCut(r,cut)==CutStep::cancelled);
-        finishCut(r,cut,false);refuse=false;
-        assert(mode==(dir==Mode::mapCut?Mode::map:Mode::list));
+        mode=dir;cutTicket=101;assert(transitioning() && claims(r,&retailButton));
+        mode=Mode::idle;assert(claims(r,&retailButton)); // Single unload is not an input gap.
+        assert(!claims(other,&retailButton));
+        cutTicket=0;assert(!claims(r,&retailButton));
     }
-    assert(destroys==2 && restores==1 && leaves==2 && r.freed==4);
-    mode=Mode::listCut;ManualCut cut{mode,generation,visit,r.activeScene,1,now-1};
-    int before=entries;r.lockTouch=true;assert(advanceCut(r,cut)==CutStep::cancelled);
-    r.lockTouch=false;++revision;assert(advanceCut(r,cut)==CutStep::cancelled);--revision;
-    ++r.activeScene;assert(advanceCut(r,cut)==CutStep::cancelled && mode==Mode::idle);
-    mode=Mode::listCut;assert(advanceCut(r,cut)==CutStep::cancelled && entries==before);
-    mode=Mode::mapCut;cut={mode,generation,visit,r.activeScene,1,0};gated=true;
-    assert(advanceCut(r,cut)==CutStep::cancelled);gated=false;++visit;
-    assert(advanceCut(r,cut)==CutStep::cancelled && leaves==2);
-    finishCut(r,cut,false);assert(restores==1); // obsolete callback cannot revive a new visit
     mode=Mode::listPending;assert(!transitioning() && claims(r,&retailButton));
     // Exercise actual ready() with the C9 archive's home and switch settings.
     mode=Mode::idle;r.mouse=17;NSString key=1;
@@ -286,11 +276,8 @@ int main(){
 }
 '''
         with tempfile.TemporaryDirectory() as tmp:
-            src = Path(tmp) / 'boundary.cpp'
-            exe = src.with_suffix('.exe')
-            src.write_text(code, encoding='utf-8')
-            subprocess.run(command + ['-std=c++17', str(src), '-o', str(exe)], check=True)
-            subprocess.run([str(exe)], check=True)
+            exe = compile_cpp(code, tmp, 'boundary')
+            run_cpp(self, exe)
 
 
 if __name__ == '__main__':

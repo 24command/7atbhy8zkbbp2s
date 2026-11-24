@@ -17,7 +17,18 @@ class C9PhaseTwo(unittest.TestCase):
         self.assertIn('program.page->nativePhase == 2 ? scene::Route::C9Phase2 : scene::Route::C9', coord)
         self.assertIn('scene::enter(r,chapterRoute(),arrived)', coord)
         self.assertIn('chrome::open(r,visit,route,root,chromeView)', coord)
-        self.assertIn('case scene::Route::C9Phase2: type = r.type("Phigros2.Chapter9.Scripts","Chapter9Phase2Control")', cut)
+        from test_native_os_boundary import definition
+        source = definition(cut, 'P cutSource(')
+        # Formatting is not routing evidence: preserve the exact route/class
+        # matrix and the selected route switch in the persistent cut adapter.
+        self.assertIn('switch(chapterRoute())', source)
+        for route, lookup in (
+            ('C8', 'r.klass("Chapter8SelectMusicControl")'),
+            ('C9', 'r.type("Phigros2.Chapter9","Chapter9Phase1Control")'),
+            ('C9Phase2', 'r.type("Phigros2.Chapter9.Scripts","Chapter9Phase2Control")'),
+        ):
+            self.assertRegex(source, r'case\s+scene::Route::' + route +
+                             r'\s*:\s*type\s*=\s*' + re.escape(lookup) + r'\s*;\s*break\s*;')
         self.assertIn('if (c.route==Route::C9Phase2) c.backdrop=mountPhaseTwoBackdrop(c)', chrome)
         self.assertIn('active(r,c.backdrop,face==Face::Map)', chrome)
 

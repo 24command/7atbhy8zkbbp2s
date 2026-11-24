@@ -888,8 +888,9 @@ void onSelector(P self,P mi){
  if(pmsecretcourse::active())contentBoundary("Secret course selector return",[&]{pmsecretcourse::menu(R());});
  clearDoorPresentation();
  if(cancelIdleDoorLaunch(self))pmstory::cancelLaunch();
+ if(!pmnativecoordinator::transitioning() && (pmchallenge::atResult || pmchallenge::cursor>=0 || pmchallenge::hpRoot))pmchallenge::cancelVariable(R());
+ if(pmnativecoordinator::stageSelector(R(),self,^{orig<VoidFn>(h::selector)(self,mi);}))return;
  if(pmnativecoordinator::transitioning())return;
- if(pmchallenge::atResult || pmchallenge::cursor>=0 || pmchallenge::hpRoot)pmchallenge::cancelVariable(R());
  bool modal=false;if(!contentBoundary("Selector modal",[&]{modal=pmunlock::selectorModalUpdate(R(),self);})||modal){pmnativecoordinator::abortSelectorEntry(R());return;}
  contentBoundary("Selector row restore",[&]{pmcontent::restoreSelectorRowVisibility(R(),self);});
  bool difficultyTouch=false;contentBoundary("Difficulty touch",[&]{difficultyTouch=pmcontent::difficultyInput(R(),self);});

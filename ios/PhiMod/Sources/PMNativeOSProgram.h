@@ -21,6 +21,13 @@ typedef void (^PMNativeOSClickCompletion)(BOOL success, const PMOSAction *action
 @property(nonatomic, readonly, copy) NSDictionary<NSString *, NSDictionary *> *visibleBySong;
 @property(nonatomic, readonly, copy) NSArray<NSDictionary *> *cards;
 @property(nonatomic, readonly, copy) NSArray<NSDictionary *> *nodes;
+// Resolved video path, otherwise nil. Timeline paths remain in nodes at their
+// original declaration indices; select page->entryTransition.screen.
+@property(nonatomic, readonly, copy, nullable) NSString *transitionPath;
+// Resource failure is nonfatal: host must use native covered entry, ignoring
+// authored load/timing. The immutable declaration and reserved screen remain
+// intact, so failed transition nodes never become ordinary map content.
+@property(nonatomic, readonly, copy, nullable) NSString *transitionError;
 @property(nonatomic, readonly, copy) NSArray<NSDictionary *> *challengeRows;
 // Declaration values. Successful clicks return the current switch and tier in PMOSAction.
 @property(nonatomic, readonly) BOOL listSwitchHidden;

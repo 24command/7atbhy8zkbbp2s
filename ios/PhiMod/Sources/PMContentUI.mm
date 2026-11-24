@@ -137,7 +137,7 @@
    self.scriptPicker=picker;self.scriptChapter=id;picker.delegate=self;[self presentViewController:picker animated:YES completion:nil];
   }]];
   [a addAction:[UIAlertAction actionWithTitle:@"导入 OS 素材…" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
-   UIDocumentPickerViewController *p=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypePNG,UTTypeJPEG,UTTypeGIF,UTTypeMPEG4Movie,[UTType typeWithFilenameExtension:@"webp"]?:UTTypeImage] asCopy:YES];p.allowsMultipleSelection=YES;p.delegate=self;self.artPicker=p;self.artChapter=id;[self presentViewController:p animated:YES completion:nil];
+   UIDocumentPickerViewController *p=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypePNG,UTTypeJPEG,UTTypeGIF,UTTypeMPEG4Movie,[UTType typeWithFilenameExtension:@"mov"]?:UTTypeMovie,[UTType typeWithFilenameExtension:@"webp"]?:UTTypeImage] asCopy:YES];p.allowsMultipleSelection=YES;p.delegate=self;self.artPicker=p;self.artChapter=id;[self presentViewController:p animated:YES completion:nil];
   }]];
   if(exists)[a addAction:[UIAlertAction actionWithTitle:@"移除 OS 脚本" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action){
    UIAlertController *ask=[UIAlertController alertControllerWithTitle:@"移除此章节的 OS 脚本？" message:@"不会删除章节资源或曲目。" preferredStyle:UIAlertControllerStyleAlert];

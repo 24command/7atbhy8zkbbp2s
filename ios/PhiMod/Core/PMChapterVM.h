@@ -81,6 +81,35 @@ typedef struct {
     double after, infoAt, infoUntil, duration; /* 0 duration = automatic. */
     int hasInfoAt, hasInfoUntil;
 } PMOSUnlockAnimation;
+/* Entry transitions are immutable declarations, not runtime Lua callbacks.
+   Lua loops/functions may generate ordinary frame/image declarations up front.
+   Only the host samples the timeline; no per-frame Lua is exposed. */
+typedef enum {
+    PMOSEntryTransitionNative, PMOSEntryTransitionVideo, PMOSEntryTransitionTimeline
+} PMOSEntryTransitionKind;
+typedef enum { PMOSEntryLoadCovered, PMOSEntryLoadEnd, PMOSEntryLoadTime } PMOSEntryLoad;
+typedef enum { PMOSEntryRevealNative, PMOSEntryRevealNone } PMOSEntryReveal;
+/* Transition-only safety ceiling; ordinary map/node clocks are unchanged. */
+enum { PMOSEntryTransitionMaxSeconds = 600 };
+typedef struct {
+    int declared;
+    PMOSEntryTransitionKind kind;
+    PMOSEntryLoad load;
+    PMOSEntryReveal reveal; /* Custom only: native CutIn (default), or no extra reveal. */
+    char src[256], screenName[PMOSScreenNameSize];
+    int screen; /* Reserved page screen index for timeline, otherwise -1. */
+    double duration, at; /* Explicit duration: (0,600]; at: [0,600].
+                            Absent video duration means intrinsic end; host must
+                            reject/fallback for overlong media, never silently clamp. */
+    int hasDuration, hasAt; /* Preserve an explicit at=0. */
+} PMOSEntryTransition;
+/* Native accepts only covered; authored transitions default to end. Native
+   covered is a host signal. Authored covered requires at as an author-declared
+   coverage marker, not measured opacity. time always requires at. Loading and
+   revealing a ready scene are distinct host operations. Timeline requires a
+   positive duration; native timing cannot be overridden. Native allows only
+   kind/load fields. Custom reveal=none leaves the authored reveal to the host
+   instead of requesting an additional native CutIn after readiness. */
 typedef struct {int nodes,screens;double aspect;char names[PMOSMaxScreens][PMOSScreenNameSize];PMOSNode elements[PMOSMaxNodes];int listFirst,count,listSwitchHidden,selectedLifeTier; int nativeChapter; /* 8 or 9, defaults to 9. */ PMOSCard cards[128];char error[384];
     int cueCount; PMOSChallengeCue cues[PMOSMaxChallengeCues];
     int challengeCount; PMOSChallenge challenges[PMOSMaxChallenges];
@@ -91,6 +120,10 @@ typedef struct {int nodes,screens;double aspect;char names[PMOSMaxScreens][PMOSS
        a load-time snapshot of once && progress.get(progressKey) != 0. */
     int unlockAnimationCount;
     PMOSUnlockAnimation unlockAnimations[PMOSMaxUnlockAnimations];
+    PMOSEntryTransition entryTransition;
+    /* First non-transition screen, or -1 if none (host may use its card sheet).
+       elements/names retain their original declaration indices. */
+    int initialScreen;
 } PMOSPage;
 typedef struct PMOSSession PMOSSession;
 typedef struct {int song, dest, element, visible; char error[384]; int checkpoint; char difficulty[96]; int challenge;
