@@ -325,6 +325,15 @@ class CoordinatorTransitionBehavior(unittest.TestCase):
     def test_existing_unlock_media_and_selector_access_keep_priority(self):
         run_cpp(self, self.executable, 'candidate-access')
 
+    def test_async_author_preparation_waits_for_foreground(self):
+        authored=definition(CUT, 'void authoredCut(')
+        self.assertLess(authored.index('UIApplicationStateActive'),authored.index('PMPresentTransitionMedia('))
+        self.assertIn('authoredCut(ticket,p,timeline);',authored)
+        deferred=definition(CUT, 'void requestForegroundTarget(')
+        self.assertLess(deferred.index('ticket!=cutTicket'),deferred.index('UIApplicationStateActive'))
+        self.assertLess(deferred.index('UIApplicationStateActive'),deferred.index('transition::request(ticket)'))
+        self.assertIn('requestForegroundTarget(ticket);',deferred)
+
     def test_selector_staging_precedes_stock_input_and_audio(self):
         body = definition(HOOK, 'void onSelector(').split('{', 1)[1].lstrip()
         stage_at = body.index('if(pmnativecoordinator::stageSelector(R(),self,')

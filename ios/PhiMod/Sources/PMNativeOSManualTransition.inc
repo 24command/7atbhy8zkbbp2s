@@ -108,8 +108,20 @@ void requestCutTarget(transition::Ticket ticket){
         enter(r);if(mode!=Mode::entering)throw std::runtime_error("Chapter OS: OS transition rejected");
     }
 }
+void requestForegroundTarget(transition::Ticket ticket){
+    if(ticket!=cutTicket)return;
+    if(UIApplication.sharedApplication.applicationState!=UIApplicationStateActive){
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC),dispatch_get_main_queue(),^{requestForegroundTarget(ticket);});return;
+    }
+    transition::request(ticket);
+}
 void authoredCut(transition::Ticket ticket,PMNativeOSProgram *p,PMNativeOSEntryTimeline *timeline){
     if(ticket!=cutTicket)return;
+    // An async image preparation can finish while the app is inactive. Do not
+    // mistake a temporarily unavailable presentation window for a bad animation.
+    if(UIApplication.sharedApplication.applicationState!=UIApplicationStateActive){
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC),dispatch_get_main_queue(),^{authoredCut(ticket,p,timeline);});return;
+    }
     const auto &config=p.page->entryTransition;
     double marker=config.load==PMOSEntryLoadEnd?-1:config.at;
     authoredPlaying=true;
@@ -128,7 +140,7 @@ void authoredCut(transition::Ticket ticket,PMNativeOSProgram *p,PMNativeOSEntryT
             if(targetPrepared)continueEntrance(*game,!completed || nativeReveal);
             else cancelRouteCut();
         });
-    if(!accepted){authoredPlaying=false;transition::request(ticket);}
+    if(!accepted){authoredPlaying=false;requestForegroundTarget(ticket);}
 }
 void beginRouteCut(Runtime&r,Mode direction,bool autoEntry){
     if(cutTicket)return;
@@ -152,12 +164,12 @@ void beginRouteCut(Runtime&r,Mode direction,bool autoEntry){
                     if(ticket!=cutTicket || !timelinePreparing)return;
                     timelinePreparing=false;
                     PMDiagnosticsWrite("Chapter OS: timeline preparation timed out; using native entry");
-                    transition::request(ticket);
+                    requestForegroundTarget(ticket);
                 });
                 [PMNativeOSEntryTimeline prepareWithProgram:p completion:^(PMNativeOSEntryTimeline *timeline,NSError *error){
                     if(ticket!=cutTicket || !timelinePreparing)return;
                     timelinePreparing=false;
-                    if(!timeline){PMDiagnosticsWrite(error.localizedDescription.UTF8String);transition::request(ticket);}
+                    if(!timeline){PMDiagnosticsWrite(error.localizedDescription.UTF8String);requestForegroundTarget(ticket);}
                     else authoredCut(ticket,p,timeline);
                 }];
             }else authoredCut(ticket,p,nil);
