@@ -206,6 +206,15 @@ void selectorStaging(){
     assert(stageSelector(runtime,selector) && transition::readyCalls==1);
     finishRouteCut(101,true);assert(!stageSelector(runtime,selector));
 }
+void invalidDeclarationReturn(){
+    listStaging=true;cutToList=true;mode=Mode::idle;
+    runtime.visualReady=false;
+    assert(stageSelector(runtime,selector) && !targetPrepared);
+    runtime.visualReady=true;
+    assert(stageSelector(runtime,selector) && !targetPrepared);
+    assert(stageSelector(runtime,selector) && targetPrepared && transition::readyCalls==1);
+    finishRouteCut(101,true);assert(!stageSelector(runtime,selector));
+}
 void legacyStoryOrdering(){
     mapID=22;mode=Mode::entering;page.entryMovieKey[0]='s';
     targetReady(runtime);
@@ -271,6 +280,7 @@ int main(int argc,char**argv){
     else if(test=="native-ready")nativeTargetReady();
     else if(test=="authored-ready")authoredTargetReady();
     else if(test=="selector")selectorStaging();
+    else if(test=="invalid-declaration")invalidDeclarationReturn();
     else if(test=="wrong-return")wrongReturnScene();
     else if(test=="legacy-story")legacyStoryOrdering();
     else if(test=="native-update")nativeUpdateAndRestore();
@@ -309,6 +319,9 @@ class CoordinatorTransitionBehavior(unittest.TestCase):
 
     def test_selector_loading_runs_behind_cover_until_stable_ready(self):
         run_cpp(self, self.executable, 'selector')
+
+    def test_invalid_lua_still_reveals_the_ready_ordinary_list(self):
+        run_cpp(self, self.executable, 'invalid-declaration')
 
     def test_wrong_return_scene_cancels_instead_of_revealing(self):
         run_cpp(self, self.executable, 'wrong-return')

@@ -503,7 +503,8 @@ bool stageSelector(Runtime&r,P owner,void (^nativeUpdate)(void)){
      pmcontent::selectorLoadingFrame(r,owner);
      pmcontent::selectorDifficultyUI(r,owner);
      if(returningList){
-         if(!targetPrepared && mode==Mode::list && selector==owner && selectorReady(r,owner) && pmcontent::selectorVisualReady(r,owner)){
+         // A failed Lua reload must not hold an otherwise ready ordinary list.
+         if(!targetPrepared && (mode==Mode::list || mode==Mode::idle) && selector==owner && selectorReady(r,owner) && pmcontent::selectorVisualReady(r,owner)){
              if(++stableListFrames>=2)targetReady(r);
          }else if(!targetPrepared)stableListFrames=0;
      }else selectorFrame(r,owner);
