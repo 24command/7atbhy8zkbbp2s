@@ -7,7 +7,12 @@ class SelectorDetails(unittest.TestCase):
   block=s[s.index('void prepareSelectorItems('):s.index('// Native difficulty bars assume')]
   for text in ('for(int i=0;i<count;++i)','entry.first+1','<PlayableLevelCount>k__BackingField','<SelectorTargetWidth>k__BackingField','"SortSong"'):self.assertIn(text,block)
   hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf-8');block=hook[hook.index('void onSelector('):hook.index('void onSelectorOff(')]
-  self.assertLess(block.index('prepareSelectorItems'),block.index('orig<VoidFn>'))
+  self.assertLess(block.index('prepareSelectorItems'),block.rindex('orig<VoidFn>'))
+  coordinator=(ROOT/'PhiMod/Sources/PMNativeOSCoordinator.mm').read_text(encoding='utf-8')
+  staged=coordinator.split('bool stageSelector(',1)[1].split('void detach(',1)[0]
+  self.assertLess(staged.index('pmcontent::prepareSelectorItems(r,owner)'),staged.index('if(nativeUpdate)nativeUpdate()'))
+  self.assertLess(staged.index('candidate && pmunlock::selectorModalUpdate(r,owner)'),staged.index('if(nativeUpdate)nativeUpdate()'))
+  self.assertIn('r.put(owner,"disableSongSelector",true)',staged)
  def test_update_offscreen_lock_icons(self):
   s=(ROOT/'PhiMod/Sources/PMUnlockRuntime.mm').read_text(encoding='utf-8')
   block=s[s.index('void refreshListLocks('):s.index('void tick(')]
@@ -64,7 +69,7 @@ class SelectorDetails(unittest.TestCase):
  def test_modal_blocks_raw_selector_and_background_buttons(self):
   hook=(ROOT/'PhiMod/Sources/PMHookBackend.mm').read_text(encoding='utf8')
   selector=hook.split('void onSelector(',1)[1].split('void onSelectorOff(',1)[0]
-  self.assertLess(selector.index('selectorModalUpdate'),selector.index('orig<VoidFn>'))
+  self.assertLess(selector.index('selectorModalUpdate'),selector.rindex('orig<VoidFn>'))
   self.assertIn('||modal){pmnativecoordinator::abortSelectorEntry(R());return;}',selector)
   self.assertIn('selectorButtonBlocked(R(),self)',hook.split('bool dispatchModButton(',1)[1].split('void onPress(',1)[0])
   runtime=(ROOT/'PhiMod/Sources/PMUnlockRuntime.mm').read_text(encoding='utf8')

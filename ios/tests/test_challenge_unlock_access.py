@@ -19,7 +19,13 @@ class ChallengeAccess(unittest.TestCase):
   block=hook.split('void onSelector(',1)[1].split('void onSelectorOff(',1)[0]
   self.assertIn('access=pmunlock::selectorAccess(R(),self)',block)
   self.assertIn('||!access){pmnativecoordinator::abortSelectorEntry(R());return;}',block)
-  self.assertLess(block.index('||!access){pmnativecoordinator::abortSelectorEntry(R());return;}'),block.index('orig<VoidFn>'))
+  self.assertLess(block.index('||!access){pmnativecoordinator::abortSelectorEntry(R());return;}'),block.rindex('orig<VoidFn>'))
+  # The earlier occurrence is a deferred trampoline passed to the covered
+  # coordinator, not an executed Update. Check its independent access fence too.
+  coordinator=(ROOT/'PhiMod/Sources/PMNativeOSCoordinator.mm').read_text(encoding='utf-8')
+  staged=coordinator.split('bool stageSelector(',1)[1].split('void detach(',1)[0]
+  self.assertLess(staged.index('if(!pmunlock::selectorAccess(r,owner))'),staged.index('if(nativeUpdate)nativeUpdate()'))
+  self.assertIn('if(cutTicket)cancelRouteCut();else abortSelectorEntry(r);',staged)
   self.assertIn('if(pmunlock::blockChallengeButton(R(),self))return true;',hook)
   self.assertIn('if(pmunlock::blockChallengeButton(R(),self))return;',hook)
   self.assertIn('if(!dispatchModButton(self))orig',hook)
