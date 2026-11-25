@@ -728,7 +728,8 @@ template<class F>bool contentBoundary(const char*stage,F&&work){
  return false;
 }
 void onChapterStart(P self,P mi){
- __block bool chapterAutoRouted=false;
+ bool chapterAutoRouted=false;
+ bool *const routedResult=&chapterAutoRouted; // ResumeAfterBoot invokes navigate synchronously.
  if(pmsecretcourse::active())contentBoundary("Secret course return",[&]{pmsecretcourse::menu(R());});
  clearDoorPresentation();
  watchingDoorLaunch=false;
@@ -749,7 +750,7 @@ void onChapterStart(P self,P mi){
     P button=r.get<P>(card,"play");return r.alive(button)&&r.unbox<bool>(r.call(button,"get_interactable"));
    }
    return NO;
-  },^BOOL(NSString *chapter){chapterAutoRouted=[pmcontent::command(@"chapter",chapter,0)[@"ok"] boolValue];return chapterAutoRouted;});
+  },^BOOL(NSString *chapter){*routedResult=[pmcontent::command(@"chapter",chapter,0)[@"ok"] boolValue];return *routedResult;});
  });
  pmnativecoordinator::chapterReady(R(),self,chapterAutoRouted);
 }
