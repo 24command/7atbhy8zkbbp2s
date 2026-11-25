@@ -5,6 +5,8 @@
 #import <QuartzCore/QuartzCore.h>
 #include "PMIL2CPP.hpp"
 #include "PMNativeOSScene.hpp"
+#include "PMNativeOSStartSound.hpp"
+#include "PMNativeOSNavigation.hpp"
 #include "PMNativeOSTransition.hpp"
 #import "PMNativeOSEntryTimeline.h"
 #include "PMNativeOSMap.hpp"
@@ -34,6 +36,7 @@ PMNativeOSProgram *program; NSString *chapter; NSDictionary *detail,*selected;
 NSArray<NSDictionary *> *choices; NSInteger lifeTier=0; NSUInteger revision=0;
 uint64_t requestedEntry=0;
 int handoffScene=0; // Only the selector scene that received this return may consume it.
+pmnativeosnavigation::Visit navigation;
 bool gated=false,busy=false; chrome::View chromeView;
 PMNativeOSActions *actions;
 BOOL (^mountMap)(void);
@@ -79,7 +82,12 @@ bool leave(Runtime &r,bool back){
  if(!(back ? scene::leaveToChapter(r,returned) : scene::leaveToSongSelector(r,returned)))return false;
  mode=Mode::returning;clearScene(r);return true;
 }
-bool presentMap(Runtime &r){mode=Mode::map;busy=false;return chrome::present(r,visit,chrome::Face::Map,true,0,!gated)&&map::present(r,mapID,true,true,true);}
+bool presentMap(Runtime &r){
+ mode=Mode::map;busy=false;
+ const bool shown=chrome::present(r,visit,chrome::Face::Map,true,0,!gated)&&map::present(r,mapID,true,true,true);
+ if(shown)navigation.presentedOS(chapter.UTF8String?:"");
+ return shown;
+}
 void closePanel(Runtime &r){if(detailID)panel::close(r,detailID);detailID=0;detail=nil;choices=nil;selected=nil;if(!presentMap(r))leave(r,false);}
 bool rowFor(NSDictionary *e,rows::Row &out){return e&&rows::lookup(e[@"songID"],e[@"difficulty"],out);}
 unsigned allowedSlots(){unsigned mask=0;for(NSDictionary *e in choices){rows::Row row;if(rowFor(e,row)&&row.slot>=0&&row.slot<4)mask|=1u<<row.slot;}return mask;}
@@ -346,6 +354,8 @@ bool playSelection(Runtime &r,NSDictionary *card,NSDictionary *choice){
  const uint64_t token=visit,epoch=generation;
  const Mode source=mode;Runtime *rt=&r;
  busy=true;
+ // Accepted Start owns the cue once, before intro; missing audio is nonfatal.
+ (void)scene::playStartSound(r);
  BOOL (^sameFace)(void)=^BOOL{return visit==token && generation==epoch && mode==source;};
  auto valid=^BOOL{return sameFace() && revision==PMContentStore.shared.revision && scene::activeRoot(*rt);};
  __block bool started=false,armed=false;
@@ -374,7 +384,7 @@ bool playSelection(Runtime &r,NSDictionary *card,NSDictionary *choice){
  return started;
 }
 bool wantsOSHome(PMNativeOSProgram *p,NSString *key){
- return p.listSwitchHidden || !p.listFirst || PMChapterOSHasRoutedCheckpoint(key);
+ return navigation.wantsOS(key.UTF8String?:"",p.listFirst,p.listSwitchHidden,PMChapterOSHasRoutedCheckpoint(key));
 }
 void selectorPreloaded(uint64_t ticket,PMNativeOSProgram *p,NSError *err){
  if(ticket!=bridge.ticket || !bridge.loading)return;
@@ -387,6 +397,21 @@ void selectorPreloaded(uint64_t ticket,PMNativeOSProgram *p,NSError *err){
  if(waiter)waiter(p,err);
  else bridge.program=p;
 }
+}
+void chapterReady(Runtime &r,P owner,bool automaticallyRouted){
+ if(automaticallyRouted || !owner)return;
+ // ChapterSelector may itself be a hidden story/checkpoint waypoint. Only its
+ // completed Start with no accepted auto-route ends the chapter visit.
+ cutChecked([&]{
+     int handle=sceneHandle(r,r.call(r.call(owner,"get_gameObject"),"get_scene"));
+     int active=sceneHandle(r,r.stat(r.type("UnityEngine.SceneManagement","SceneManager"),"GetActiveScene"));
+     if(!handle || handle!=active)return;
+     P type=r.type("UnityEngine.SceneManagement","Scene");
+     int index=r.unbox<int>(r.stat(type,"GetBuildIndexInternal",{"System.Int32"},{&handle}));
+     if(index!=6)return;
+     NSString *path=r.string(r.stat(type,"GetPathInternal",{"System.Int32"},{&handle}));
+     navigation.chapterReady(index,path.UTF8String?:"",true,automaticallyRouted);
+ });
 }
 void selectorLoaded(Runtime &r,int handle,NSString *key){
  transition::rememberReveal(r);
@@ -431,6 +456,7 @@ void ready(Runtime &r,P owner,NSString *key){
  if(bridge.handle && !matches)resetEntryBridge(r);
  if(returning)releaseEntryCover(r);
  selector=owner;game=&r;chapter=[key copy];
+ navigation.chapter(key.UTF8String?:"");
  const auto epoch=++generation,ticket=bridge.ticket;
  const auto libraryRevision=PMContentStore.shared.revision;
  mode=Mode::loading;
@@ -459,7 +485,16 @@ void ready(Runtime &r,P owner,NSString *key){
  bridge.program=nil;
  usePreload(staged,nil);
 }
+void normalStart(Runtime &r,P owner){
+ // Also sampled each settled frame. Sampling again on both accepted gate paths
+ // covers a tap in the first visible Update, before selectorLoadingEnd detaches.
+ // Story nextSongs bypass ready(); their hidden selector never owns Mode::list.
+ if(&r!=game || selector!=owner || mode!=Mode::list || (requestedEntry && requestedEntry==generation))return;
+ if(bridge.cover || cutTicket)return;
+ cutChecked([&]{navigation.presentedList(chapter.UTF8String?:"",true,true,selectorReady(r,owner));});
+}
 void selectorFrame(Runtime &r,P owner){
+ normalStart(r,owner);
  if(!requestedEntry || requestedEntry!=generation || (mode!=Mode::list && mode!=Mode::listPending) || selector!=owner)return;
  // 4.0.4 SongSelector.Update uses these same two Loading flags before input.
  // Leave the stock transition in charge until it finishes unlocking the selector.

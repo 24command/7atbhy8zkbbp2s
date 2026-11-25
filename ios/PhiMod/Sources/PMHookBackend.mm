@@ -728,6 +728,7 @@ template<class F>bool contentBoundary(const char*stage,F&&work){
  return false;
 }
 void onChapterStart(P self,P mi){
+ __block bool chapterAutoRouted=false;
  if(pmsecretcourse::active())contentBoundary("Secret course return",[&]{pmsecretcourse::menu(R());});
  clearDoorPresentation();
  watchingDoorLaunch=false;
@@ -748,8 +749,9 @@ void onChapterStart(P self,P mi){
     P button=r.get<P>(card,"play");return r.alive(button)&&r.unbox<bool>(r.call(button,"get_interactable"));
    }
    return NO;
-  },^BOOL(NSString *chapter){return [pmcontent::command(@"chapter",chapter,0)[@"ok"] boolValue];});
+  },^BOOL(NSString *chapter){chapterAutoRouted=[pmcontent::command(@"chapter",chapter,0)[@"ok"] boolValue];return chapterAutoRouted;});
  });
+ pmnativecoordinator::chapterReady(R(),self,chapterAutoRouted);
 }
 P onSongInfo(P self,int slot,P mi){P value=orig<P(*)(P,int,P)>(h::songInfo)(self,slot,mi);try{pmcontent::levelInfo(R(),self,slot,value);pmunlock::songInfo(R(),self,slot,value);}catch(const std::exception&e){diagf("Content level info: %s",e.what());}return value;}
 P onItemInfo(P self,int slot,P mi){P value=orig<P(*)(P,int,P)>(h::itemInfo)(self,slot,mi);try{pmcontent::levelInfo(R(),R().get<P>(self,"songInfo"),slot,value);pmunlock::itemInfo(R(),self,slot,value);}catch(const std::exception&e){diagf("Content item info: %s",e.what());}return value;}
@@ -819,8 +821,9 @@ template<h::Index i>void onNoteMove(P self,P mi){pmfeatures::beforeNoteMove(R(),
 void onNormalStart(P self,P mi){
  pmstory::captureLaunch();
  watchingDoorLaunch=true;
- try{if(pmunlock::beforeStart(R(),self,^{try{pmcontent::selectorLoadingEnd(R(),true);}catch(const std::exception&e){diagf("Selector loading resume: %s",e.what());}orig<VoidFn>(h::normalStart)(self,mi);try{pmcontent::difficultyTransitionLabel(R(),self);}catch(const std::exception&e){diagf("Difficulty transition: %s",e.what());}}))return;}
+ try{if(pmunlock::beforeStart(R(),self,^{pmnativecoordinator::normalStart(R(),self);try{pmcontent::selectorLoadingEnd(R(),true);}catch(const std::exception&e){diagf("Selector loading resume: %s",e.what());}orig<VoidFn>(h::normalStart)(self,mi);try{pmcontent::difficultyTransitionLabel(R(),self);}catch(const std::exception&e){diagf("Difficulty transition: %s",e.what());}}))return;}
  catch(const std::exception&e){diagf("Unlock start gate failed: %s",e.what());return;}
+ pmnativecoordinator::normalStart(R(),self);
  try{pmcontent::selectorLoadingEnd(R(),true);}catch(const std::exception&e){diagf("Selector loading start: %s",e.what());}
  orig<VoidFn>(h::normalStart)(self,mi);try{pmcontent::difficultyTransitionLabel(R(),self);}catch(const std::exception&e){diagf("Difficulty transition: %s",e.what());}
 }

@@ -172,15 +172,18 @@ bool presentMap(Runtime&){++restores;mode=Mode::map;return true;}
 void destroyCut(Runtime&,P){++destroys;}
 template<class F>bool cutChecked(F f){try{f();return true;}catch(...){return false;}}
 '''
+        code = '#include \"' + (SRC / 'PMNativeOSNavigation.hpp').as_posix() + '\"\n' + code
+        code += 'pmnativeosnavigation::Visit navigation;\n'
         code += 'void dispatchOwned(Runtime&,P){++actions;mode=Mode::idle;}\n'
-        for method in ('bool selectorReady(', 'void abortSelectorEntry(', 'void selectorFrame(', 'void discardHandoff(', 'void returned(', 'bool transitioning(', 'void detach(',
+        for method in ('bool selectorReady(', 'void normalStart(', 'void abortSelectorEntry(', 'void selectorFrame(', 'void discardHandoff(', 'void returned(', 'bool transitioning(', 'void detach(',
                        'void sceneUnloaded(', 'bool claims(', 'bool dispatch(', 'bool press(', 'bool pointerClick('):
-            code += definition(COORD, method) + '\n'
+            code += definition(COORD, method).replace('chapter.UTF8String?:""', '(chapter ? "pm_test" : "")') + '\n'
         # Keep ready()'s branches and callback intact. Translate only ObjC syntax
         # for the portable fake runtime, whose chapter keys are interned pointers.
         callbacks = '\n'.join(definition(COORD, signature) for signature in (
             'bool wantsOSHome(', 'void selectorPreloaded(', 'void selectorLoaded(', 'void ready('))
         for objc, cpp in {
+            'key.UTF8String?:""': '"pm_test"',
             '[chapter isEqual:key]': '(chapter==key)', '[bridge.chapter isEqual:key]': '(bridge.chapter==key)',
             '[key copy]': 'key', 'key.UTF8String': '"pm_test"', '^bool{': '[=](){', '^{': '[=](){', '^(':'[=](',
             'p.listSwitchHidden': 'p->listSwitchHidden', 'p.listFirst': 'p->listFirst',

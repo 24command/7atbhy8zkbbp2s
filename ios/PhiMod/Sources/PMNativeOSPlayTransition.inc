@@ -343,6 +343,8 @@ void unloaded(Runtime &){
 }
 } // namespace entrance
 
+#include "PMNativeOSStartSound.inc"
+
 bool play(Runtime &r,uint64_t visit,P info,ArmPlay arm,PlayFinished finished){
     using namespace entrance;
     if(!NSThread.isMainThread || !visit || visit!=current.id || !donor || !arm || !finished || pending())return false;

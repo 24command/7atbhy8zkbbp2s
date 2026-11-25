@@ -2,6 +2,10 @@
 #import "PMStorySequence.h"
 namespace pmbridge { struct Runtime; }
 namespace pmnativecoordinator {
+// Called after the existing chapter-start automatic story/checkpoint routing.
+void chapterReady(pmbridge::Runtime&, void *chapterSelector, bool automaticallyRouted);
+// Observe only an owned visible list, before accepted NormalStart detaches it.
+void normalStart(pmbridge::Runtime&, void *selector);
 void selectorLoaded(pmbridge::Runtime&, int handle, NSString *chapter);
 void abortSelectorEntry(pmbridge::Runtime&);
 void ready(pmbridge::Runtime&, void *selector, NSString *chapter);
