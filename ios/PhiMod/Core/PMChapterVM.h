@@ -40,6 +40,7 @@ typedef struct {
     PMOSTrackEase ease;
 } PMOSTrackKey;
 typedef struct { int offset, count; } PMOSTrack;
+enum { PMOSBlendNormal = 0, PMOSBlendAdd = 1 };
 enum { PMOSHasScaleX = 1, PMOSHasScaleY = 2, PMOSHasOpacity = 4, PMOSHasColor = 8 };
 typedef struct {double x,y,w,h,start,duration,fade;int kind,parent,depth,cover,open,screen,dest,fill,loop,handler,hidden;unsigned rgba;char id[64],src[256],label[256],to[64];int challenge; char dropTarget[64]; int dropIndex, alphaHit;
     PMOSMotion motion;
@@ -50,6 +51,7 @@ typedef struct {double x,y,w,h,start,duration,fade;int kind,parent,depth,cover,o
        explicit zero from legacy aggregate-zero defaults (scale/opacity = 1). */
     double rotation, scaleX, scaleY, opacity, trackLoop;
     unsigned numericFlags;
+    int blend; /* Image only: normal(default) or source-alpha additive. */
     PMOSTrack tracks[PMOSTrackPropertyCount];
 } PMOSNode;
 enum { PMOSProgressKeyMax = 64, PMOSProgressAccessLimit = 128 };
@@ -72,6 +74,21 @@ typedef struct {
     char text[256], src[256];
     int blockPause;
 } PMOSChallengeCue;
+/* Planned per-song presentation, independent of challenges/HP. song is a
+   one-based chapter-order index. Empty/omitted difficulty is resolved by the
+   host to the exact installed chart slot, never a wildcard. Duplicate
+   (song, difficulty) declarations are invalid. Strings are bounded UTF-8 bytes
+   without NUL; title/message/button/src are nonempty. src is a local still
+   PNG/JPG/JPEG/WebP basename; the host must enforce filesystem/symlink safety. */
+enum { PMOSMaxSongInterruptions = 16, PMOSSongInterruptionMaxDelay = 600 };
+typedef enum { PMOSSongInterruptionQuit = 1 } PMOSSongInterruptionAction;
+typedef struct {
+    int song;
+    char difficulty[96];
+    double at, delay; /* Finite at >= 0; delay in [0,600], default 2 seconds. */
+    char src[256], title[256], message[1024], button[256];
+    PMOSSongInterruptionAction action; /* Required explicit Lua action='quit'. */
+} PMOSSongInterruption;
 enum { PMOSMaxChallengeIntro = 4, PMOSMaxChallengeNextSongs = 2, PMOSMaxChallengeReplays = 8 };
 typedef struct { int song; char difficulty[96]; } PMOSChallengeSong;
 typedef struct {
@@ -109,6 +126,21 @@ typedef struct {
     double after, infoAt, infoUntil, duration; /* 0 duration = automatic. */
     int hasInfoAt, hasInfoUntil;
 } PMOSUnlockAnimation;
+/* Optional once-only native map scene. The host presents sourceScreen without
+   input, runs its clock for duration, then completes key and displays toScreen.
+   The VM only reads progress; it never schedules playback or marks completion.
+   initialScreen selects sourceScreen while unseen, otherwise toScreen. This
+   plan does not change PMOSPage.initialScreen or reserve an ordinary screen. */
+enum { PMOSEnterSceneKeyMax = PMOSProgressKeyMax - (sizeof("scene.") - 1),
+       PMOSEnterSceneMaxSeconds = 600 };
+typedef struct {
+    int declared;
+    char key[PMOSProgressKeyMax + 1]; /* Full scene.<key>; authored key: 1..58 ASCII bytes. */
+    char sourceScreenName[PMOSScreenNameSize], toName[PMOSScreenNameSize];
+    int sourceScreen, toScreen, initialScreen; /* Resolved zero-based indices; -1 when absent. */
+    double duration; /* Required finite seconds in (0,600]. */
+    int seen; /* Load-time progress snapshot; any nonzero value means complete. */
+} PMOSEnterScene;
 /* Entry transitions are immutable declarations, not runtime Lua callbacks.
    Lua loops/functions may generate ordinary frame/image declarations up front.
    Only the host samples the timeline; no per-frame Lua is exposed. */
@@ -155,6 +187,9 @@ typedef struct {int nodes,screens;double aspect;char names[PMOSMaxScreens][PMOSS
     int initialScreen;
     int trackKeyCount;
     PMOSTrackKey trackKeys[PMOSMaxPageTrackKeys];
+    int songInterruptionCount;
+    PMOSSongInterruption songInterruptions[PMOSMaxSongInterruptions];
+    PMOSEnterScene enterScene;
 } PMOSPage;
 typedef struct PMOSSession PMOSSession;
 typedef struct {int song, dest, element, visible; char error[384]; int checkpoint; char difficulty[96]; int challenge;

@@ -40,6 +40,7 @@ static void expectProgress(int failures, int cleared) {
         int value = -1;
         CHECK([store readKey:@"door.gate.fail" value:&value] && value == failures);
         CHECK([store readKey:@"door.gate.clear" value:&value] && value == cleared);
+        CHECK([store readKey:@"door.gate.new" value:&value] && value == cleared);
     }});
     reader.join();
 }
@@ -104,6 +105,18 @@ int main() {
             PMDoorFinish(NO);
         }
         expectProgress(1 + replays, 1);
+        // Upgrading a legacy save must not retroactively enqueue a first-clear
+        // return scene for a gate that was already clear before this feature.
+        std::thread([] { @autoreleasepool {
+            auto store=[[PMOSAuthorProgress alloc]initWithRoot:testRoot chapter:@"chapter"];
+            CHECK([store commitValues:@{@"door.legacy.clear":@1}]);
+        }}).join();
+        CHECK(PMDoorArm(@"chapter",@"legacy",@"song",2,@"chart-IN",1,@[@0,@0,@0,@0]));
+        CHECK(PMDoorBeginExactTrack(@"song",2,@"chart-IN",&hp,delta));PMDoorFinish(YES);PMDoorProgressBarrier();
+        std::thread([] { @autoreleasepool {
+            auto store=[[PMOSAuthorProgress alloc]initWithRoot:testRoot chapter:@"chapter"];
+            int value=-1;CHECK([store readKey:@"door.legacy.new" value:&value] && value==0);
+        }}).join();
         // An ordinary door never owns the chapter LIFE ladder. Verify course
         // outcomes change a single revision even when all three keys change.
         uint64_t revision=PMOSAuthorProgressRevision();

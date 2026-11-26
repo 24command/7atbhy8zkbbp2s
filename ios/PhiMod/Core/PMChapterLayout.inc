@@ -58,7 +58,7 @@ static void entryNodeFields(lua_State *L, int pos, int kind) {
  const char *common[]={"id","parent","x","y","w","h","start","duration","fade","color","label","hidden",
   "enter","bob","bobPeriod","tapTime","tapScale","tapFlash","tapFace","dropTarget","alphaHit",
   "to","open","challenge","onClick","rotation","scaleX","scaleY","opacity","tracks","trackLoop"};
- const char *image[]={"src","cover","fit","loop"};
+ const char *image[]={"src","cover","fit","loop","blend"};
  lua_pushnil(L);
  while(lua_next(L,1)){
   const char *key=lua_type(L,-2)==LUA_TSTRING?lua_tostring(L,-2):NULL;
@@ -81,6 +81,15 @@ static int layoutNode(lua_State *L){PMOSPage *p=declarationPage(L);luaL_checktyp
  entryNodeFields(L,pos,n->kind);
  readMotion(L,n);
  readNumericTracks(L,p,n);
+ lua_getfield(L,1,"blend");
+ if(!lua_isnil(L,-1)){
+  if(n->kind!=PMOSImage)return luaL_error(L,"blend is only supported on images");
+  if(lua_type(L,-1)!=LUA_TSTRING)return luaL_error(L,"blend expects normal or add");
+  size_t length=0;const char *blend=lua_tolstring(L,-1,&length);
+  if(length==3 && !memcmp(blend,"add",3))n->blend=PMOSBlendAdd;
+  else if(length!=6 || memcmp(blend,"normal",6))return luaL_error(L,"blend expects normal or add");
+ }
+ lua_pop(L,1);
  fieldText(L,"dropTarget",n->dropTarget,sizeof(n->dropTarget));
  n->alphaHit=fieldBool(L,"alphaHit");
  n->hidden=fieldBool(L,"hidden");

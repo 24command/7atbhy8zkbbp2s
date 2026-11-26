@@ -34,6 +34,7 @@ typedef void (^PMNativeOSClickCompletion)(BOOL success, const PMOSAction *action
 @property(nonatomic, readonly) BOOL listFirst;
 @property(nonatomic, readonly) NSInteger nativeChapter; // Native chapter 8 or 9 (default).
 @property(nonatomic, readonly) double aspect;
+@property(nonatomic, readonly) BOOL entrySceneSeen;
 @property(nonatomic, readonly) NSInteger selectedLifeTier;
 
 // Each load owns an independent VM and chapter progress context. Both methods complete
@@ -41,6 +42,7 @@ typedef void (^PMNativeOSClickCompletion)(BOOL success, const PMOSAction *action
 + (void)loadChapter:(NSString *)chapter completion:(PMNativeOSLoadCompletion)completion;
 - (NSDictionary<NSString *,NSString *> *)unlockFieldsForSong:(NSInteger)song;
 - (void)markUnlockSeen:(NSInteger)index completion:(void (^)(BOOL))completion;
+- (void)markEntrySceneSeen:(void (^)(BOOL))completion;
 - (void)markEntryMovieSeen:(void (^)(BOOL))completion;
 - (void)clickNode:(NSInteger)index completion:(PMNativeOSClickCompletion)completion;
 - (instancetype)init NS_UNAVAILABLE;

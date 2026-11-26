@@ -23,6 +23,12 @@ clang++ -std=c++17 -fobjc-arc -DPMDOOR_RUN_HOST_TEST -framework Foundation -fram
   ./chaptervm
   clang -std=c99 -O2 -UNDEBUG "$ROOT/tests/PMChapterPMAOneShotTest.c" ./*.o -o chaptervm
   ./chaptervm
+  clang -std=c99 -O2 -UNDEBUG "$ROOT/tests/PMChapterInterruptionTest.c" ./*.o -o chaptervm
+  ./chaptervm
+  clang -std=c99 -O2 -UNDEBUG "$ROOT/tests/PMChapterEnterSceneTest.c" ./*.o -o chaptervm
+  ./chaptervm
+  clang -std=c99 -O2 -UNDEBUG "$ROOT/tests/PMChapterBlendTest.c" ./*.o -o chaptervm
+  ./chaptervm
   clang++ -std=c++17 -O2 -UNDEBUG "$ROOT/tests/PMNativeOSNumericTracksTest.cpp" ./*.o -o nativemap
   ./nativemap
   clang -std=c99 -O2 "$ROOT/tests/PMChapterSongVisibilityTest.c" ./*.o -o chaptervm
@@ -129,3 +135,8 @@ python3 "$ROOT/tests/test_import_picker_lifecycle.py"
     "$ROOT/tests/PMOSAuthorProgressTest.mm" "$ROOT/PhiMod/Sources/PMOSAuthorProgress.mm" -o "$OUT/authorprogress"
   "$OUT/authorprogress"
 )
+
+python3 "$ROOT/tests/test_song_interruption.py"
+python3 "$ROOT/tests/test_song_interruption_gameplay.py"
+python3 "$ROOT/tests/test_native_os_enter_scene.py"
+python3 "$ROOT/tests/test_native_os_blend.py"

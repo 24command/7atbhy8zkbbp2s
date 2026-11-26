@@ -256,6 +256,8 @@ static int actionSong(lua_State *L, const PMOSSession *s, const char *action) {
 
 #include "PMChapterUnlockAnimation.inc"
 #include "PMChapterEntryTransition.inc"
+#include "PMChapterInterruption.inc"
+#include "PMChapterEnterScene.inc"
 
 typedef struct { const char *source; size_t length; } Script;
 
@@ -263,6 +265,8 @@ static int evaluate(lua_State *L) {
     const Script *script = lua_touserdata(L, 1);
     lua_pushcfunction(L,onEnterMovie); lua_setglobal(L,"onEnterMovie");
     lua_pushcfunction(L, declareEntryTransition); lua_setglobal(L, "entryTransition");
+    lua_pushcfunction(L, declareSongInterruption); lua_setglobal(L, "songInterruption");
+    lua_pushcfunction(L, declareEnterScene); lua_setglobal(L, "onEnterScene");
     lua_pushcfunction(L, nativeChapter); lua_setglobal(L, "nativeChapter");
     lua_pushcfunction(L, home);
     lua_setglobal(L, "home");
@@ -291,6 +295,7 @@ static int evaluate(lua_State *L) {
     lua_call(L, 0, 0);
     resolveLinks(L);
     resolveEntryTransition(L, declarationPage(L));
+    resolveEnterScene(L, declarationPage(L));
     resolveChallengeBindings(L, declarationPage(L));
     resolveSongVisibility(session(L), declarationPage(L));
     PMOSSession *s=session(L);
@@ -364,6 +369,7 @@ PMOSSession *PMOSStartWithProgress(const char *src, size_t len, int songs,
     page->nativeChapter = 9;
     page->nativePhase = 1;
     page->initialScreen = page->entryTransition.screen = -1;
+    page->enterScene.sourceScreen = page->enterScene.toScreen = page->enterScene.initialScreen = -1;
     if (!src || !len || len > SourceLimit || songs < 0) {
         snprintf(page->error, sizeof(page->error), "invalid OS input");
         return NULL;
@@ -384,6 +390,9 @@ PMOSSession *PMOSStartWithProgress(const char *src, size_t len, int songs,
     int ok = runProtected(s, 1, page->error, sizeof(page->error));
     s->declaring = NULL;
     if (!ok) {
+        page->songInterruptionCount = 0;
+        memset(&page->enterScene, 0, sizeof(page->enterScene));
+        page->enterScene.sourceScreen = page->enterScene.toScreen = page->enterScene.initialScreen = -1;
         page->count = page->nodes = page->screens = page->challengeCount = page->unlockAnimationCount = page->trackKeyCount = 0;
         PMOSStop(s);
         return NULL;

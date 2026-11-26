@@ -105,7 +105,8 @@ void requestGif(Media &media) {
         });
     }});
 }
-std::shared_ptr<Media> buildMedia(Map &m, P tr, NSString *path, bool cover, bool loop, int pixels) {
+std::shared_ptr<Media> buildMedia(Map &m, P tr, NSString *path, bool cover, bool loop, int pixels,
+                                  blend::Layer *additive = nullptr) {
     auto media = std::make_shared<Media>();
     media->path = [path copy]; media->loop = loop; media->pixels = std::min(1024,pixels);
     Object childObject = child(m,tr,"Map Media");
@@ -113,6 +114,7 @@ std::shared_ptr<Media> buildMedia(Map &m, P tr, NSString *path, bool cover, bool
     stretch(m.r,m.get(childObject.rect));
     P raw = add(m.r,go,"UnityEngine.UI","RawImage");
     media->raw = m.keep(raw);
+    if (additive) bindAdditive(m,*additive,childObject.go,media->raw);
     flag(m.r,raw,"set_raycastTarget",false);
     flag(m.r,raw,"set_enabled",false);
     media->fitter = m.keep(fit(m.r,go,1,cover));

@@ -9,6 +9,8 @@
 #import "PMOSAuthorProgress.h"
 #import "PMStockIntroResolver.hpp"
 #import "PMStoryCueRun.h"
+#import "PMSongInterruption.h"
+#import "PMDifficultyMetadata.h"
 #import <UIKit/UIGeometry.h>
 #import <AVFoundation/AVFoundation.h>
 #include <cmath>
@@ -43,6 +45,7 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
     PMOSAuthorProgress *_progress;
     PMOSSession *_session;
     std::unique_ptr<const PMOSPage> _plan;
+    BOOL _entrySceneFinished;
     dispatch_queue_t _events;
     NSArray<NSDictionary *> *_unlockFields;
 }
@@ -121,6 +124,23 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
             row[@"art"] = [[store asset:sid] stringByAppendingPathComponent:@"image.png"];
         bySong[sid] = [row copy];
     }
+    NSString *chapterDir = file.stringByDeletingLastPathComponent;
+    for (int i=0; i<plan->songInterruptionCount; ++i) {
+        const auto &spec=plan->songInterruptions[i];
+        NSString *sid=order[spec.song-1];
+        NSString *difficulty=spec.difficulty[0] ? [NSString stringWithUTF8String:spec.difficulty] : nil;
+        if (difficulty.length && [PMDifficultyName(difficulty) caseInsensitiveCompare:PMDifficultyName(songs[sid][@"level"])]!=NSOrderedSame)
+            return fail(@"songInterruption difficulty must match its installed chart");
+        if (bySong[sid][@"interruption"]) return fail(@"Ambiguous songInterruption for the same installed chart");
+        NSDictionary *config=@{@"song":@(spec.song), @"difficulty":difficulty ?: @"", @"at":@(spec.at), @"delay":@(spec.delay),
+            @"src":[NSString stringWithUTF8String:spec.src], @"title":[NSString stringWithUTF8String:spec.title],
+            @"message":[NSString stringWithUTF8String:spec.message], @"button":[NSString stringWithUTF8String:spec.button],
+            @"action":@"quit"};
+        NSError *error=nil;
+        PMPreparedSongInterruption *prepared=PMPrepareSongInterruption(config,chapterDir,&error);
+        if (!prepared) return fail(error.localizedDescription ?: @"Invalid song interruption image");
+        NSMutableDictionary *row=[bySong[sid] mutableCopy];row[@"interruption"]=prepared;bySong[sid]=[row copy];
+    }
     NSMutableArray *cards = [NSMutableArray array];
     NSMutableSet *overridden = [NSMutableSet set];
     for (NSUInteger i = 0, n = plan->count ? (NSUInteger)plan->count : order.count; i < n; i++) {
@@ -151,7 +171,6 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
             [overridden addObject:sid];
         }
     }
-    NSString *chapterDir = file.stringByDeletingLastPathComponent;
     NSMutableArray *challengeRows = [NSMutableArray arrayWithCapacity:plan->challengeCount];
     for (int i = 0; i < plan->challengeCount; i++) {
         const PMOSChallenge &challenge = plan->challenges[i];
@@ -400,6 +419,15 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
     dispatch_async(_events, ^{
         BOOL ok=[self->_progress commitValues:@{key:@1}];
         dispatch_async(dispatch_get_main_queue(), ^{completion(ok);});
+    });
+}
+- (BOOL)entrySceneSeen { return _entrySceneFinished || (_plan && _plan->enterScene.seen); }
+- (void)markEntrySceneSeen:(void (^)(BOOL))completion {
+    if(!_plan->enterScene.declared){completion(NO);return;}
+    NSString *key=@(_plan->enterScene.key);
+    dispatch_async(_events, ^{
+        BOOL ok=[self->_progress commitValues:@{key:@1}];
+        dispatch_async(dispatch_get_main_queue(), ^{if(ok)self->_entrySceneFinished=YES;completion(ok);});
     });
 }
 - (void)markEntryMovieSeen:(void (^)(BOOL))completion {

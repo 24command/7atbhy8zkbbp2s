@@ -94,13 +94,17 @@ static void enqueueOutcome(NSString *chapter,NSString *door,int tier,BOOL clear)
   BOOL ok=[store updateValues:^NSDictionary *(NSDictionary *current){
    int value=[current[key] intValue];
    int next=clear?1:(value>=INT_MAX?INT_MAX:MAX(value,0)+1);
+   NSMutableDictionary *updates=[@{key:@(next)} mutableCopy];
+   // A first-clear event is separate from permanent clear state. Old saves with
+   // clear=1 do not retroactively queue a new return scene after a script update.
+   if(clear && value<=0)updates[[NSString stringWithFormat:@"door.%@.new",door]]=@1;
    if(tier>=0){
     PMChapterLifeState life=PMChapterLifeRead([current[@PMChapterLifeCeilingKey] intValue],
                                              [current[@PMChapterLifeChoiceKey] intValue]);
     if(PMChapterLifeApplyOutcome(&life,tier,clear))
-     return @{key:@(next), @PMChapterLifeCeilingKey:@(life.ceiling), @PMChapterLifeChoiceKey:@(life.selected+1)};
+     [updates addEntriesFromDictionary:@{@PMChapterLifeCeilingKey:@(life.ceiling), @PMChapterLifeChoiceKey:@(life.selected+1)}];
    }
-   return @{key:@(next)};
+   return updates;
   }];
   if(!ok)PMDiagnosticsWrite("Chapter OS door outcome could not be saved");
  }});

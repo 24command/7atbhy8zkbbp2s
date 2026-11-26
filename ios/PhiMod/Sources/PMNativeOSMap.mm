@@ -1,4 +1,5 @@
 #include "PMNativeOSMap.hpp"
+#include "PMNativeOSMapBlend.hpp"
 
 namespace pmnativeosmap { namespace rendering {
 inline bool rgbTracks(const PMOSNode &n) {
@@ -150,6 +151,7 @@ struct Item {
     rendering::Transform numericScale{1,1,1};
     float numericRotation = 0;
     Handle tint{};
+    blend::Layer additive;
     rendering::Color tintColor{1,1,1,1};
     Handle flash{}, pictureRect{}, silhouette{};
     int feedbackOwner = -1;
@@ -173,6 +175,9 @@ struct Map {
     layout::PendingTap tap;
     readiness::Ticket preparation;
     Handle root{}, rootGroup{}, orphan{};
+    Handle additiveMaterial{};
+    bool hasAdditive=false;
+    float rootOpacity=0; // Explicit opacity for child groups ignoring ancestors.
     std::vector<Handle> handles, assets;
     std::vector<Item> items;
     std::vector<PMOSTrackKey> trackKeys;
@@ -207,6 +212,7 @@ P add(Runtime &r, P obj, const char *ns, const char *name) {
 void flag(Runtime &r, P obj, const char *method, bool value) {
     r.call(obj, method, {"System.Boolean"}, {&value});
 }
+#include "PMNativeOSMapBlend.inc"
 void destroy(Map &m, Handle handle) {
     P obj = m.get(handle);
     if (m.r.alive(obj)) m.r.stat(m.r.type("UnityEngine", "Object"), "Destroy", {"UnityEngine.Object"}, {obj});
@@ -223,6 +229,7 @@ template<class Work> bool checked(Work work, NSString **reason = nullptr) {
     return false;
 }
 void dispose(Map &m) {
+    if (m.hasAdditive) checked([&]{ hideAdditive(m); });
     if (m.resignObserver) [NSNotificationCenter.defaultCenter removeObserver:m.resignObserver];
     if (m.root) checked([&]{ if (m.r.alive(m.get(m.root))) flag(m.r, m.get(m.root), "SetActive", false); });
     if (m.orphan && m.orphan != m.root) checked([&]{ destroy(m, m.orphan); });
@@ -383,7 +390,7 @@ void applyNumeric(Map &m, Item &item, const layout::Numeric &value, layout::Pose
             m.r.call(m.get(item.rect), "set_anchorMax", {"UnityEngine.Vector2"}, {&after.high});
         item.slot = slot;
     }
-    auto color = rendering::color(value);
+    auto color = blend::graphicColor(item.additive,rendering::color(value),item.tint!=0);
     if (item.tint && !rendering::same(item.tintColor, color)) {
         m.r.call(m.get(item.tint), "set_color", {"UnityEngine.Color"}, {&color});
         item.tintColor = color;
@@ -407,6 +414,9 @@ int preflight(const PMOSPage &page, NSArray<NSDictionary *> *models, NSMutableSe
     NSUInteger animatedNodes = 0;
     for (int i = 0; i < page.nodes; ++i) {
         const auto &n = page.elements[i];
+        if ((n.blend != PMOSBlendNormal && n.blend != PMOSBlendAdd) ||
+            (n.blend != PMOSBlendNormal && n.kind != PMOSImage))
+            throw std::runtime_error("Map blend must be normal or image-only add");
         if (layout::reserved(page,n.screen)) continue; // Owned by the transition renderer, not this map.
         if (n.screen < 0 || n.screen >= page.screens || n.parent < -1 || n.parent >= i ||
             (n.parent >= 0 && (page.elements[n.parent].screen != n.screen || page.elements[n.parent].kind != PMOSFrame)))
@@ -509,6 +519,7 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
             continue;
         }
         item.screen = n.screen; item.parent = n.parent; item.manual = !n.hidden;
+        if (n.blend == PMOSBlendAdd) additiveMaterial(m);
         NSString *path = models[i][@"path"];
         bool animated = isAnimated(path);
         bool alphaHit = n.alphaHit && !animated;
@@ -558,7 +569,8 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
             }
         }
         if (animated) {
-            item.media = buildMedia(m, tr, path, n.fill, n.loop, pixels);
+            item.media = buildMedia(m, tr, path, n.fill, n.loop, pixels,
+                                    n.blend == PMOSBlendAdd ? &item.additive : nullptr);
             if (spriteTint) item.tint = item.media->raw;
         } else if (path) {
             const char *key = path.UTF8String;
@@ -573,6 +585,8 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
             item.pictureRect = picture.rect;
             P image = add(r, m.get(picture.go), "UnityEngine.UI", "Image");
             if (spriteTint) item.tint = m.keep(image);
+            if (n.blend == PMOSBlendAdd)
+                bindAdditive(m,item.additive,picture.go,item.tint ? item.tint : m.keep(image));
             stretch(r, m.get(picture.rect));
             r.call(image, "set_sprite", {"UnityEngine.Sprite"}, {m.get(found->second.sprite)});
             flag(r, image, "set_raycastTarget", alphaHit);
@@ -636,7 +650,7 @@ void refresh(Map &m, double t) {
             if (mode == readiness::MediaMode::Warm) warmMedia(m, *item.media, m.preparation.expired(wallTime()));
             else syncMedia(m, *item.media, mode == readiness::MediaMode::Play, t);
         }
-        if (!active) continue;
+        if (!active) { syncAdditive(m,item); continue; }
         if (item.numericNode || item.motion.enter || item.motion.bob || item.motion.tapTime) {
             float pulse = m.tap.owner == int(i) ? m.tap.pulse(t) : 0;
             auto pose = layout::motion(item.motion, t - item.shownSince, pulse);
@@ -654,6 +668,7 @@ void refresh(Map &m, double t) {
             flag(m.r, m.get(item.group), "set_interactable", inherited > .01f);
         }
         item.inheritedAlpha = inherited;
+        syncAdditive(m,item);
     }
     if (m.affinePlacements) refreshAffinePlacements(m);
     if (m.affineMirrors) syncDragLayers(m);
@@ -708,6 +723,7 @@ bool displayPage(Runtime &r, Visit id, int screen) {
     return change(r,id,[&](Map &m){
         m.tap.cancel();
         cancelDrag(m);
+        hideAdditive(m); // Clear isolated groups before changing page/media state.
         if (m.preparation.active() && !m.visible) flag(r,m.get(m.root),"SetActive",false);
         m.preparation.invalidate();
         for (auto &item : m.items) {
@@ -735,8 +751,9 @@ bool prepare(Runtime &r, Visit id, uint64_t token) {
         m.input = false;
         flag(r,m.get(m.rootGroup),"set_interactable",false);
         flag(r,m.get(m.rootGroup),"set_blocksRaycasts",false);
-        float alpha = 0;
-        r.call(m.get(m.rootGroup),"set_alpha",{"System.Single"},{&alpha});
+        m.rootOpacity = 0;
+        r.call(m.get(m.rootGroup),"set_alpha",{"System.Single"},{&m.rootOpacity});
+        hideAdditive(m); // Ignoring ancestor alpha must not bypass the cover.
         // VideoPlayer Prepare/Play needs an active hierarchy. Rendering stays
         // suppressed even if the transition cover has not been drawn yet.
         flag(r,m.get(m.root),"SetActive",true);
@@ -780,8 +797,7 @@ bool present(Runtime &r, Visit id, bool visible, bool runClock, bool input) {
         m.input = acceptInput;
         flag(r, m.get(m.rootGroup), "set_interactable", m.input);
         flag(r, m.get(m.rootGroup), "set_blocksRaycasts", m.input);
-        float alpha = visible ? 1.f : 0.f;
-        r.call(m.get(m.rootGroup),"set_alpha",{"System.Single"},{&alpha});
+        setRootOpacity(m,visible ? 1.f : 0.f);
         bool hierarchyActive = visible || m.preparation.active();
         if (hierarchyWasActive != hierarchyActive) flag(r, m.get(m.root), "SetActive", hierarchyActive);
         m.visible = visible;

@@ -1,6 +1,7 @@
 #import "PMDifficultyMetadata.h"
 #import "PMDoorRun.h"
 #import "PMStoryCueRun.h"
+#import "PMSongInterruption.h"
 #import "PMContentStore.h"
 #import "PMUnlockMedia.h"
 #import "PMChapterOS.h"
@@ -36,6 +37,8 @@
 #include <cstdarg>
 #include <chrono>
 #include <cmath>
+#include <functional>
+#include <cstdlib>
 namespace {
 using pmbridge::P;
 using pmbridge::Runtime;
@@ -135,8 +138,10 @@ void logProgressSnapshot(Runtime&r,P p,const char*source,uint64_t count){
  if(pmhp::active())diagf("HP loader %s",pmhp::loadingStatus(r).c_str());
 }
 #include "PMDoorGameplay.inc"
+#include "PMSongInterruptionGameplay.inc"
 bool bindDoor(Runtime &r,P level,phimod::Options &options){
- if((!doorPlayEligible(options)&&!PMDoorReplayPending()) || pmchallenge::variable())return false;
+ const bool hpEligible=doorPlayEligible(options);
+ if((!hpEligible&&!PMDoorReplayPending()&&!PMSongInterruptionPending()) || pmchallenge::variable())return false;
  P pc=r.get<P>(level,"progressControl"), start=r.get<P>(r.mainGame(),"levelStartInfo");
  if(!pc || !start || r.get<bool>(pc,"_inChallengeMode"))return false;
  NSString *identifier=r.string(r.get<P>(start,"songsId"));
@@ -146,7 +151,8 @@ bool bindDoor(Runtime &r,P level,phimod::Options &options){
  NSString *group=identifier;
  NSString *key=r.string(r.get<P>(start,"chartAddressableKey"));
  if(!key.length)return false;
- if([key hasPrefix:@"PM/"]){
+ const bool installed=[key hasPrefix:@"PM/"];
+ if(installed){
   // GetLevelStartInfo keeps the native transport level and substitutes the
   // installed ID and chart key. Multiple named charts can share the AT slot.
   NSString *prefix=[NSString stringWithFormat:@"PM/%@/chart@",identifier];
@@ -165,9 +171,19 @@ bool bindDoor(Runtime &r,P level,phimod::Options &options){
   if([chart[@"groupId"] length])group=chart[@"groupId"];
  }
  // A replay uses the same resolved native tuple but never acquires a door owner.
- if(applyChapterReplay(PMDoorConsumeReplay(group,slot,identifier),options))return true;
+ if(applyChapterReplay(PMDoorConsumeReplay(group,slot,identifier),options)){
+  PMCancelSongInterruptionLaunch();return true;
+ }
+ // Pending widens identity validation, NOT HP eligibility. Only the resolved
+ // installed chart ID + transport slot may consume the OS-armed interruption.
+ bool terminal=false;
+ if(PMSongInterruptionPending()){
+  if(installed&&slot>=0)terminal=songinterruption::gameplay.begin(level,pc,identifier,slot);
+  else PMCancelSongInterruptionLaunch();
+ }
+ if(!hpEligible){PMDoorCancelPending();pmstory::cancelLaunch();return terminal;}
  double hp=0,delta[4]={};
- if(slot<0 || !PMDoorBeginExactTrack(group,slot,identifier,&hp,delta))return false;
+ if(slot<0 || !PMDoorBeginExactTrack(group,slot,identifier,&hp,delta))return terminal;
  doorProgress=pc;
  if(PMDoorPlayingNoPause())pauseLockedDoor=pc;
  if(pmstory::beginExactTrack())endDoorPresentation=pmstory::endTrack;
@@ -182,6 +198,7 @@ bool bindDoor(Runtime &r,P level,phimod::Options &options){
 void prepareDoor(Runtime &r,P level,phimod::Options &options){
  try{if(bindDoor(r,level,options))return;}
  catch(const std::exception &e){diagf("Door bind failed: %s",e.what());abandonBoundDoor();}
+ songinterruption::gameplay.end();
  pmstory::cancelLaunch();
  PMDoorCancelPending();
 }
@@ -225,6 +242,7 @@ void begin(P p){
  diagf("ProgressControl.Start armed baseline P=%.4f G=%.4f B=%.4f",baseline.perfect,baseline.good,baseline.bad);
 }
 void onAwake(P self,P mi){
+ songinterruption::gameplay.awake(); // Preserve next pending; retire old native roots/tickets.
  pauseLockedDoor=nullptr;
  abandonBoundDoor();
  watchingDoorLaunch=false;
@@ -246,10 +264,10 @@ void onAwake(P self,P mi){
   try{release(progressRoot);release(scoreRoot);attempt.reset();resetChartRegistration();judgeUpdateSeen=false;pmscene::settingsLeave(R(),"level-start");pmscene::clearRecovery(R());pmhp::clear(R());pmmodes::clear(R());pmpractice::clear(R());}catch(const std::exception&e){fault(e);}
    inResult=false;resultPresented=false;levelOverStarted=false;loadingMaskCleared=false;
  try{frozenOptions=PMReadOptions([[PMSettings shared] snapshot]);
-  if(pmsecretcourse::active())frozenOptions=phimod::Options{};
+  if(pmsecretcourse::active()){songinterruption::gameplay.end();frozenOptions=phimod::Options{};}
   else if(!broken)prepareDoor(R(),self,frozenOptions);
   diagf("LevelControl.Awake options assisted=%d hp=%d hpMax=%.1f hpD=[%.1f,%.1f,%.1f,%.1f]",frozenOptions.assisted(),frozenOptions.hpEnabled,frozenOptions.hpMax,frozenOptions.hpDelta[0],frozenOptions.hpDelta[1],frozenOptions.hpDelta[2],frozenOptions.hpDelta[3]);if(!broken){pmhp::prepare(R(),self,frozenOptions);diagf("HP prepare ok active=%d normalized=%.3f",pmhp::active(),pmhp::normalized());pmmodes::prepare(R(),self,frozenOptions);pmpractice::prepare(R(),frozenOptions);diagf("Chart modes and practice prepare ok");}}catch(const std::exception&e){diagf("LevelControl.Awake prepare failed: %s",e.what());fault(e);}
- if(broken){pmstory::cancelLaunch();PMDoorCancelPending();}
+ if(broken){songinterruption::gameplay.end();pmstory::cancelLaunch();PMDoorCancelPending();}
  diagf("LevelControl.Awake calling original hpActive=%d",pmhp::active());
  orig<VoidFn>(h::levelAwake)(self,mi);
  try{pmcontent::difficultyIntro(R(),self);}catch(const std::exception&e){diagf("Difficulty intro: %s",e.what());}
@@ -257,6 +275,7 @@ void onAwake(P self,P mi){
 }
 void onDestroy(P self,P mi){
  if(currentLevel && self!=currentLevel){orig<VoidFn>(h::levelDestroy)(self,mi);return;}
+ if(self==currentLevel)songinterruption::gameplay.end(); // Only this scene may retire UI/pending.
  currentLevel=nullptr;
  pauseLockedDoor=nullptr;
  lostDoorProgress=nullptr;
@@ -425,6 +444,7 @@ void updateStoryPresentation(P pc){
  }catch(const std::exception &e){diagf("Story cue update: %s",e.what());clearDoorPresentation();}
 }
 void onProgressUpdate(P self,P mi){
+ if(songinterruption::tick(songinterruption::Entry::Progress,self))return;
  uint64_t count=++progressUpdateCalls;bool heartbeat=heartbeatDue(lastProgressHeartbeat,count);
  if(heartbeat)diagf("ProgressControl.Update enter n=%llu",(unsigned long long)count);
  // The native end timer can already be running when the last note drains HP.
@@ -457,7 +477,10 @@ void onProgressUpdate(P self,P mi){
  // Failure fading must keep advancing when the native judge stops updating.
  if(attempt && attempt->trackLost() && !levelOverStarted && self==progress())
   tickGameplay(R(),self,"HP failure progress");
- {StoryPauseScope pause(R(),self,false,pmstory::blocksPause,pmsecretcourse::pauseOwner());orig<VoidFn>(h::progressUpdate)(self,mi);}
+ {songinterruption::PauseFence terminalFence;
+  StoryPauseScope pause(R(),self,false,pmstory::blocksPause,pmsecretcourse::pauseOwner());orig<VoidFn>(h::progressUpdate)(self,mi);}
+ // Catch the first clock crossing produced by native Update, before mod work.
+ if(songinterruption::tick(songinterruption::Entry::Progress,self))return;
  if(pmsecretcourse::active())try{pmsecretcourse::progressFrame(R(),self);}catch(const std::exception&e){diagf("Secret course end flags: %s",e.what());}
  updateStoryPresentation(self);
  if(heartbeat)diagf("ProgressControl.Update original returned n=%llu",(unsigned long long)count);
@@ -468,6 +491,7 @@ void onProgressUpdate(P self,P mi){
  try{diagnosticTick(R(),self,"ProgressControl.Update");}catch(const std::exception&e){diagf("ProgressControl.Update diagnostic failed: %s",e.what());}
 }
 void onJudgeUpdate(P self,P mi){
+ if(songinterruption::tick(songinterruption::Entry::Judge,self))return;
  if(courseScoreFrozen())return;
  judgeUpdateSeen=true;
  if(pmpractice::entryLoading(R(),R().get<P>(self,"progressControl"))){if(++judgeUpdateCalls==1)diagf("Practice entry: native judging held until range reset");return;}
@@ -477,15 +501,18 @@ void onJudgeUpdate(P self,P mi){
  try{auto&r=R();P pc=r.get<P>(self,"progressControl");ensureFloorArray(r,pc?r.get<P>(pc,"levelInformation"):nullptr);}catch(const std::exception&e){diagf("Judge floor buffer preparation failed: %s",e.what());}
  {
   auto &r=R();PlaybackJudgeScope rate(r);
+  songinterruption::PauseFence terminalFence;
   StoryPauseScope pause(r,self,true,pmstory::blocksPause,pmsecretcourse::pauseOwner());
   pmcontent::judgeWithHudPause(r,self,mi,orig<VoidFn>(h::judgeUpdate));
  }
+ if(songinterruption::tick(songinterruption::Entry::Judge,self))return;
  if(heartbeat)diagf("JudgeControl.Update original returned n=%llu",(unsigned long long)count);
  try{auto &r=R();P progressControl=r.get<P>(self,"progressControl");if(heartbeat)logProgressSnapshot(r,progressControl,"JudgeControl.Update",count);tickGameplay(r,progressControl,"JudgeControl.Update");}
  catch(const std::exception&e){lastError=std::string("JudgeControl.Update: ")+e.what();diagf("JudgeControl.Update failed: %s",e.what());}
  try{auto&r=R();pmfeatures::tick(r,r.get<P>(self,"progressControl"));}catch(const std::exception&e){static std::string previous;if(previous!=e.what()){previous=e.what();diagf("Visual feature tick failed: %s",e.what());}}
 }
 void onAddressableAudioUpdate(P self,P mi){
+ if(songinterruption::tick(songinterruption::Entry::Audio,self))return;
  try{if(pmpractice::ownsAudio(R(),self))pmpractice::audioBefore(R(),self);}catch(const std::exception&e){diagf("Practice audio pre-update failed: %s",e.what());}
  orig<VoidFn>(h::audioUpdate)(self,mi);
  try{if(pmpractice::ownsAudio(R(),self))pmpractice::audioAfter(R(),self);}catch(const std::exception&e){diagf("Practice audio post-update failed: %s",e.what());}
@@ -766,6 +793,7 @@ void onCreateNote(P self,int index,bool above,P mi){
  orig<void(*)(P,int,bool,P)>(h::lineCreateNote)(self,index,above,mi);
 }
 void onNoteManager(P self,P mi){
+ if(songinterruption::tick(songinterruption::Entry::Notes,self))return;
  if(pmpractice::entryLoading(R(),self))return;
  if(pmpractice::paused()){try{auto&r=R();ensureFloorArray(r,r.get<P>(self,"levelInformation"));pmpractice::previewFrame(r,self);pmcontent::visuals(r,r.get<P>(self,"progressControl"));}catch(const std::exception&e){diagf("Practice preview failed: %s",e.what());}return;}
  if(applying())try{pmmodes::beginFrame(R(),self);}catch(const std::exception&e){fault(e);}
@@ -820,6 +848,8 @@ void onHoldMove(P self,P mi){
 }
 template<h::Index i>void onNoteMove(P self,P mi){pmfeatures::beforeNoteMove(R(),self,false);orig<VoidFn>(i)(self,mi);pmfeatures::noteMoved(R(),self,false);try{pmcontent::noteMoved(R(),self,false);pmcontent::finishNoteGeometry(R(),self,false);}catch(const std::exception&e){diagf("RPE note visual/skin failed: %s",e.what());}if(applying())try{pmmodes::moved(R(),self);}catch(const std::exception&e){fault(e);}}
 void onNormalStart(P self,P mi){
+ // OS scene::play owns a separate native transition, never this list entry.
+ PMCancelSongInterruptionLaunch();
  pmstory::captureLaunch();
  watchingDoorLaunch=true;
  try{if(pmunlock::beforeStart(R(),self,^{pmnativecoordinator::normalStart(R(),self);try{pmcontent::selectorLoadingEnd(R(),true);}catch(const std::exception&e){diagf("Selector loading resume: %s",e.what());}orig<VoidFn>(h::normalStart)(self,mi);try{pmcontent::difficultyTransitionLabel(R(),self);}catch(const std::exception&e){diagf("Difficulty transition: %s",e.what());}}))return;}
@@ -868,6 +898,7 @@ void onOSSceneLoaded(SceneValue scene, int32_t mode, P mi) {
  });
 }
 void onOSSceneUnloaded(SceneValue scene, P mi) {
+ songinterruption::gameplay.unloaded(scene.handle);
  bool owned = os::sceneUnloaded(R(), scene.handle);
  pmnativecoordinator::sceneUnloaded(R(), scene.handle, owned);
  if (!owned)
@@ -1185,6 +1216,7 @@ bool pmsecretcourse::backendReady(){return ready&&!broken;}
  return YES;
 }
 + (NSDictionary *)practiceCommand:(NSInteger)action {
+ if(songinterruption::gameplay.holding())return @{ @"ok":@NO,@"message":@"Song interruption owns this attempt" };
  if(pmsecretcourse::active())return @{@"ok":@NO,@"message":@"Native LIFE course owns this attempt"};
  if(!ready||broken||!rt)return @{ @"ok":@NO,@"message":@"Gameplay backend unavailable" };
  try{auto&r=R();auto options=PMReadOptions([[PMSettings shared] snapshot]);float position=[[[PMSettings shared] value:@"practicePosition"] floatValue];

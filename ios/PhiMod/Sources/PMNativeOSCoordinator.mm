@@ -7,6 +7,7 @@
 #include "PMNativeOSScene.hpp"
 #include "PMNativeOSStartSound.hpp"
 #include "PMNativeOSNavigation.hpp"
+#include "PMNativeOSEnterScene.hpp"
 #include "PMNativeOSTransition.hpp"
 #import "PMNativeOSEntryTimeline.h"
 #include "PMNativeOSMap.hpp"
@@ -22,6 +23,7 @@
 #import "PMDoorRun.h"
 #import "PMChapterSecretCourse.h"
 #import "PMStoryCueRun.h"
+#import "PMSongInterruption.h"
 #import "PMDiagnostics.h"
 #import "PMUnlockMedia.h"
 #include "PMUnlockRuntime.hpp"
@@ -47,6 +49,7 @@ bool listStaging=false, targetPrepared=false, cutToList=false;
 int stableListFrames=0;
 void (^resumeAuthoredLoad)(BOOL)=nil;
 void (^mapRevealed)(void)=nil;
+pmnativeenterscene::Clock enterSceneClock;
 void cancelRouteCut();
 void targetReady(Runtime&);
 void pollPreparedMap(Runtime*,uint64_t,uint64_t,transition::Ticket);
@@ -55,7 +58,7 @@ void stopClock(){if(clockSource){dispatch_source_cancel(clockSource);clockSource
 struct ScheduledUnlock { int index; double remaining; };
 std::deque<ScheduledUnlock> unlockQueue;
 double previousUnlockTick=0;
-void clearScene(Runtime &r,uint64_t closingVisit=visit){mapRevealed=nil;unlockQueue.clear();previousUnlockTick=0;stopClock(); [actions invalidate]; actions=nil; mountMap=nil; applyCheckpoint=nil; if(detailID)panel::close(r,detailID);detailID=0;if(mapID)map::close(r,mapID);mapID=0;if(closingVisit)chrome::close(r,closingVisit);chromeView={};rows::release();detail=nil;selected=nil;choices=nil;busy=false;}
+void clearScene(Runtime &r,uint64_t closingVisit=visit){enterSceneClock.reset();mapRevealed=nil;unlockQueue.clear();previousUnlockTick=0;stopClock(); [actions invalidate]; actions=nil; mountMap=nil; applyCheckpoint=nil; if(detailID)panel::close(r,detailID);detailID=0;if(mapID)map::close(r,mapID);mapID=0;if(closingVisit)chrome::close(r,closingVisit);chromeView={};rows::release();detail=nil;selected=nil;choices=nil;busy=false;}
 NSDictionary *entry(NSDictionary *card){NSString *sid=card[@"sid"]?:card[@"installedID"];if(!sid)return nil;NSMutableDictionary *e=[@{@"songID":sid} mutableCopy];if(card[@"difficulty"])e[@"difficulty"]=card[@"difficulty"];return e;}
 NSArray *options(NSDictionary *card){NSArray *replays=card[@"replaySongs"];if(replays.count)return replays;NSDictionary *e=entry(card);return e?@[e]:@[];}
 void discardHandoff(){handoffScene=0;}
@@ -83,8 +86,11 @@ bool leave(Runtime &r,bool back){
  mode=Mode::returning;clearScene(r);return true;
 }
 bool presentMap(Runtime &r){
- mode=Mode::map;busy=false;
- const bool shown=chrome::present(r,visit,chrome::Face::Map,true,0,!gated)&&map::present(r,mapID,true,true,true);
+ mode=Mode::map;
+ const bool entry=program && program.page->enterScene.declared && !program.entrySceneSeen && !enterSceneClock.finished;
+ busy=entry;
+ const bool shown=chrome::present(r,visit,chrome::Face::Map,!entry,0,!gated)&&map::present(r,mapID,true,!enterSceneClock.committing,!entry);
+ if(shown && entry)enterSceneClock.shown(CACurrentMediaTime());
  if(shown)navigation.presentedOS(chapter.UTF8String?:"");
  return shown;
 }
@@ -134,6 +140,20 @@ void scheduleUnlock(int index){
  if(spec.once && spec.seen)return;
  for(const auto &queued:unlockQueue)if(queued.index==index)return;
  unlockQueue.push_back({index,spec.after});
+}
+void tickEntryScene(Runtime &r){
+ if(mode!=Mode::map || !program || !program.page->enterScene.declared || program.entrySceneSeen || enterSceneClock.finished)return;
+ if(UIApplication.sharedApplication.applicationState!=UIApplicationStateActive)return;
+ const auto spec=program.page->enterScene;
+ if(!enterSceneClock.claim(CACurrentMediaTime(),spec.duration))return;
+ map::present(r,mapID,true,false,false);
+ const uint64_t token=visit,epoch=generation,owner=mapID;
+ [program markEntrySceneSeen:^(BOOL saved){
+  if(visit!=token || generation!=epoch || mapID!=owner || mode!=Mode::map)return;
+  if(!saved)PMDiagnosticsWrite("Chapter OS entry scene completion could not be saved; retry next visit");
+  enterSceneClock.complete();
+  if(!map::displayPage(*game,mapID,spec.toScreen) || !presentMap(*game))leave(*game,false);
+ }];
 }
 void tickUnlocks(Runtime &r){
  double now=CACurrentMediaTime(),elapsed=previousUnlockTick?now-previousUnlockTick:0;
@@ -224,6 +244,8 @@ void arrived(Runtime &r,uint64_t token,scene::Route route,P root){
      NSString *reason=nil;
      mapID=map::open(*game,chromeView.parent,*actions.page,actions.nodes,chromeView.font,^(uint64_t m,int i){activate(m,i);},&reason);
      if (!mapID) { PMDiagnosticsWrite(reason.UTF8String?:"Native chapter map unavailable"); return NO; }
+     const auto &intro=actions.page->enterScene;
+     if(intro.declared && !map::displayPage(*game,mapID,(enterSceneClock.finished || program.entrySceneSeen)?intro.toScreen:intro.initialScreen))return NO;
      if(cutTicket){
          if(!chrome::present(*game,visit,chrome::Face::Map,false,0,!gated) ||
             !map::prepare(*game,mapID,cutTicket))return NO;
@@ -275,7 +297,7 @@ void arrived(Runtime &r,uint64_t token,scene::Route route,P root){
  previousUnlockTick=CACurrentMediaTime();
  clockSource=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());
  dispatch_source_set_timer(clockSource,DISPATCH_TIME_NOW,NSEC_PER_SEC/30,NSEC_PER_MSEC*3);
- dispatch_source_set_event_handler(clockSource,^{if(visit!=token)return;tickUnlocks(*game);if(mode==Mode::map)map::tick(*game,mapID);});dispatch_resume(clockSource);
+ dispatch_source_set_event_handler(clockSource,^{if(visit!=token)return;tickEntryScene(*game);tickUnlocks(*game);if(mode==Mode::map)map::tick(*game,mapID);});dispatch_resume(clockSource);
  };
  if(cutTicket){mapRevealed=[revealed copy];pollPreparedMap(game,token,epoch,cutTicket);}
  else {
@@ -362,7 +384,7 @@ bool playSelection(Runtime &r,NSDictionary *card,NSDictionary *choice){
  auto resume=^(BOOL completed){
   if(!sameFace())return;
   auto finished=^(bool routed){
-   if(!routed && armed){PMDoorCancelPending();pmstory::cancelLaunch();armed=false;}
+   if(!routed && armed){PMDoorCancelPending();pmstory::cancelLaunch();PMCancelSongInterruptionLaunch();armed=false;}
    if(!routed && sameFace())busy=false;
   };
   cutChecked(^{
@@ -371,7 +393,11 @@ bool playSelection(Runtime &r,NSDictionary *card,NSDictionary *choice){
     if(!valid())return false;
     auto exact=rows::resolveStart(gameRuntime,sid,diff);
     if(!exact.info || exact.info!=info)return false;
-    armed=armGameplay(card,exact);return armed;
+    armed=armGameplay(card,exact);
+    if(armed && !PMArmSongInterruption(program.visibleBySong[exact.chartID][@"interruption"],exact.chartID,exact.slot)){
+     PMDoorCancelPending();pmstory::cancelLaunch();PMCancelSongInterruptionLaunch();armed=false;
+    }
+    return armed;
    };
    started=scene::play(*rt,token,song.info,arm,finished);
   });

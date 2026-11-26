@@ -131,6 +131,8 @@ static void resolveEntryTransition(lua_State *L, PMOSPage *page) {
             if (node->kind == PMOSHotspot || node->handler || node->open || node->to[0] ||
                 node->challenge || node->dropTarget[0] || node->alphaHit)
                 luaL_error(L, "entryTransition timeline nodes must be noninteractive (node %d)", i + 1);
+            if (node->blend != PMOSBlendNormal)
+                luaL_error(L, "entryTransition timeline does not support additive blend (node %d)", i + 1);
             if (node->loop || node->motion.tapTime || node->motion.tapFlash || node->tapFace[0] ||
                 node->motion.tapScale != 1.06)
                 luaL_error(L, "entryTransition timeline permits only still images and passive motion (node %d)", i + 1);
