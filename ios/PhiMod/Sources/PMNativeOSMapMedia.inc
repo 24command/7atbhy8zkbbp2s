@@ -11,7 +11,6 @@ struct GifVisit {
     NSData *ready = nil;
     playback::SequenceClock sequenceClock;
     playback::SequenceSlot readySlot{}, requestSlot{};
-    bool sequenceMissed=false;
     size_t frame = 0, count = 0;
     float aspect = 1;
     double delay = .1, due = 0;
@@ -94,10 +93,10 @@ void requestGif(Media &media) {
                 if (owner->frame != frame || owner->decoder != decoder) return;
                 owner->pending = false;
                 if (sequence) {
-                    // Clock target may advance while decoding. Release the pending
-                    // slot, but never publish old-lap/old-frame images or failures.
+                    // Late success can advance the displayed frame without changing
+                    // the clock. Late failure is ignored once its target is obsolete.
                     if (ok) { owner->delay=delay; owner->count=count; }
-                    if (!owner->sequenceClock.accepts(ticket)) {owner->sequenceMissed=true;return;}
+                    if (!(ok ? owner->sequenceClock.accepts(ticket) : owner->sequenceClock.acceptsFailure(ticket))) return;
                     owner->readySlot=ticket;
                 }
                 owner->failed = !ok; owner->ready = png;
@@ -275,22 +274,24 @@ void syncMedia(Map &m, Media &media, bool play, double t) {
         } else if ([media.path.pathExtension.lowercaseString isEqualToString:@"pma"]) {
             auto &g=*media.gif;
             const auto wanted=g.sequenceClock.sample(t,g.count,g.delay,media.loop);
-            // Ready data may be one frame ahead (bounded prefetch), never behind.
-            if ((g.ready || g.failed) && g.readySlot.before(wanted)) {g.ready=nil;g.failed=false;g.sequenceMissed=true;}
+            // Recheck on upload: the target/lap can advance after completion.
+            // Behind wanted is OK for a same-lap success newer than the screen.
+            if (g.ready && !g.sequenceClock.accepts(g.readySlot)) g.ready=nil;
+            if (g.failed && !g.sequenceClock.acceptsFailure(g.readySlot)) g.failed=false;
             if (g.failed && g.readySlot==wanted) {failMedia(m,media,@"PMA frame decode failed");return;}
-            if (g.ready && g.readySlot==wanted) {
+            if (g.ready && g.sequenceClock.canDisplay(g.readySlot)) {
                 texture=m.get(media.texture);aspect=g.aspect;
                 upload(r,texture,g.ready,false);g.ready=nil;
-                g.sequenceClock.displayed(wanted);
+                g.sequenceClock.displayed(g.readySlot);
                 // Never finish solely because time passed: the last image must upload.
-                g.finished=!media.loop && g.count && wanted.frame==g.count-1;
+                g.finished=!media.loop && g.count && g.readySlot.frame==g.count-1;
             }
             if (!g.pending && !g.ready && !g.failed) {
                 // Keep only one upcoming frame. This allows a 60fps sequence to
                 // meet the next display tick without building a frame cache.
-                const auto ticket=g.sequenceClock.needsFrame() && !g.sequenceMissed ? wanted : g.sequenceClock.next(g.count,media.loop);
+                const auto ticket=g.sequenceClock.needsFrame() ? wanted : g.sequenceClock.next(g.count,media.loop);
                 if (g.sequenceClock.needsFrame() || ticket!=wanted) {
-                    g.requestSlot=ticket;g.frame=ticket.frame;g.sequenceMissed=false;
+                    g.requestSlot=ticket;g.frame=ticket.frame;
                     requestGif(media);
                 }
             }

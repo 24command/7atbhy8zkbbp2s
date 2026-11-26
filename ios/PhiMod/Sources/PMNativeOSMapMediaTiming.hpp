@@ -45,7 +45,20 @@ struct SequenceClock {
     SequenceSlot sample(double now,std::size_t count,double delay,bool loop) {
         wanted=sequenceSlot(now-origin,count,delay,loop,std::fabs(now)+std::fabs(origin));return wanted;
     }
-    bool accepts(SequenceSlot ticket) const {return !ticket.before(wanted);}
+    // Successful late frames may still advance the screen. Comparing with wanted
+    // here starves playback whenever decode latency exceeds one frame interval.
+    // Keep at most one future prefetch, but never reuse old-lap or displayed data.
+    bool accepts(SequenceSlot ticket) const {
+        return ticket.cycle>=wanted.cycle && (!hasShown || shown.before(ticket));
+    }
+    bool canDisplay(SequenceSlot ticket) const {
+        return accepts(ticket) && ticket.cycle==wanted.cycle && ticket.frame<=wanted.frame;
+    }
+    // A failed obsolete request must not kill a later authored frame. A failure
+    // of the current/future target (including the nonloop final frame) still fails.
+    bool acceptsFailure(SequenceSlot ticket) const {
+        return accepts(ticket) && !ticket.before(wanted);
+    }
     SequenceSlot next(std::size_t count,bool loop) const {
         if (!count || wanted.frame+1<count) return {count ? wanted.frame+1 : 0,wanted.cycle};
         return loop ? SequenceSlot{0,wanted.cycle+1} : wanted;
