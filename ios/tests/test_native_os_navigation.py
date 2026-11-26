@@ -104,6 +104,13 @@ uint64_t requestedEntry=0,generation=1,visit=2,mapID=3,cutTicket=0;
 struct {bool cover=false;} bridge;
 bool gated=false,busy=false,mapOK=true,chromeOK=true;
 pmnativeosnavigation::Visit navigation;
+struct Plan{struct Intro{bool declared=false;} enterScene;} plan;
+struct Program{Plan*page=&plan;bool entrySceneSeen=false;explicit operator bool()const{return true;}} program;
+struct Clock{bool finished=false,committing=false;int starts=0;void shown(double){++starts;}} enterSceneClock;
+double CACurrentMediaTime(){return 100;}
+int canceledInterruptions=0;
+void PMCancelSongInterruptionLaunch(){++canceledInterruptions;}
+
 template<class F>bool cutChecked(F f){try{f();return true;}catch(...){return false;}}
 namespace chrome {enum class Face{Map};bool present(Runtime&,uint64_t,Face,bool,int,bool){return chromeOK;}}
 namespace map {bool present(Runtime&,uint64_t,bool,bool,bool){return mapOK;}}
@@ -143,6 +150,7 @@ void reset(){
  navigation={};navigation.presentedOS("kld");
  runtime={};selector=&owner;mode=Mode::list;bridge.cover=false;cutTicket=0;
  requestedEntry=0;generation=1;resume={};gate=0;launches=ends=0;expectedOS=false;
+ plan={};program={};enterSceneClock={};canceledInterruptions=0;
 }
 """
         code += definition(HOOK, 'void onNormalStart(').replace('^{', '[=]{') + '\n'
@@ -166,7 +174,7 @@ int main(){
  }
  reset();requestedEntry=99;normalStart(runtime,&owner); // stale request isn't pending
  assert(!navigation.wantsOS("kld",false,false,false));
- reset();onNormalStart(&owner,nullptr);assert(launches==1&&ends==1);
+ reset();onNormalStart(&owner,nullptr);assert(launches==1&&ends==1&&canceledInterruptions==1);
  reset();gate=1;onNormalStart(&owner,nullptr);
  assert(resume&&launches==0&&ends==0&&navigation.wantsOS("kld",false,false,false));
  resume();assert(launches==1&&ends==1); // observer runs before async detach
@@ -215,6 +223,13 @@ struct Runtime {
 int sceneHandle(Runtime&,P p){return *static_cast<int*>(p);}
 template<class F>bool cutChecked(F f){try{f();return true;}catch(...){return false;}}
 pmnativeosnavigation::Visit navigation;
+struct Plan{struct Intro{bool declared=false;} enterScene;} plan;
+struct Program{Plan*page=&plan;bool entrySceneSeen=false;explicit operator bool()const{return true;}} program;
+struct Clock{bool finished=false,committing=false;int starts=0;void shown(double){++starts;}} enterSceneClock;
+double CACurrentMediaTime(){return 100;}
+int canceledInterruptions=0;
+void PMCancelSongInterruptionLaunch(){++canceledInterruptions;}
+
 """
         code += definition(COORD, 'void chapterReady(').replace('NSString *path', 'const char *path').replace('path.UTF8String?:""', 'path')
         code += r"""
