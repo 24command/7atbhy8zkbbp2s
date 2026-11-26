@@ -7,7 +7,8 @@ if [[ "$(uname -s)" != Darwin ]]; then
   exit 1
 fi
 command -v xcrun >/dev/null
-export CXX="$(xcrun --find clang++)"
+export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+export CXX="$(xcrun --sdk macosx --find clang++)"
 python3 "$ROOT/tests/test_native_os_frame_sequence.py"
 python3 "$ROOT/tests/test_pma_one_shot_presenter.py"
 python3 "$ROOT/tests/test_pma_map_clock.py"
