@@ -26,6 +26,71 @@ struct Anchors { Point low, high; };
 inline Anchors anchors(const PMOSNode &n) {
     return {{float(n.x), float(1 - n.y - n.h)}, {float(n.x + n.w), float(1 - n.y)}};
 }
+// Tracks use age after the most recent own/manual/parent visibility start.
+inline double nodeAge(double now, double ownStart, double manualSince = 0, double parentShown = 0) {
+    return std::max(0., now - std::max({ownStart, manualSince, parentShown}));
+}
+struct Numeric {
+    double x, y, w, h, rotation, scaleX, scaleY, opacity, red, green, blue, alpha;
+};
+inline Anchors anchors(const Numeric &n) {
+    return {{float(n.x), float(1 - n.y - n.h)}, {float(n.x + n.w), float(1 - n.y)}};
+}
+inline double boundedNumeric(int property, double value) {
+    switch (property) {
+        case PMOSTrackX: case PMOSTrackY: return std::clamp(value, -8., 8.);
+        case PMOSTrackW: case PMOSTrackH: return std::clamp(value, 0., 8.);
+        case PMOSTrackRotation: return std::clamp(value, -1e6, 1e6);
+        case PMOSTrackScaleX: case PMOSTrackScaleY: return std::clamp(value, -16., 16.);
+        default: return std::clamp(value, 0., 1.);
+    }
+}
+// Upper-bound search: exact key times select that key (also for step segments).
+// Callers may omit the pool entirely for static/legacy aggregate-zero nodes.
+inline double trackValue(const PMOSTrack &track, const PMOSTrackKey *pool,
+                         int poolCount, double age, double fallback) {
+    if (!pool || track.count <= 0 || track.offset < 0 || track.offset > poolCount ||
+        track.count > poolCount - track.offset) return fallback;
+    const PMOSTrackKey *keys = pool + track.offset;
+    if (!(age > keys[0].time)) return keys[0].value;
+    if (age >= keys[track.count - 1].time) return keys[track.count - 1].value;
+    int low = 1, high = track.count - 1;
+    while (low < high) {
+        int mid = low + (high - low) / 2;
+        if (keys[mid].time <= age) low = mid + 1;
+        else high = mid;
+    }
+    const auto &left = keys[low - 1], &right = keys[low];
+    if (left.ease == PMOSTrackStep) return left.value;
+    double dt = right.time - left.time, u = (age - left.time) / dt;
+    if (left.ease != PMOSTrackCubic) return left.value + (right.value - left.value) * u;
+    double u2 = u * u, u3 = u2 * u;
+    return (2*u3 - 3*u2 + 1)*left.value + (u3 - 2*u2 + u)*(dt*left.outTangent)
+         + (-2*u3 + 3*u2)*right.value + (u3 - u2)*(dt*right.inTangent);
+}
+inline Numeric numeric(const PMOSNode &n, double age,
+                       const PMOSTrackKey *pool = nullptr, int poolCount = 0) {
+    unsigned color = n.rgba;
+    if (n.kind == PMOSImage && !(n.numericFlags & PMOSHasColor) && !color) color = 0xffffffffu;
+    Numeric result {n.x, n.y, n.w, n.h, n.rotation,
+        n.numericFlags & PMOSHasScaleX ? n.scaleX : 1.,
+        n.numericFlags & PMOSHasScaleY ? n.scaleY : 1.,
+        n.numericFlags & PMOSHasOpacity ? n.opacity : 1.,
+        double((color >> 24) & 255)/255., double((color >> 16) & 255)/255.,
+        double((color >> 8) & 255)/255., double(color & 255)/255.};
+    age = std::max(0., age);
+    if (n.trackLoop > 0 && std::isfinite(age)) age = std::fmod(age, n.trackLoop);
+    double *values[] = {&result.x, &result.y, &result.w, &result.h, &result.rotation,
+        &result.scaleX, &result.scaleY, &result.opacity, &result.red, &result.green, &result.blue};
+    for (int i = 0; i < PMOSTrackPropertyCount; ++i) {
+        if (n.tracks[i].count > 0)
+            *values[i] = boundedNumeric(i, trackValue(n.tracks[i], pool, poolCount, age, *values[i]));
+    }
+    return result;
+}
+inline Numeric numeric(const PMOSPage &page, const PMOSNode &node, double age) {
+    return numeric(node, age, page.trackKeys, page.trackKeyCount);
+}
 // A negative value means outside the half-open interval. Zero is the first fade sample.
 inline float opacity(double t, double start, double duration, double fade) {
     if (t < start || (duration > 0 && t >= start + duration)) return -1;

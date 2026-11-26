@@ -10,7 +10,7 @@ static inline NSString *PMOSLocalMediaPath(NSString *chapter,NSString *name,NSAr
 }
 // Preserve ordinary map/import validation. MOV is transition-video-only.
 static inline NSString *PMOSArtPath(NSString *chapter,NSString *name){
- return PMOSLocalMediaPath(chapter,name,@[@"png",@"jpg",@"jpeg",@"webp",@"gif",@"mp4"]);
+ return PMOSLocalMediaPath(chapter,name,@[@"png",@"jpg",@"jpeg",@"webp",@"gif",@"mp4",@"pma"]);
 }
 static inline NSString *PMOSEntryVideoPath(NSString *chapter,NSString *name){
  return PMOSLocalMediaPath(chapter,name,@[@"mp4",@"mov"]);

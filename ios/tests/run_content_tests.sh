@@ -19,6 +19,12 @@ clang++ -std=c++17 -fobjc-arc -DPMDOOR_RUN_HOST_TEST -framework Foundation -fram
   clang -std=c99 -O2 -c "$ROOT"/PhiMod/Vendor/lua54/*.c "$ROOT/PhiMod/Core/PMChapterVM.c"
   clang -std=c99 -O2 "$ROOT/tests/PMChapterVMTest.c" ./*.o -o chaptervm
   ./chaptervm
+  clang -std=c99 -O2 -UNDEBUG "$ROOT/tests/PMChapterNumericTracksTest.c" ./*.o -o chaptervm
+  ./chaptervm
+  clang -std=c99 -O2 -UNDEBUG "$ROOT/tests/PMChapterPMAOneShotTest.c" ./*.o -o chaptervm
+  ./chaptervm
+  clang++ -std=c++17 -O2 -UNDEBUG "$ROOT/tests/PMNativeOSNumericTracksTest.cpp" ./*.o -o nativemap
+  ./nativemap
   clang -std=c99 -O2 "$ROOT/tests/PMChapterSongVisibilityTest.c" ./*.o -o chaptervm
   ./chaptervm
   clang -std=c99 -O2 "$ROOT/tests/PMChapterC8WaveformTest.c" ./*.o -o c8waveform
@@ -44,6 +50,7 @@ clang++ -std=c++17 -fobjc-arc -DPMDOOR_RUN_HOST_TEST -framework Foundation -fram
     "$ROOT/PhiMod/Sources/PMOSAuthorProgress.mm" ./*.o -o chaptercover
   ./chaptercover
 )
+python3 "$ROOT/tests/test_native_os_frame_sequence.py"
 python3 "$ROOT/tests/run_chapter_puzzle.py" clang -O2
 python3 "$ROOT/tests/test_story_sequence.py"
 python3 "$ROOT/tests/test_story_native_start.py"

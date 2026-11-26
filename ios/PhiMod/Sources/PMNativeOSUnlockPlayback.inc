@@ -27,10 +27,16 @@
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{@autoreleasepool {
         NSString *path = [reference hasPrefix:@"@stock/"] ? PMResolveStockIntro(reference) :
             PMOSArtPath([PMContentStore.shared asset:program.chapter],reference);
-        NSURL *url=path ? [NSURL fileURLWithPath:path] : nil;
-        AVURLAsset *asset=url ? [AVURLAsset URLAssetWithURL:url options:nil] : nil;
-        double seconds=asset ? CMTimeGetSeconds(asset.duration) : 0;
-        BOOL usable=std::isfinite(seconds) && seconds>0 && [asset tracksWithMediaType:AVMediaTypeVideo].count;
+        double seconds=0;
+        BOOL usable=NO;
+        if([path.pathExtension.lowercaseString isEqualToString:@"pma"]){
+            usable=PMUnlockFrameSequenceMetadata(path,&seconds);
+        }else{
+            NSURL *url=path ? [NSURL fileURLWithPath:path] : nil;
+            AVURLAsset *asset=url ? [AVURLAsset URLAssetWithURL:url options:nil] : nil;
+            seconds=asset ? CMTimeGetSeconds(asset.duration) : 0;
+            usable=std::isfinite(seconds) && seconds>0 && [asset tracksWithMediaType:AVMediaTypeVideo].count;
+        }
         double end=spec.duration>0 ? std::min(seconds,spec.duration) : seconds;
         dispatch_async(dispatch_get_main_queue(), ^{
             PMNativeOSActions *owner=weak;

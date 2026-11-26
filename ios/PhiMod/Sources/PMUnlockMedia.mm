@@ -3,12 +3,40 @@
 #import <ImageIO/ImageIO.h>
 #import <QuartzCore/QuartzCore.h>
 #include <cmath>
+#include "PMNativeOSFrameSequence.hpp"
+#include "PMNativeOSFrameSequencePlayback.hpp"
 
 @protocol PMMediaPresentation <NSObject>
 - (void)finish:(BOOL)completed;
 @end
 
-@interface PMUnlockMediaView : UIView <PMMediaPresentation>
+static dispatch_queue_t PMUnlockSequenceQueue(void) {
+ static dispatch_queue_t queue; static dispatch_once_t once;
+ dispatch_once(&once, ^{queue=dispatch_queue_create("PhiMod.unlock.PMA",DISPATCH_QUEUE_SERIAL);});
+ return queue;
+}
+BOOL PMUnlockFrameSequenceMetadata(NSString *path,double *seconds) {
+ if(seconds)*seconds=0;
+ if(![path.pathExtension.lowercaseString isEqualToString:@"pma"])return NO;
+ NSObject *source=PMOSFrameSequenceOpen(path,nullptr);
+ if(!source)return NO;
+ double duration=PMOSFrameSequenceCount(source)*PMOSFrameSequenceDelay(source);
+ if(!std::isfinite(duration)||duration<=0||duration>600)return NO;
+ if(seconds)*seconds=duration;
+ return YES;
+}
+
+@interface PMUnlockMediaView : UIView <PMMediaPresentation> {
+ pmpma::Playback _sequenceState;
+}
+@property(nonatomic) BOOL frameSequence;
+@property(nonatomic,strong) NSObject *sequenceSource;
+@property(nonatomic,copy) NSString *sequencePath;
+- (void)startSequence:(NSString *)path;
+- (void)requestSequenceFrame:(NSUInteger)frame;
+- (void)stepSequence:(double)now;
+- (BOOL)setSequenceLimit:(double)seconds;
+- (void)showFallback;
 @property(nonatomic) BOOL strict;
 @property(nonatomic,strong) UIView *timelineOverlay;
 @property(nonatomic,copy) void (^sample)(double);
@@ -31,16 +59,71 @@
 @end
 static UIView<PMMediaPresentation> *activeMedia;
 @implementation PMUnlockMediaView
+- (BOOL)setSequenceLimit:(double)seconds {return _sequenceState.setLimit(seconds);}
+- (void)startSequence:(NSString *)path {
+ self.frameSequence=YES;self.sequencePath=path;
+ _sequenceState=pmpma::Playback(CACurrentMediaTime());
+ [(UIButton *)[self viewWithTag:101] setEnabled:NO];
+ [self requestSequenceFrame:0];
+}
+- (void)requestSequenceFrame:(NSUInteger)frame {
+ if(activeMedia!=self || self.fallback)return;
+ const auto token=_sequenceState.request(frame,CACurrentMediaTime());
+ if(!token)return;
+ __weak PMUnlockMediaView *weak=self;
+ NSObject *existing=self.sequenceSource;
+ NSString *path=self.sequencePath;
+ dispatch_async(PMUnlockSequenceQueue(), ^{@autoreleasepool {
+  if(!weak)return;
+  NSObject *source=nil;UIImage *image=nil;NSUInteger count=0;double delay=0;
+  @try {
+   source=existing ?: PMOSFrameSequenceOpen(path,nullptr);
+   if(source){
+    count=PMOSFrameSequenceCount(source);delay=PMOSFrameSequenceDelay(source);
+    CGImageRef decoded=PMOSFrameSequenceCopyFrame(source,frame,2048,nullptr);
+    if(decoded){@try {image=[UIImage imageWithCGImage:decoded];} @finally {CGImageRelease(decoded);}}
+   }
+  } @catch(NSException *exception) {(void)exception;image=nil;}
+  dispatch_async(dispatch_get_main_queue(), ^{
+   PMUnlockMediaView *owner=weak;
+   if(!owner || activeMedia!=owner || !owner->_sequenceState.owns(token,frame))return;
+   if(UIApplication.sharedApplication.applicationState!=UIApplicationStateActive){[owner finish:NO];return;}
+   if(!source || !image){[owner showFallback];return;}
+   if(!owner->_sequenceState.ready && !owner->_sequenceState.configure(count,delay,owner.durationLimit)){
+    [owner showFallback];return;
+   }
+   if(!owner->_sequenceState.display(token,frame,CACurrentMediaTime())){[owner showFallback];return;}
+   owner.sequenceSource=source;owner.image.image=image;owner.image.hidden=NO;
+   owner.lastFrame=frame;
+   [(UIButton *)[owner viewWithTag:101] setEnabled:YES];
+  });
+ }});
+}
+- (void)stepSequence:(double)now {
+ const auto action=_sequenceState.poll(now);
+ if(action==pmpma::Playback::Action::Fail){[self showFallback];return;}
+ if(_sequenceState.ready && self.sample){
+  self.sample(_sequenceState.elapsed(now));
+  if(activeMedia!=self)return; // sample may cancel or replace this presentation.
+ }
+ if(action==pmpma::Playback::Action::Complete){[self finish:YES];return;}
+ if(action==pmpma::Playback::Action::Decode)[self requestSequenceFrame:_sequenceState.target(now)];
+}
 - (void)layoutSubviews{[super layoutSubviews];self.image.frame=self.bounds;self.video.frame=self.bounds;self.timelineOverlay.frame=self.bounds;self.message.frame=CGRectInset(self.bounds,40,80);UIView*skip=[self viewWithTag:101];skip.frame=CGRectMake(MAX(12,self.bounds.size.width-132),MAX(12,self.safeAreaInsets.top+8),112,44);}
 - (void)showFallback{
+ if(self.frameSequence){_sequenceState.cancel();self.sequenceSource=nil;[(UIButton *)[self viewWithTag:101] setEnabled:YES];}
  self.timelineOverlay.hidden=YES;self.fallback=YES;self.began=CACurrentMediaTime();[self.player pause];[self.video removeFromSuperlayer];self.video=nil;
  self.image.image=[UIImage imageWithContentsOfFile:self.cover];self.image.hidden=NO;
- self.message.text=@"Unlocked — tap Skip to continue";self.message.hidden=NO;
+ self.message.text=self.frameSequence ? @"Animation unavailable — tap Skip to continue" : @"Unlocked — tap Skip to continue";self.message.hidden=NO;
 }
-- (void)skip{[self finish:!(self.strict && self.fallback)];}
+- (void)skip{
+ if(self.frameSequence){if(self.fallback){[self finish:NO];return;}if(!_sequenceState.canSkip())return;}
+ [self finish:!(self.strict && self.fallback)];
+}
 - (void)step:(CADisplayLink*)clock{
  if(UIApplication.sharedApplication.applicationState!=UIApplicationStateActive){[self finish:NO];return;}
- if(self.fallback){if(clock.timestamp-self.began>.75)[self finish:!self.strict];return;}
+ if(self.fallback){if(clock.timestamp-self.began>.75)[self finish:!self.strict && !self.frameSequence];return;}
+ if(self.frameSequence){[self stepSequence:CACurrentMediaTime()];return;}
  if(self.gif){
   double elapsed=clock.timestamp-self.began;if(elapsed>=[self.ends.lastObject doubleValue]){[self finish:YES];return;}
   NSUInteger i=0;while(i+1<self.ends.count&&elapsed>=[self.ends[i] doubleValue])++i;
@@ -60,6 +143,7 @@ static UIView<PMMediaPresentation> *activeMedia;
 }
 - (void)finish:(BOOL)completed{
  if(activeMedia!=self)return;
+ if(self.frameSequence){_sequenceState.cancel();self.sequenceSource=nil;self.sequencePath=nil;self.image.image=nil;}
  [self.clock invalidate];self.clock=nil;[self.player pause];self.player=nil;
  if(self.endToken)[NSNotificationCenter.defaultCenter removeObserver:self.endToken];self.endToken=nil;
  if(self.gif){CFRelease(self.gif);self.gif=NULL;}
@@ -70,7 +154,8 @@ BOOL PMUnlockMediaBusy(void){return activeMedia!=nil;}
 void PMConfigureUnlockTimeline(UIView *overlay,double duration,void (^sample)(double)){
  if(![activeMedia isKindOfClass:PMUnlockMediaView.class])return;
  PMUnlockMediaView *view=(PMUnlockMediaView*)activeMedia;
- if(!view || !view.player || !sample)return;
+ if(!view || (!view.player && !view.frameSequence) || !sample)return;
+ if(view.frameSequence && ![view setSequenceLimit:duration]){[view showFallback];return;}
  view.durationLimit=duration;
  view.timelineOverlay=overlay;
  if(overlay){
@@ -92,7 +177,9 @@ BOOL PMPresentUnlockMediaWithPolicy(NSString*path,NSString*cover,NSString*title,
  v.strict=strict;v.message=[UILabel new];v.message.text=title;v.message.textAlignment=NSTextAlignmentCenter;v.message.textColor=UIColor.whiteColor;v.message.numberOfLines=0;v.message.hidden=YES;[v addSubview:v.message];
  UIButton*skip=[UIButton buttonWithType:UIButtonTypeSystem];skip.tag=101;[skip setTitle:@"Skip / 继续" forState:UIControlStateNormal];skip.tintColor=UIColor.whiteColor;skip.backgroundColor=[UIColor colorWithWhite:.2 alpha:.85];[skip addTarget:v action:@selector(skip) forControlEvents:UIControlEventTouchUpInside];[v addSubview:skip];
  activeMedia=v;[window addSubview:v];
- if([path.pathExtension.lowercaseString isEqualToString:@"gif"]){
+ if([path.pathExtension.lowercaseString isEqualToString:@"pma"]){
+  [v startSequence:path];
+ }else if([path.pathExtension.lowercaseString isEqualToString:@"gif"]){
   NSDictionary*attrs=[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
   if([attrs[NSFileSize] unsignedLongLongValue]<=32ull*1024*1024)v.gif=CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:path],NULL);
   NSMutableArray*ends=[NSMutableArray new];double total=0;size_t count=v.gif?CGImageSourceGetCount(v.gif):0;

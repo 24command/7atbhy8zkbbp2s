@@ -46,11 +46,72 @@ class HeldTransitionTests(unittest.TestCase):
 
     def test_legacy_unlock_logic_is_unchanged(self):
         legacy = SOURCE.split('// BEGIN PM_HELD_TRANSITION_CORE', 1)[0]
+        # PMA adds a sibling backend to the shared owner. Exclude only its new
+        # implementation/declarations and project the explicitly guarded shared
+        # statements back to their non-PMA form. Keep the ORIGINAL baseline hash:
+        # GIF/video setup, ticking, fallback/Skip, cleanup, overlay and ownership
+        # must remain byte-for-byte unchanged, not merely contain a few tokens.
+        def replace_once(old, new):
+            nonlocal legacy
+            self.assertEqual(legacy.count(old), 1, 'missing/ambiguous PMA integration: ' + old)
+            legacy = legacy.replace(old, new, 1)
+
+        replace_once('#include "PMNativeOSFrameSequence.hpp"\n', '')
+        replace_once('#include "PMNativeOSFrameSequencePlayback.hpp"\n', '')
+        # Explicit delimiters exclude new PMA helpers only, never a legacy method.
+        for start, end in (
+            ('static dispatch_queue_t PMUnlockSequenceQueue(void) {',
+             '@interface PMUnlockMediaView : UIView <PMMediaPresentation>'),
+            ('- (BOOL)setSequenceLimit:(double)seconds {', '- (void)layoutSubviews{'),
+        ):
+            self.assertEqual(legacy.count(start), 1)
+            self.assertEqual(legacy.count(end), 1)
+            first, last = legacy.index(start), legacy.index(end)
+            self.assertLess(first, last)
+            legacy = legacy[:first] + legacy[last:]
+        replace_once(
+            '@interface PMUnlockMediaView : UIView <PMMediaPresentation> {\n'
+            ' pmpma::Playback _sequenceState;\n}\n'
+            '@property(nonatomic) BOOL frameSequence;\n'
+            '@property(nonatomic,strong) NSObject *sequenceSource;\n'
+            '@property(nonatomic,copy) NSString *sequencePath;\n'
+            '- (void)startSequence:(NSString *)path;\n'
+            '- (void)requestSequenceFrame:(NSUInteger)frame;\n'
+            '- (void)stepSequence:(double)now;\n'
+            '- (BOOL)setSequenceLimit:(double)seconds;\n'
+            '- (void)showFallback;\n',
+            '@interface PMUnlockMediaView : UIView <PMMediaPresentation>\n')
+        replace_once(' if(self.frameSequence){_sequenceState.cancel();self.sequenceSource=nil;'
+                     '[(UIButton *)[self viewWithTag:101] setEnabled:YES];}\n', '')
+        replace_once('self.frameSequence ? @"Animation unavailable — tap Skip to continue" : '
+                     '@"Unlocked — tap Skip to continue"', '@"Unlocked — tap Skip to continue"')
+        replace_once('- (void)skip{\n'
+                     ' if(self.frameSequence){if(self.fallback){[self finish:NO];return;}'
+                     'if(!_sequenceState.canSkip())return;}\n'
+                     ' [self finish:!(self.strict && self.fallback)];\n}',
+                     '- (void)skip{[self finish:!(self.strict && self.fallback)];}')
+        replace_once('[self finish:!self.strict && !self.frameSequence]', '[self finish:!self.strict]')
+        replace_once(' if(self.frameSequence){[self stepSequence:CACurrentMediaTime()];return;}\n', '')
+        replace_once(' if(self.frameSequence){_sequenceState.cancel();self.sequenceSource=nil;'
+                     'self.sequencePath=nil;self.image.image=nil;}\n', '')
+        replace_once('(!view.player && !view.frameSequence)', '!view.player')
+        replace_once(' if(view.frameSequence && ![view setSequenceLimit:duration])'
+                     '{[view showFallback];return;}\n', '')
+        replace_once(' if([path.pathExtension.lowercaseString isEqualToString:@"pma"]){\n'
+                     '  [v startSequence:path];\n'
+                     ' }else if([path.pathExtension.lowercaseString isEqualToString:@"gif"]){',
+                     ' if([path.pathExtension.lowercaseString isEqualToString:@"gif"]){')
         legacy = legacy.replace('@protocol PMMediaPresentation <NSObject>\n- (void)finish:(BOOL)completed;\n@end\n\n', '', 1)
         legacy = legacy.replace('@interface PMUnlockMediaView : UIView <PMMediaPresentation>', '@interface PMUnlockMediaView : UIView', 1)
         legacy = legacy.replace('static UIView<PMMediaPresentation> *activeMedia;', 'static PMUnlockMediaView *activeMedia;', 1)
         legacy = legacy.replace(' if(![activeMedia isKindOfClass:PMUnlockMediaView.class])return;\n PMUnlockMediaView *view=(PMUnlockMediaView*)activeMedia;', ' PMUnlockMediaView *view=activeMedia;', 1)
         self.assertEqual(hashlib.sha256((legacy.rstrip()+'\n').encode()).hexdigest(), 'fe5caa97994f93888b75609d68e1e10e9845d7e21c6ff4b9da013b4e0c2a9abe')
+
+    def test_held_transition_implementation_is_unchanged(self):
+        # Baseline predates PMA; the separate held-transition presenter must not
+        # inherit PMA decoding, Skip UI, or one-shot completion behavior.
+        self.assertEqual(hashlib.sha256(TRANSITION.encode()).hexdigest(),
+                         'bece331c729f0b3d281ff8ba1a62e3d68b51dd89d05d62ab97c8c40821ecdd3e')
 
     def test_public_api_and_shared_owner(self):
         self.assertIn('BOOL PMPresentTransitionMedia(NSString * _Nullable path, UIView * _Nullable overlay,', HEADER)

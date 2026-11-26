@@ -60,19 +60,160 @@ void attach(Map &m, Item &item, int parent, layout::Anchors rect) {
     setSlot(m,item,rect);
     m.r.call(tr,"SetAsLastSibling");
 }
-void finishDrag(Map &m, bool place) {
-    if (m.drag<0) return;
-    auto &item=m.items[m.drag];
-    if (place) {
-        auto dest = puzzle::centered(puzzle::center(bounds(m,item.drop)),puzzle::size(item.authored));
-        item.placedBounds = puzzle::relative(bounds(m,m.items[item.drop].parent),dest);
-        item.placed=true;
+struct DragRect { float x,y,w,h; };
+// Numeric pieces retain their complete authored transform chain in a root drag
+// layer. Mirrored TRS ancestors preserve shear/flips without source-parent masks
+// clipping the gesture. One chain is allocated during build, not per tick.
+int visualParent(const Map &m, int index) {
+    const auto &item=m.items[index];
+    if (item.affineDrag) return item.parent;
+    if (index==m.drag) return -1;
+    return item.placed ? m.items[item.drop].parent : item.parent;
+}
+rendering::DragFrame affineFrame(const Map &m, int index, Point rootSize) {
+    if (index<0) return {{},rootSize.x,rootSize.y};
+    const auto &item=m.items[index];
+    auto parent=affineFrame(m,visualParent(m,index),rootSize);
+    return rendering::dragFrame(parent,item.slot,
+        item.numericNode ? item.numericScale.x : item.pose.scale,
+        item.numericNode ? item.numericScale.y : item.pose.scale,
+        item.numericNode ? item.numericRotation : 0,item.pose.lift);
+}
+void affineSlot(Map &m, Item &item, layout::Anchors slot) {
+    auto before=layout::lifted(item.slot,item.pose.lift), after=layout::lifted(slot,item.pose.lift);
+    if (before.low.x!=after.low.x || before.low.y!=after.low.y)
+        m.r.call(m.get(item.rect),"set_anchorMin",{"UnityEngine.Vector2"},{&after.low});
+    if (before.high.x!=after.high.x || before.high.y!=after.high.y)
+        m.r.call(m.get(item.rect),"set_anchorMax",{"UnityEngine.Vector2"},{&after.high});
+    item.slot=slot;
+}
+void buildDragLayer(Map &m, Item &item) {
+    item.dragLayer=std::make_unique<DragLayer>();
+    auto &layer=*item.dragLayer;
+    Object root=child(m,m.get(m.rootRect),"Numeric drag layer");
+    layer.object=root.go; layer.rect=layer.parent=root.rect;
+    stretch(m.r,m.get(root.rect));
+    layer.group=m.keep(add(m.r,m.get(root.go),"UnityEngine","CanvasGroup"));
+    flag(m.r,m.get(root.go),"SetActive",false);
+    std::vector<int> chain;
+    for (int i=item.parent;i>=0;i=m.items[i].parent) chain.push_back(i);
+    layer.ancestors.reserve(chain.size());
+    for (auto i=chain.rbegin();i!=chain.rend();++i) {
+        Object mirror=child(m,m.get(layer.parent),"Authored drag transform");
+        auto anchors=layout::lifted(m.items[*i].slot,m.items[*i].pose.lift);
+        stretch(m.r,m.get(mirror.rect),anchors);
+        layer.ancestors.push_back({*i,mirror.rect,anchors});
+        layer.parent=mirror.rect;
     }
-    int parent=item.placed?m.items[item.drop].parent:item.parent;
-    attach(m,item,parent,item.placed?item.placedBounds:item.home);
+}
+void syncDragLayers(Map &m) {
+    for (auto &item:m.items) {
+        if (!item.dragLayer || !item.dragLayer->attached) continue;
+        auto &layer=*item.dragLayer;
+        for (auto &mirror:layer.ancestors) {
+            const auto &source=m.items[mirror.node];
+            auto a=layout::lifted(source.slot,source.pose.lift);
+            if (mirror.anchors.low.x!=a.low.x || mirror.anchors.low.y!=a.low.y)
+                m.r.call(m.get(mirror.rect),"set_anchorMin",{"UnityEngine.Vector2"},{&a.low});
+            if (mirror.anchors.high.x!=a.high.x || mirror.anchors.high.y!=a.high.y)
+                m.r.call(m.get(mirror.rect),"set_anchorMax",{"UnityEngine.Vector2"},{&a.high});
+            mirror.anchors=a;
+            auto scale=source.numericNode ? source.numericScale : rendering::Transform{source.pose.scale,source.pose.scale,1};
+            if (scale.x!=mirror.scale.x || scale.y!=mirror.scale.y)
+                m.r.call(m.get(mirror.rect),"set_localScale",{"UnityEngine.Vector3"},{&scale});
+            mirror.scale=scale;
+            float rotation=source.numericNode ? source.numericRotation : 0;
+            if (rotation!=mirror.rotation) {
+                float euler[]={0,0,rotation};
+                m.r.call(m.get(mirror.rect),"set_localEulerAngles",{"UnityEngine.Vector3"},{euler});
+                mirror.rotation=rotation;
+            }
+        }
+        float alpha=item.parent<0 ? 1 : m.items[item.parent].inheritedAlpha;
+        if (alpha!=layer.alpha) {
+            m.r.call(m.get(layer.group),"set_alpha",{"System.Single"},{&alpha});
+            layer.alpha=alpha;
+        }
+    }
+}
+void showDragLayer(Map &m, Item &item) {
+    auto &layer=*item.dragLayer;
+    if (!layer.attached) {
+        flag(m.r,m.get(layer.object),"SetActive",true);
+        bool world=false;
+        m.r.call(m.get(item.rect),"SetParent",{"UnityEngine.Transform","System.Boolean"},{m.get(layer.parent),&world});
+        layer.attached=true; ++m.affineMirrors;
+    }
+    syncDragLayers(m);
+    m.r.call(m.get(layer.rect),"SetAsLastSibling");
+}
+void hideDragLayer(Map &m, Item &item) {
+    auto &layer=*item.dragLayer;
+    if (!layer.attached) return;
+    bool world=false;
+    m.r.call(m.get(item.rect),"SetParent",{"UnityEngine.Transform","System.Boolean"},
+        {m.get(item.parent<0?m.rootRect:m.items[item.parent].rect),&world});
+    flag(m.r,m.get(layer.object),"SetActive",false);
+    layer.attached=false; --m.affineMirrors;
+}
+bool moveAffine(Map &m, int index, rendering::DragPoint center, Point rootSize) {
+    auto &item=m.items[index];
+    layout::Anchors slot;
+    if (!rendering::placeCenter(affineFrame(m,item.parent,rootSize),center,
+                               puzzle::size(item.home),item.pose.lift,slot)) return false;
+    affineSlot(m,item,slot);
+    return true;
+}
+bool placeAffine(Map &m, int index, Point rootSize) {
+    auto target=affineFrame(m,m.items[index].drop,rootSize);
+    auto center=rendering::project(target.matrix,{.5,.5});
+    rendering::DragPoint local;
+    // A collapsed target must not become an apparently successful placement.
+    return rendering::unproject(target.matrix,center,local) && moveAffine(m,index,center,rootSize);
+}
+void refreshAffinePlacements(Map &m) {
+    bool any=false;
+    DragRect area=m.r.unbox<DragRect>(m.r.call(m.get(m.rootRect),"get_rect"));
+    if (!(area.w>0 && area.h>0)) return;
+    for (size_t i=0;i<m.items.size();++i) {
+        auto &item=m.items[i];
+        if (!item.affineDrag || !item.placed) continue;
+        any=true;
+        if (!item.active || m.drag==int(i)) continue;
+        if (!placeAffine(m,int(i),{area.w,area.h})) {
+            // Singular ancestor/zero-size target: restore the authored home,
+            // never divide by zero or dispatch an activation for a failed snap.
+            item.placed=false;
+            affineSlot(m,item,item.home);
+            hideDragLayer(m,item);
+        }
+    }
+    m.affinePlacements=any;
+}
+bool finishDrag(Map &m, bool place) {
+    if (m.drag<0) return false;
+    auto &item=m.items[m.drag];
+    if (item.affineDrag) {
+        DragRect area=m.r.unbox<DragRect>(m.r.call(m.get(m.rootRect),"get_rect"));
+        if (place) place=placeAffine(m,m.drag,{area.w,area.h});
+        if (place) { item.placed=true; m.affinePlacements=true; }
+        else {
+            if (item.placed && !placeAffine(m,m.drag,{area.w,area.h})) item.placed=false;
+            if (!item.placed) { affineSlot(m,item,item.home); hideDragLayer(m,item); }
+        }
+    } else {
+        if (place) {
+            auto dest = puzzle::centered(puzzle::center(bounds(m,item.drop)),puzzle::size(item.authored));
+            item.placedBounds = puzzle::relative(bounds(m,m.items[item.drop].parent),dest);
+            item.placed=true;
+        }
+        int parent=item.placed?m.items[item.drop].parent:item.parent;
+        attach(m,item,parent,item.placed?item.placedBounds:item.home);
+    }
     if (!place && item.originalSibling>=0)
         m.r.call(m.get(item.rect),"SetSiblingIndex",{"System.Int32"},{&item.originalSibling});
     m.r.gchandle_free(m.pointer); m.pointer=0; m.drag=-1;
+    return place;
 }
 void cancelDrag(Map &m) {
     finishDrag(m,false);
@@ -86,7 +227,6 @@ P rayHit(Runtime &r, P event, const char *raycast) {
     P box=r.call(event,raycast);
     return r.get<P>(box,"m_GameObject");
 }
-struct DragRect { float x,y,w,h; };
 bool scenePoint(Map &m, P event, const char *property, DragRect area, Point &point) {
     Runtime &r=m.r;
     Point screen=r.unbox<Point>(r.call(event,property));
@@ -107,6 +247,12 @@ bool atTarget(const Map &m, int i, Point p) {
         if (!eligible(m,i) || !puzzle::contains(bounds(m,i),p)) return false;
     return puzzle::contains(puzzle::unit,p);
 }
+bool atAffineTarget(const Map &m, int index, rendering::DragPoint p, Point rootSize) {
+    if (!(p.x>=0 && p.x<1 && p.y>=0 && p.y<1)) return false;
+    for (int i=index;i>=0;i=visualParent(m,i))
+        if (!eligible(m,i) || !rendering::contains(affineFrame(m,i,rootSize),p)) return false;
+    return true;
+}
 int puzzleInput(Map &m) {
     if (!m.starts || !m.input) return -1;
     Runtime &r=m.r;
@@ -124,6 +270,16 @@ int puzzleInput(Map &m) {
             if (!item.hitObject || hit!=m.get(item.hitObject) || !eligible(m,int(i))) continue;
             Point down;
             if (!scenePoint(m,e,"get_pressPosition",area,down)) break;
+            if (item.affineDrag) {
+                auto frame=affineFrame(m,int(i),{area.w,area.h});
+                if (!rendering::unproject(frame.matrix,{down.x,down.y},m.affineGrab)) break;
+                item.originalSibling=r.unbox<int>(r.call(m.get(item.rect),"GetSiblingIndex"));
+                m.pointer=r.gchandle_new(e,false);
+                if (!m.pointer) throw std::runtime_error("Map pointer handle failed");
+                m.drag=int(i); m.dragSize={area.w,area.h};
+                showDragLayer(m,item);
+                break;
+            }
             auto visibleBounds = bounds(m,int(i));
             Point center=puzzle::center(visibleBounds);
             m.grab={center.x-down.x,center.y-down.y};
@@ -146,6 +302,20 @@ int puzzleInput(Map &m) {
     Point p;
     if ((!ended && !r.call(event,"get_pointerDrag")) || !eligible(m,index) || area.w!=m.dragSize.x || area.h!=m.dragSize.y || !scenePoint(m,event,"get_position",area,p)) {
         finishDrag(m,false); return -1;
+    }
+    if (item.affineDrag) {
+        rendering::DragPoint center;
+        if (!rendering::dragCenter(affineFrame(m,index,{area.w,area.h}),m.affineGrab,{p.x,p.y},center)) {
+            finishDrag(m,false); return -1;
+        }
+        if (ended) {
+            bool accepted=rayHit(r,event,"get_pointerCurrentRaycast") &&
+                atAffineTarget(m,item.drop,center,{area.w,area.h});
+            accepted=finishDrag(m,accepted);
+            return accepted ? index : -1;
+        }
+        if (!moveAffine(m,index,center,{area.w,area.h})) finishDrag(m,false);
+        return -1;
     }
     p.x+=m.grab.x; p.y+=m.grab.y;
     if (ended) {

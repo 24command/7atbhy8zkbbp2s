@@ -142,6 +142,8 @@ static int listSwitchAfter(lua_State *L) {
     return 0;
 }
 
+#include "PMChapterPMASource.inc"
+
 static int onEnterMovie(lua_State *L) {
     PMOSPage *page = declarationPage(L);
     luaL_checktype(L, 1, LUA_TTABLE);
@@ -153,10 +155,13 @@ static int onEnterMovie(lua_State *L) {
     memcpy(page->entryMovieKey,"movie.",6); memcpy(page->entryMovieKey+6,key,n+1); lua_pop(L,1);
     lua_getfield(L,1,"src"); luaL_checktype(L,-1,LUA_TSTRING);
     const char *name=lua_tolstring(L,-1,&n);
-    if (n<5 || n>=sizeof(page->entryMovieName) || name[0]=='.' || strlen(name)!=n ||
-        strpbrk(name,"/\\:") || strcmp(name+n-4,".mp4")) return luaL_error(L,"entry movie expects a local .mp4 filename");
-    for(size_t i=0;i<n;i++) if((unsigned char)name[i]<32 || name[i]==127) return luaL_error(L,"invalid movie filename");
-    memcpy(page->entryMovieName,name,n+1);lua_pop(L,1);
+    if (!readPMASource(L, -1, page->entryMovieName, sizeof(page->entryMovieName))) {
+        if (n<5 || n>=sizeof(page->entryMovieName) || name[0]=='.' || strlen(name)!=n ||
+            strpbrk(name,"/\\:") || strcmp(name+n-4,".mp4")) return luaL_error(L,"entry movie expects a local .mp4 or .pma filename");
+        for(size_t i=0;i<n;i++) if((unsigned char)name[i]<32 || name[i]==127) return luaL_error(L,"invalid movie filename");
+        memcpy(page->entryMovieName,name,n+1);
+    }
+    lua_pop(L,1);
     page->entryMovieSeen=readProgress(L,session(L),page->entryMovieKey)!=0;
     return 0;
 }
@@ -379,7 +384,7 @@ PMOSSession *PMOSStartWithProgress(const char *src, size_t len, int songs,
     int ok = runProtected(s, 1, page->error, sizeof(page->error));
     s->declaring = NULL;
     if (!ok) {
-        page->count = page->nodes = page->screens = page->challengeCount = page->unlockAnimationCount = 0;
+        page->count = page->nodes = page->screens = page->challengeCount = page->unlockAnimationCount = page->trackKeyCount = 0;
         PMOSStop(s);
         return NULL;
     }

@@ -1,3 +1,116 @@
+#include "PMNativeOSMap.hpp"
+
+namespace pmnativeosmap { namespace rendering {
+inline bool rgbTracks(const PMOSNode &n) {
+    return n.tracks[PMOSTrackRed].count || n.tracks[PMOSTrackGreen].count || n.tracks[PMOSTrackBlue].count;
+}
+inline bool numericEnabled(const PMOSNode &n) {
+    if (n.rotation || ((n.numericFlags & PMOSHasScaleX) && n.scaleX != 1) ||
+        ((n.numericFlags & PMOSHasScaleY) && n.scaleY != 1) ||
+        ((n.numericFlags & PMOSHasOpacity) && n.opacity != 1)) return true;
+    for (const auto &track : n.tracks) if (track.count) return true;
+    return false;
+}
+// Numeric tracks and passive motion share the visibility epoch, including
+// manual/ancestor reshow. The shared sampler wraps this age for trackLoop.
+inline layout::Numeric sampleNumeric(const PMOSNode &n, double now, double shownSince,
+                                      const PMOSTrackKey *keys, int keyCount) {
+    return layout::numeric(n, layout::nodeAge(now, shownSince), keys, keyCount);
+}
+// Local normalized rect -> root normalized rect. Physical parent dimensions
+// matter for rotation on a non-square canvas; inherited matrices retain shear.
+struct DragPoint { double x, y; };
+struct DragMatrix { double a=1, b=0, c=0, d=1, tx=0, ty=0; };
+struct DragFrame { DragMatrix matrix; double width=0, height=0; };
+inline DragPoint project(DragMatrix m, DragPoint p) {
+    return {m.a*p.x+m.c*p.y+m.tx, m.b*p.x+m.d*p.y+m.ty};
+}
+inline bool unproject(DragMatrix m, DragPoint p, DragPoint &out) {
+    double det=m.a*m.d-m.b*m.c;
+    double norm=std::max({std::abs(m.a),std::abs(m.b),std::abs(m.c),std::abs(m.d)});
+    if (!std::isfinite(det) || !std::isfinite(norm) || norm==0 || std::abs(det)<=1e-12*norm*norm) return false;
+    double x=p.x-m.tx, y=p.y-m.ty;
+    DragPoint value{(m.d*x-m.c*y)/det, (m.a*y-m.b*x)/det};
+    if (!std::isfinite(value.x) || !std::isfinite(value.y)) return false;
+    out=value; return true;
+}
+inline DragMatrix compose(DragMatrix p, DragMatrix n) {
+    return {p.a*n.a+p.c*n.b, p.b*n.a+p.d*n.b,
+            p.a*n.c+p.c*n.d, p.b*n.c+p.d*n.d,
+            p.a*n.tx+p.c*n.ty+p.tx, p.b*n.tx+p.d*n.ty+p.ty};
+}
+inline DragFrame dragFrame(DragFrame parent, layout::Anchors slot, double sx, double sy, double degrees, double lift) {
+    double w=double(slot.high.x)-slot.low.x, h=double(slot.high.y)-slot.low.y;
+    if (!(parent.width>0 && parent.height>0 && w>0 && h>0)) return {{0,0,0,0,0,0},0,0};
+    double radians=degrees*(3.14159265358979323846/180.), c=std::cos(radians), sn=std::sin(radians);
+    double a=c*sx*w, b=sn*sx*w*parent.width/parent.height;
+    double x=-sn*sy*h*parent.height/parent.width, d=c*sy*h;
+    DragMatrix local{a,b,x,d,slot.low.x+w/2-(a+x)/2,slot.low.y+h/2+h*lift-(b+d)/2};
+    return {compose(parent.matrix,local),parent.width*w,parent.height*h};
+}
+inline bool contains(DragFrame frame, DragPoint p) {
+    DragPoint local;
+    return unproject(frame.matrix,p,local) && local.x>=0 && local.x<1 && local.y>=0 && local.y<1;
+}
+inline bool dragCenter(DragFrame frame, DragPoint grab, DragPoint pointer, DragPoint &center) {
+    DragPoint unused;
+    if (!unproject(frame.matrix,pointer,unused)) return false;
+    auto &m=frame.matrix;
+    center={pointer.x-m.a*(grab.x-.5)-m.c*(grab.y-.5),pointer.y-m.b*(grab.x-.5)-m.d*(grab.y-.5)};
+    return std::isfinite(center.x) && std::isfinite(center.y);
+}
+inline bool placeCenter(DragFrame parent, DragPoint center, layout::Point size, double lift, layout::Anchors &slot) {
+    DragPoint local;
+    if (!(size.x>0 && size.y>0) || !unproject(parent.matrix,center,local)) return false;
+    double x=local.x-size.x/2., y=local.y-size.y/2.-size.y*lift;
+    slot={{float(x),float(y)},{float(x+size.x),float(y+size.y)}};
+    return std::isfinite(slot.low.x) && std::isfinite(slot.low.y) && std::isfinite(slot.high.x) && std::isfinite(slot.high.y);
+}
+inline layout::Anchors geometrySlot(layout::Anchors current, layout::Anchors previousHome,
+                                    layout::Anchors home, bool centerOwned) {
+    if (!centerOwned) return home;
+    float w=home.high.x-home.low.x, h=home.high.y-home.low.y;
+    if (w==previousHome.high.x-previousHome.low.x && h==previousHome.high.y-previousHome.low.y) return current;
+    double x=(double(current.low.x)+current.high.x)/2, y=(double(current.low.y)+current.high.y)/2;
+    return {{float(x-w/2.),float(y-h/2.)},{float(x+w/2.),float(y+h/2.)}};
+}
+inline bool spatialNumeric(const PMOSNode &n) {
+    if (n.rotation || ((n.numericFlags & PMOSHasScaleX) && n.scaleX!=1) ||
+        ((n.numericFlags & PMOSHasScaleY) && n.scaleY!=1)) return true;
+    for (int i=PMOSTrackX;i<=PMOSTrackScaleY;++i) if (n.tracks[i].count) return true;
+    return false;
+}
+inline bool affineDrag(const PMOSPage &page, int index) {
+    if (page.elements[index].dropIndex<0) return false;
+    for (int start : {index,page.elements[index].dropIndex})
+        for (int i=start;i>=0;i=page.elements[i].parent)
+            if (spatialNumeric(page.elements[i])) return true;
+    return false;
+}
+inline bool unsupportedNestedDrag(const PMOSPage &page, int index) {
+    if (!affineDrag(page,index)) return false;
+    for (int i=page.elements[index].parent;i>=0;i=page.elements[i].parent)
+        if (page.elements[i].dropIndex>=0) return true;
+    return false;
+}
+struct Transform { float x, y, z; };
+struct Color { float red, green, blue, alpha; };
+inline Color color(const layout::Numeric &n) {
+    return {float(n.red), float(n.green), float(n.blue), float(n.alpha)};
+}
+inline bool same(Color a, Color b) {
+    return a.red == b.red && a.green == b.green && a.blue == b.blue && a.alpha == b.alpha;
+}
+inline Transform scale(const layout::Numeric &n, const layout::Pose &p) {
+    return {float(n.scaleX * p.scale), float(n.scaleY * p.scale), 1};
+}
+inline float unityRotation(const layout::Numeric &n) { return float(-n.rotation); }
+inline bool same(layout::Anchors a, layout::Anchors b) {
+    return a.low.x == b.low.x && a.low.y == b.low.y && a.high.x == b.high.x && a.high.y == b.high.y;
+}
+}}
+
+#ifdef __OBJC__
 #include "PMNativeOSMapPuzzle.hpp"
 #include "PMNativeOSMapFlash.hpp"
 #include "PMNativeOSMapMediaTiming.hpp"
@@ -15,16 +128,35 @@ using layout::Point;
 using Clock = std::chrono::steady_clock;
 using Handle = uint32_t;
 struct Media;
+struct DragMirror {
+    int node;
+    Handle rect;
+    layout::Anchors anchors;
+    rendering::Transform scale{1,1,1};
+    float rotation=0;
+};
+struct DragLayer {
+    Handle object{}, rect{}, parent{}, group{};
+    std::vector<DragMirror> ancestors;
+    bool attached=false;
+    float alpha=1;
+};
 struct Item {
     std::shared_ptr<Media> media;
     layout::Anchors home{}, authored{}, slot{}, placedBounds{};
     PMOSMotion motion{};
     layout::Pose pose;
+    std::unique_ptr<PMOSNode> numericNode; // Absent on the unchanged legacy path.
+    rendering::Transform numericScale{1,1,1};
+    float numericRotation = 0;
+    Handle tint{};
+    rendering::Color tintColor{1,1,1,1};
     Handle flash{}, pictureRect{}, silhouette{};
     int feedbackOwner = -1;
     bool locked = false;
     int drop = -1, originalSibling = -1;
-    bool placed = false;
+    bool placed = false, affineDrag = false;
+    std::unique_ptr<DragLayer> dragLayer;
     Handle hitObject{};
     Handle object{}, rect{}, group{}, button{};
     int screen{}, parent{};
@@ -43,11 +175,15 @@ struct Map {
     Handle root{}, rootGroup{}, orphan{};
     std::vector<Handle> handles, assets;
     std::vector<Item> items;
+    std::vector<PMOSTrackKey> trackKeys;
     int layer{}, screens{}, page{};
     int transitionScreen = -1;
     Handle rootRect{}, pointer{}, starts{}, ends{};
     int drag = -1;
     Point grab{}, dragSize{}, pieceSize{};
+    rendering::DragPoint affineGrab{};
+    bool affinePlacements = false;
+    unsigned affineMirrors = 0;
     bool visible{}, running{}, input{};
     Clock::time_point resumed;
     double elapsed{};
@@ -217,6 +353,47 @@ void applyPose(Map &m, Item &item, layout::Pose pose) {
     }
     item.pose = pose;
 }
+// Only changed properties cross the managed boundary. Geometry is local to the
+// parent; Unity inherits rotations and signed scales around the default center.
+void applyNumeric(Map &m, Item &item, const layout::Numeric &value, layout::Pose pose) {
+    auto scale = rendering::scale(value, pose);
+    if (item.numericScale.x != scale.x || item.numericScale.y != scale.y) {
+        m.r.call(m.get(item.rect), "set_localScale", {"UnityEngine.Vector3"}, {&scale});
+        item.numericScale = scale;
+    }
+    float rotation = rendering::unityRotation(value);
+    if (item.numericRotation != rotation) {
+        float euler[] = {0, 0, rotation};
+        m.r.call(m.get(item.rect), "set_localEulerAngles", {"UnityEngine.Vector3"}, {euler});
+        item.numericRotation = rotation;
+    }
+    auto home = layout::anchors(value);
+    auto previousHome = item.home;
+    item.home = home;
+    item.authored = puzzle::compose(item.parent < 0 ? puzzle::unit : m.items[item.parent].authored, home);
+    if ((m.drag != int(&item - m.items.data()) && !item.placed) || item.affineDrag) {
+        // While pointer/target owns the center, authored size/rotation/scale may
+        // continue animating. Keep full local transforms, including parent shear.
+        auto slot = rendering::geometrySlot(item.slot,previousHome,home,
+            m.drag == int(&item - m.items.data()) || item.placed);
+        auto before = layout::lifted(item.slot, item.pose.lift), after = layout::lifted(slot, pose.lift);
+        if (before.low.x != after.low.x || before.low.y != after.low.y)
+            m.r.call(m.get(item.rect), "set_anchorMin", {"UnityEngine.Vector2"}, {&after.low});
+        if (before.high.x != after.high.x || before.high.y != after.high.y)
+            m.r.call(m.get(item.rect), "set_anchorMax", {"UnityEngine.Vector2"}, {&after.high});
+        item.slot = slot;
+    }
+    auto color = rendering::color(value);
+    if (item.tint && !rendering::same(item.tintColor, color)) {
+        m.r.call(m.get(item.tint), "set_color", {"UnityEngine.Color"}, {&color});
+        item.tintColor = color;
+    }
+    if (item.flash && item.pose.white != pose.white) {
+        float white[] = {1,1,1,pose.white};
+        m.r.call(m.get(item.flash), "set_color", {"UnityEngine.Color"}, {white});
+    }
+    item.pose = pose;
+}
 #include "PMNativeOSMapDrag.inc"
 
 int preflight(const PMOSPage &page, NSArray<NSDictionary *> *models, NSMutableSet<NSString *> *maskPaths) {
@@ -246,6 +423,12 @@ int preflight(const PMOSPage &page, NSArray<NSDictionary *> *models, NSMutableSe
         if (isAnimated(path)) ++animatedNodes;
         else [paths addObject:path];
     }
+    // Core owns schema validation; this is a renderer capability guard. A
+    // stationary authored chain is mirrored exactly, including animated TRS.
+    // A draggable ancestor can change topology and cannot use that fixed chain.
+    for (int i=0;i<page.nodes;++i)
+        if (!layout::suppressed(page,page.elements[i]) && rendering::unsupportedNestedDrag(page,i))
+            throw std::runtime_error("Numeric draggable nodes cannot have draggable ancestors; use a stationary parent frame");
     // Each distinct named still contributes one extra texture to the same pixel budget.
     for (int i = 0; i < page.nodes; ++i) {
         const auto &n = page.elements[i];
@@ -322,15 +505,24 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
         Item item;
         if (layout::suppressed(page,n)) {
             item.active = false;
-            m.items.push_back(item); // Reserve the index without creating Unity objects.
+            m.items.push_back(std::move(item)); // Reserve the index without creating Unity objects.
             continue;
         }
         item.screen = n.screen; item.parent = n.parent; item.manual = !n.hidden;
         NSString *path = models[i][@"path"];
         bool animated = isAnimated(path);
         bool alphaHit = n.alphaHit && !animated;
+        // Legacy image color is a backing rectangle, not a sprite tint. Only an
+        // explicit RGB track opts into applying sampled color to the artwork.
+        bool spriteTint = n.kind == PMOSImage && rendering::rgbTracks(n);
         item.drop = n.dropIndex;
+        item.affineDrag = rendering::affineDrag(page,i);
         item.motion = n.motion;
+        if (rendering::numericEnabled(n)) {
+            item.numericNode = std::make_unique<PMOSNode>(n);
+            if (m.trackKeys.empty() && page.trackKeyCount)
+                m.trackKeys.assign(page.trackKeys, page.trackKeys + page.trackKeyCount);
+        }
         item.feedbackOwner = layout::feedbackOwner(n, i, n.parent < 0 ? -1 : m.items[n.parent].feedbackOwner);
         item.locked = n.challenge && !n.handler;
 
@@ -348,7 +540,12 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
             P surface = add(r, go, "UnityEngine.UI", "Image");
             float color[] = {float(n.rgba>>24)/255, float((n.rgba>>16)&255)/255,
                              float((n.rgba>>8)&255)/255, float(n.rgba&255)/255};
+            if (spriteTint) color[3] = 0;
             r.call(surface, "set_color", {"UnityEngine.Color"}, {color});
+            if (rendering::rgbTracks(n) && n.kind != PMOSImage) {
+                item.tint = m.keep(surface);
+                item.tintColor = {color[0], color[1], color[2], color[3]};
+            }
             flag(r, surface, "set_raycastTarget", (action || item.locked) && !alphaHit);
             if (item.drop >= 0 && !alphaHit) item.hitObject = o.go;
             if (action || item.locked) {
@@ -362,6 +559,7 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
         }
         if (animated) {
             item.media = buildMedia(m, tr, path, n.fill, n.loop, pixels);
+            if (spriteTint) item.tint = item.media->raw;
         } else if (path) {
             const char *key = path.UTF8String;
             if (!key) throw std::runtime_error("Invalid map image path");
@@ -374,6 +572,7 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
             Object picture = child(m, tr, "Artwork");
             item.pictureRect = picture.rect;
             P image = add(r, m.get(picture.go), "UnityEngine.UI", "Image");
+            if (spriteTint) item.tint = m.keep(image);
             stretch(r, m.get(picture.rect));
             r.call(image, "set_sprite", {"UnityEngine.Sprite"}, {m.get(found->second.sprite)});
             flag(r, image, "set_raycastTarget", alphaHit);
@@ -384,9 +583,10 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
             }
             fit(r, m.get(picture.go), found->second.aspect, n.fill);
         }
+        if (item.affineDrag) buildDragLayer(m,item);
         if (item.drop >= 0) bindDrag(m,go);
         if (n.label[0] && n.kind != PMOSHotspot) caption(m, tr, font, n.label);
-        m.items.push_back(item);
+        m.items.push_back(std::move(item));
     }
     // Append after all authored children so artwork cannot obscure the flash.
     for (int i = 0; i < page.nodes; ++i) {
@@ -417,6 +617,13 @@ void refresh(Map &m, double t) {
         if (!item.object) continue;
         const Item *parent = item.parent < 0 ? nullptr : &m.items[item.parent];
         float alpha = layout::opacity(t, item.start, item.duration, item.fade);
+        item.shownSince = std::max({item.start, item.manualSince, parent ? parent->shownSince : 0.});
+        layout::Numeric numeric;
+        if (item.numericNode && alpha >= 0 && item.screen == m.page && item.manual && (!parent || parent->active)) {
+            numeric = rendering::sampleNumeric(*item.numericNode, t, item.shownSince,
+                                               m.trackKeys.data(), int(m.trackKeys.size()));
+            alpha *= float(numeric.opacity);
+        }
         auto state = layout::sample(alpha, item.screen == m.page, item.manual,
                                     !parent || parent->active, parent ? parent->inheritedAlpha : 1.f);
         bool active = state.active;
@@ -430,12 +637,12 @@ void refresh(Map &m, double t) {
             else syncMedia(m, *item.media, mode == readiness::MediaMode::Play, t);
         }
         if (!active) continue;
-        item.shownSince = std::max({item.start, item.manualSince, parent ? parent->shownSince : 0.});
-        if (item.motion.enter || item.motion.bob || item.motion.tapTime) {
+        if (item.numericNode || item.motion.enter || item.motion.bob || item.motion.tapTime) {
             float pulse = m.tap.owner == int(i) ? m.tap.pulse(t) : 0;
             auto pose = layout::motion(item.motion, t - item.shownSince, pulse);
-            if (m.drag == int(i)) pose = {}; // Pointer owns the piece's bounds during a drag.
-            applyPose(m, item, pose);
+            if (m.drag == int(i) && !item.affineDrag) pose = {}; // Legacy root-reparent drag.
+            if (item.numericNode) applyNumeric(m, item, numeric, pose);
+            else applyPose(m, item, pose);
         }
         if (item.alpha != alpha) {
             m.r.call(m.get(item.group), "set_alpha", {"System.Single"}, {&alpha});
@@ -448,6 +655,8 @@ void refresh(Map &m, double t) {
         }
         item.inheritedAlpha = inherited;
     }
+    if (m.affinePlacements) refreshAffinePlacements(m);
+    if (m.affineMirrors) syncDragLayers(m);
     if (m.tap.busy() && !eligible(m, m.tap.node)) m.tap.cancel();
 }
 bool matches(Runtime &r, Visit id) {
@@ -637,3 +846,5 @@ void close(Runtime &r, Visit id) {
     dispose(*m);
 }
 }
+
+#endif // __OBJC__

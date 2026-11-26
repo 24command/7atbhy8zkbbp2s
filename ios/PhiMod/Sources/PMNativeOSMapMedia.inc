@@ -1,12 +1,17 @@
-// GIF work stays on one decoder queue. Only tick uploads textures or touches Unity.
+#include "PMNativeOSFrameSequence.hpp"
+// GIF/PMA work stays on one decoder queue. Only tick uploads textures or touches Unity.
 struct GifSource {
     CGImageSourceRef source = nullptr;
+    NSObject *sequence = nil;
     size_t count = 0;
     ~GifSource() { if (source) CFRelease(source); }
 };
 struct GifVisit {
     std::shared_ptr<GifSource> decoder = std::make_shared<GifSource>();
     NSData *ready = nil;
+    playback::SequenceClock sequenceClock;
+    playback::SequenceSlot readySlot{}, requestSlot{};
+    bool sequenceMissed=false;
     size_t frame = 0, count = 0;
     float aspect = 1;
     double delay = .1, due = 0;
@@ -24,7 +29,7 @@ struct Media {
 };
 bool isAnimated(NSString *path) {
     NSString *ext = path.pathExtension.lowercaseString;
-    return [ext isEqualToString:@"gif"] || [ext isEqualToString:@"mp4"];
+    return [ext isEqualToString:@"gif"] || [ext isEqualToString:@"mp4"] || [ext isEqualToString:@"pma"];
 }
 void requestGif(Media &media) {
     auto &g = *media.gif;
@@ -33,6 +38,8 @@ void requestGif(Media &media) {
     NSString *path = media.path;
     int pixels = media.pixels;
     size_t frame = g.frame;
+    const bool sequence=[path.pathExtension.lowercaseString isEqualToString:@"pma"];
+    const auto ticket=g.requestSlot;
     g.pending = true;
     static dispatch_queue_t queue = dispatch_queue_create("PhiMod.map.GIF", DISPATCH_QUEUE_SERIAL);
     dispatch_async(queue, ^{ @autoreleasepool {
@@ -41,6 +48,20 @@ void requestGif(Media &media) {
         float aspect = 1;
         double delay = .1;
         bool ok = checked([&]{
+            if ([path.pathExtension.lowercaseString isEqualToString:@"pma"]) {
+                NSError *error = nil;
+                if (!decoder->sequence) decoder->sequence = PMOSFrameSequenceOpen(path,&error);
+                if (!decoder->sequence) throw std::runtime_error((error.localizedDescription ?: @"Invalid map PMA").UTF8String);
+                decoder->count = PMOSFrameSequenceCount(decoder->sequence);
+                delay = PMOSFrameSequenceDelay(decoder->sequence);
+                if (visit.expired()) return;
+                CGImageRef image = PMOSFrameSequenceCopyFrame(decoder->sequence,frame,pixels,&error);
+                if (!image) throw std::runtime_error((error.localizedDescription ?: @"PMA frame decode failed").UTF8String);
+                @try { aspect = float(CGImageGetWidth(image))/CGImageGetHeight(image); png = encodeImage(image); }
+                @finally { CGImageRelease(image); }
+                if (!png.length) throw std::runtime_error("Map PMA frame encode failed");
+                return;
+            }
             if (!decoder->source) {
                 NSDictionary *attrs = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
                 if (![attrs[NSFileType] isEqual:NSFileTypeRegular] || [attrs[NSFileSize] unsignedLongLongValue] > 32ull*1024*1024)
@@ -70,7 +91,16 @@ void requestGif(Media &media) {
         size_t count = decoder->count;
         dispatch_async(dispatch_get_main_queue(), ^{
             if (auto owner = visit.lock()) {
-                owner->pending = false; owner->failed = !ok; owner->ready = png;
+                if (owner->frame != frame || owner->decoder != decoder) return;
+                owner->pending = false;
+                if (sequence) {
+                    // Clock target may advance while decoding. Release the pending
+                    // slot, but never publish old-lap/old-frame images or failures.
+                    if (ok) { owner->delay=delay; owner->count=count; }
+                    if (!owner->sequenceClock.accepts(ticket)) {owner->sequenceMissed=true;return;}
+                    owner->readySlot=ticket;
+                }
+                owner->failed = !ok; owner->ready = png;
                 owner->aspect = aspect; owner->delay = delay; owner->count = count;
             }
         });
@@ -181,8 +211,11 @@ void warmMedia(Map &m, Media &media, bool expired) {
             upload(r,texture,g.ready,false);
             attachMedia(m,media,texture,g.aspect);
             g.ready = nil; g.due = g.delay; // Authored t=0; never charge hidden wall time.
-            g.frame = playback::nextFrame(g.frame,g.count,media.loop);
-            g.finished = g.frame == g.count;
+            if (![media.path.pathExtension.lowercaseString isEqualToString:@"pma"]) {
+                g.frame = playback::nextFrame(g.frame,g.count,media.loop);
+                g.finished = g.frame == g.count;
+            }
+            // PMA keeps frame zero; its clock starts only at reveal.
             // Do not request/advance a second frame while covered.
         }
         media.first.poll(false,true,false);
@@ -205,15 +238,27 @@ void syncMedia(Map &m, Media &media, bool play, double t) {
             if (player) r.call(player,"Play"); // Resume the paused first frame, no Stop/Prepare.
             else {
                 auto &g = *media.gif;
-                g.due = t + g.delay;
-                if (!g.finished) requestGif(media);
+                if ([media.path.pathExtension.lowercaseString isEqualToString:@"pma"]) {
+                    g.sequenceClock.start(t,true); // Held frame zero is already visible.
+                    g.frame=0; g.finished=false;
+                    const auto next=g.sequenceClock.next(g.count,media.loop);
+                    if (next!=g.sequenceClock.wanted) {
+                        g.requestSlot=next;g.frame=next.frame;requestGif(media);
+                    }
+                } else {
+                    g.due = t + g.delay;
+                    if (!g.finished) requestGif(media);
+                }
             }
             return;
         }
         if (!media.playing) {
             media.playing = true; media.started = t; media.slowStartReported = false;
             if (player) r.call(player,"Play");
-            else media.gif = std::make_shared<GifVisit>();
+            else {
+                media.gif = std::make_shared<GifVisit>();
+                media.gif->sequenceClock.start(t,false); // New visit has a fresh zero origin.
+            }
         }
         P texture = nullptr;
         float aspect = 1;
@@ -227,6 +272,29 @@ void syncMedia(Map &m, Media &media, bool play, double t) {
             int w = r.unbox<int>(r.call(texture,"get_width")), h = r.unbox<int>(r.call(texture,"get_height"));
             if (w < 1 || h < 1) return;
             aspect = float(w)/h; media.lastVideoTexture = texture;
+        } else if ([media.path.pathExtension.lowercaseString isEqualToString:@"pma"]) {
+            auto &g=*media.gif;
+            const auto wanted=g.sequenceClock.sample(t,g.count,g.delay,media.loop);
+            // Ready data may be one frame ahead (bounded prefetch), never behind.
+            if ((g.ready || g.failed) && g.readySlot.before(wanted)) {g.ready=nil;g.failed=false;g.sequenceMissed=true;}
+            if (g.failed && g.readySlot==wanted) {failMedia(m,media,@"PMA frame decode failed");return;}
+            if (g.ready && g.readySlot==wanted) {
+                texture=m.get(media.texture);aspect=g.aspect;
+                upload(r,texture,g.ready,false);g.ready=nil;
+                g.sequenceClock.displayed(wanted);
+                // Never finish solely because time passed: the last image must upload.
+                g.finished=!media.loop && g.count && wanted.frame==g.count-1;
+            }
+            if (!g.pending && !g.ready && !g.failed) {
+                // Keep only one upcoming frame. This allows a 60fps sequence to
+                // meet the next display tick without building a frame cache.
+                const auto ticket=g.sequenceClock.needsFrame() && !g.sequenceMissed ? wanted : g.sequenceClock.next(g.count,media.loop);
+                if (g.sequenceClock.needsFrame() || ticket!=wanted) {
+                    g.requestSlot=ticket;g.frame=ticket.frame;g.sequenceMissed=false;
+                    requestGif(media);
+                }
+            }
+            if (!texture) return;
         } else {
             auto &g = *media.gif;
             if (g.failed) { failMedia(m,media,@"GIF frame decode failed"); return; }

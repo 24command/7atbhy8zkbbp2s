@@ -44,12 +44,14 @@ static int declareUnlockAnimation(lua_State *L) {
             scene->style = unlockStyle(L);
             hasStyle = 1;
         } else if (!strcmp(key, "src")) {
-            challengeIntroName(L, scene->src, sizeof(scene->src));
-            if (!PMStockIntroForName(scene->src)) {
-                const char *ext = strrchr(scene->src, '.');
-                if (!ext || (ext[1] != 'm' && ext[1] != 'M') ||
-                    (ext[2] != 'p' && ext[2] != 'P') || strcmp(ext + 3, "4"))
-                    return luaL_error(L, "unlockAnimation src expects an MP4 or stock clip");
+            if (!readPMASource(L, -1, scene->src, sizeof(scene->src))) {
+                challengeIntroName(L, scene->src, sizeof(scene->src));
+                if (!PMStockIntroForName(scene->src)) {
+                    const char *ext = strrchr(scene->src, '.');
+                    if (!ext || (ext[1] != 'm' && ext[1] != 'M') ||
+                        (ext[2] != 'p' && ext[2] != 'P') || strcmp(ext + 3, "4"))
+                        return luaL_error(L, "unlockAnimation src expects an MP4, PMA or stock clip");
+                }
             }
         } else if (!strcmp(key, "when")) {
             char when[sizeof("enter")];

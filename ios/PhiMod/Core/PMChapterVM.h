@@ -18,11 +18,39 @@ enum { PMOSMaxNodes = 256, PMOSMaxScreens = 32, PMOSScreenNameSize = 64 };
    heights. tapScale is the peak multiplier and tapFlash the peak white opacity.
    A click uses the closest tapTime-bearing frame/node in its ancestry. */
 typedef struct { double enter, bob, bobPeriod, tapTime, tapScale, tapFlash; } PMOSMotion;
+/* Numeric tracks contain absolute normalized/local property values. Segment easing
+   belongs to the left key. Cubic uses left.outTangent/right.inTangent in units
+   per second; a cubic segment requires both tangents explicitly, and a cubic
+   terminal key is invalid. Keys are strictly increasing at finite time >= 0.
+   Positions are [-8,8], sizes [0,8], degrees [-1e6,1e6], scales [-16,16],
+   opacity/RGB [0,1]. Cubic overshoot is clamped to the property bounds.
+   Sampling clamps to endpoints; a positive trackLoop wraps age before lookup.
+   Age is now - max(own start, manual show, parent shown), clamped at zero.
+   The fixed page pool preserves value-copy ownership. */
+enum { PMOSMaxTrackKeys = 8192, PMOSMaxPageTrackKeys = 32768 };
+typedef enum {
+    PMOSTrackX, PMOSTrackY, PMOSTrackW, PMOSTrackH,
+    PMOSTrackRotation, PMOSTrackScaleX, PMOSTrackScaleY,
+    PMOSTrackOpacity, PMOSTrackRed, PMOSTrackGreen, PMOSTrackBlue,
+    PMOSTrackPropertyCount
+} PMOSTrackProperty;
+typedef enum { PMOSTrackLinear, PMOSTrackStep, PMOSTrackCubic } PMOSTrackEase;
+typedef struct {
+    double time, value, inTangent, outTangent;
+    PMOSTrackEase ease;
+} PMOSTrackKey;
+typedef struct { int offset, count; } PMOSTrack;
+enum { PMOSHasScaleX = 1, PMOSHasScaleY = 2, PMOSHasOpacity = 4, PMOSHasColor = 8 };
 typedef struct {double x,y,w,h,start,duration,fade;int kind,parent,depth,cover,open,screen,dest,fill,loop,handler,hidden;unsigned rgba;char id[64],src[256],label[256],to[64];int challenge; char dropTarget[64]; int dropIndex, alphaHit;
     PMOSMotion motion;
     char tapFace[64]; /* Optional descendant ID. Empty flashes the whole node. */
     int tapFaceIndex;
     int songSuppressed; /* Permanent for this declaration, including inherited suppression. */
+    /* Clockwise screen degrees; scales permit flips/zero. Flags distinguish
+       explicit zero from legacy aggregate-zero defaults (scale/opacity = 1). */
+    double rotation, scaleX, scaleY, opacity, trackLoop;
+    unsigned numericFlags;
+    PMOSTrack tracks[PMOSTrackPropertyCount];
 } PMOSNode;
 enum { PMOSProgressKeyMax = 64, PMOSProgressAccessLimit = 128 };
 enum { PMOSMaxChallenges = 32, PMOSMaxChallengeTiers = 16,
@@ -67,7 +95,7 @@ typedef enum { PMOSUnlockMod, PMOSUnlockC5, PMOSUnlockC6, PMOSUnlockC7,
                PMOSUnlockC8, PMOSUnlockC9 } PMOSUnlockStyle;
 typedef enum { PMOSUnlockEnter, PMOSUnlockEvent } PMOSUnlockWhen;
 /* unlockAnimation{...} requires a unique progress-safe id, a one-based song and
-   a style. src is a UTF-8 local MP4 basename or a known @stock clip, required
+   a style. src is a UTF-8 local MP4/PMA basename or a known @stock clip, required
    for mod. All supplied times are seconds in [0,86400]. after delays playback.
    Each omitted info bound is -1 so the presenter resolves the clip/style default.
    A supplied bound has its presence flag set, including an explicit zero.
@@ -113,6 +141,7 @@ typedef struct {
 typedef struct {int nodes,screens;double aspect;char names[PMOSMaxScreens][PMOSScreenNameSize];PMOSNode elements[PMOSMaxNodes];int listFirst,count,listSwitchHidden,selectedLifeTier; int nativeChapter; /* 8 or 9, defaults to 9. */ PMOSCard cards[128];char error[384];
     int cueCount; PMOSChallengeCue cues[PMOSMaxChallengeCues];
     int challengeCount; PMOSChallenge challenges[PMOSMaxChallenges];
+    /* onEnterMovie accepts local .mp4 or .pma sequence basenames. */
     char entryMovieKey[65],entryMovieName[256]; int entryMovieSeen;
     char chapterCover[256]; /* Last chapterCover(stillBasename) during declaration; empty = configured art. */
     int nativePhase; /* 1 by default, or 2 for nativeChapter(9, 2). */
@@ -124,6 +153,8 @@ typedef struct {int nodes,screens;double aspect;char names[PMOSMaxScreens][PMOSS
     /* First non-transition screen, or -1 if none (host may use its card sheet).
        elements/names retain their original declaration indices. */
     int initialScreen;
+    int trackKeyCount;
+    PMOSTrackKey trackKeys[PMOSMaxPageTrackKeys];
 } PMOSPage;
 typedef struct PMOSSession PMOSSession;
 typedef struct {int song, dest, element, visible; char error[384]; int checkpoint; char difficulty[96]; int challenge;

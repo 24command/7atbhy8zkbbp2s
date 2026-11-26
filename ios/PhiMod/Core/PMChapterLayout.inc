@@ -45,7 +45,8 @@ static void readMotion(lua_State *L, PMOSNode *node) {
     m->tapFlash = motionField(L, "tapFlash", 0, 0, 1);
     fieldText(L, "tapFace", node->tapFace, sizeof(node->tapFace));
 }
-static double axis(lua_State *L,const char *key,double def,int size){lua_getfield(L,1,key);double v=luaL_optnumber(L,-1,def);lua_pop(L,1);if(!(v>=-4 && v<=4) || (size&&v<=0))luaL_error(L,"invalid coordinate: %s",key);return v;}
+static double axis(lua_State *L,const char *key,double def,int size){lua_getfield(L,1,key);if(!lua_isnil(L,-1))luaL_checktype(L,-1,LUA_TNUMBER);double v=luaL_optnumber(L,-1,def);lua_pop(L,1);if(!(v>=(size?0:-8) && v<=8) || (size&&v<=0))luaL_error(L,"invalid coordinate: %s",key);return v;}
+#include "PMChapterNumericTracks.inc"
 static int songField(lua_State *L,const char *key){lua_getfield(L,1,key);int res=0;if(!lua_isnil(L,-1)){lua_Integer i=luaL_checkinteger(L,-1);if(i<1||i>session(L)->songs)luaL_error(L,"invalid song number in %s",key);res=(int)i;}lua_pop(L,1);return res;}
 static int setCanvas(lua_State *L){PMOSPage *p=declarationPage(L);double w=luaL_checknumber(L,1),h=luaL_checknumber(L,2);if(!(w>0&&h>0&&w/h>=0.125&&w/h<=8))return luaL_error(L,"invalid canvas aspect ratio");p->aspect=w/h;return 0;}
 static int screen(lua_State *L){PMOSPage *p=declarationPage(L);char name[64];word(L,1,name,sizeof(name));
@@ -56,7 +57,7 @@ static int screen(lua_State *L){PMOSPage *p=declarationPage(L);char name[64];wor
 static void entryNodeFields(lua_State *L, int pos, int kind) {
  const char *common[]={"id","parent","x","y","w","h","start","duration","fade","color","label","hidden",
   "enter","bob","bobPeriod","tapTime","tapScale","tapFlash","tapFace","dropTarget","alphaHit",
-  "to","open","challenge","onClick"};
+  "to","open","challenge","onClick","rotation","scaleX","scaleY","opacity","tracks","trackLoop"};
  const char *image[]={"src","cover","fit","loop"};
  lua_pushnil(L);
  while(lua_next(L,1)){
@@ -79,6 +80,7 @@ static int layoutNode(lua_State *L){PMOSPage *p=declarationPage(L);luaL_checktyp
  n->dropIndex=-1;
  entryNodeFields(L,pos,n->kind);
  readMotion(L,n);
+ readNumericTracks(L,p,n);
  fieldText(L,"dropTarget",n->dropTarget,sizeof(n->dropTarget));
  n->alphaHit=fieldBool(L,"alphaHit");
  n->hidden=fieldBool(L,"hidden");
@@ -89,6 +91,7 @@ static int layoutNode(lua_State *L){PMOSPage *p=declarationPage(L);luaL_checktyp
  n->x=axis(L,"x",0,0);n->y=axis(L,"y",0,0);n->w=axis(L,"w",1,1);n->h=axis(L,"h",1,1);
  char color[12]={0};fieldText(L,"color",color,sizeof(color));if(color[0]){
   size_t len=strlen(color);if(color[0]!='#'||(len!=7&&len!=9)||strspn(color+1,"0123456789abcdefABCDEF")!=len-1)return luaL_error(L,"color expects #RRGGBB or #RRGGBBAA");
+  n->numericFlags|=PMOSHasColor;
   unsigned val=(unsigned)strtoul(color+1,NULL,16);n->rgba=len==7?(val<<8)|255:val;
  }
  char parent[64]={0},fit[16]={0};fieldText(L,"id",n->id,sizeof(n->id));fieldText(L,"parent",parent,sizeof(parent));fieldText(L,"label",n->label,sizeof(n->label));fieldText(L,"to",n->to,sizeof(n->to));n->open=songField(L,"open");
@@ -100,6 +103,9 @@ static int layoutNode(lua_State *L){PMOSPage *p=declarationPage(L);luaL_checktyp
  if(n->challenge&&(n->open||n->to[0]))return luaL_error(L,"challenge cannot be combined with open or to");
  if(n->open&&n->to[0])return luaL_error(L,"choose either open or to");
  if(n->kind==PMOSImage){n->cover=songField(L,"cover");fieldText(L,"src",n->src,sizeof(n->src));if(!!n->cover==!!n->src[0])return luaL_error(L,"image needs exactly one of src or cover");
+  /* Ordinary images accept local media basenames, including .pma JSON sprite
+     sequences. The host validates/loads the format; entry timelines separately
+     restrict src to still images in resolveEntryTransition. */
   if(n->src[0]&&(n->src[0]=='.'||strpbrk(n->src,"/\\:")))return luaL_error(L,"src must be a local media filename");
   n->loop=fieldBool(L,"loop");
   fieldText(L,"fit",fit,sizeof(fit));if(fit[0]&&strcmp(fit,"contain")&&strcmp(fit,"cover"))return luaL_error(L,"fit expects contain or cover");n->fill=!strcmp(fit,"cover");}

@@ -1,0 +1,25 @@
+name: Test PMA one-shot presenter
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'ios/PhiMod/Sources/PMUnlockMedia.*'
+      - 'ios/PhiMod/Sources/PMNativeOSFrameSequence*'
+      - 'ios/PhiMod/Sources/PMNativeOSUnlockPlayback.inc'
+      - 'ios/tests/*FrameSequence*'
+      - 'ios/tests/test_native_os_frame_sequence.py'
+      - 'ios/tests/test_pma_one_shot_presenter.py'
+      - 'ios/tests/test_pma_map_clock.py'
+      - 'ios/PhiMod/Sources/PMNativeOSMapMedia*'
+      - 'ios/tests/run_pma_presenter_tests.sh'
+      - '.github/workflows/test-pma-presenter.yml'
+permissions:
+  contents: read
+jobs:
+  pma:
+    runs-on: macos-15-intel
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native loader, one-shot lifecycle, and iOS syntax
+        run: bash ios/tests/run_pma_presenter_tests.sh

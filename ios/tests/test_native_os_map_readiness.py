@@ -112,7 +112,8 @@ class MapReadinessAdapter(unittest.TestCase):
         self.assertIn('m.transitionScreen = layout::reservedScreen(page)', build)
         self.assertLess(build.index('layout::suppressed(page,page.elements[i])'), build.index('models[i]'))
         self.assertIn('if (layout::suppressed(page,n))', build)
-        self.assertIn('m.items.push_back(item); // Reserve the index', build)
+        # Item owns numeric/drag state; moving it must still reserve suppressed indices.
+        self.assertIn('m.items.push_back(std::move(item)); // Reserve the index', build)
         page = between(MAP, 'bool displayPage(', 'bool setElement(')
         self.assertIn('layout::canDisplay(current->screens,current->transitionScreen,screen)', page)
 
