@@ -16,7 +16,7 @@ class SequenceAdapter(unittest.TestCase):
         self.assertNotIn('isEqualToString:@"pma"', build)
         request = media.split('void requestGif', 1)[1].split('std::shared_ptr<Media> buildMedia', 1)[0]
         self.assertLess(request.index('dispatch_async(queue'), request.index('PMOSFrameSequenceOpen'))
-        self.assertIn('PMOSFrameSequenceCopyFrame(decoder->sequence,frame,pixels,&error)', request)
+        self.assertIn('PMOSFrameSequenceRGBAFrame(decoder->sequence,frame,pixels,&width,&height,&revision,&error)', request)
         self.assertIn('owner->frame != frame || owner->decoder != decoder', request)
         self.assertIn('std::weak_ptr<GifVisit>', request)
     def test_build_automatically_links_helper(self):

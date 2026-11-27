@@ -10,6 +10,8 @@ on:
       - 'ios/tests/test_native_os_frame_sequence.py'
       - 'ios/tests/test_pma_one_shot_presenter.py'
       - 'ios/tests/test_pma_map_clock.py'
+      - 'ios/tests/test_pma_map_performance.py'
+      - 'ios/PhiMod/Sources/PMNativeOSMap.mm'
       - 'ios/PhiMod/Sources/PMNativeOSMapMedia*'
       - 'ios/tests/run_pma_presenter_tests.sh'
       - '.github/workflows/test-pma-presenter.yml'

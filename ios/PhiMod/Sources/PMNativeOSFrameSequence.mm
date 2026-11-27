@@ -1,7 +1,9 @@
 #import <Foundation/Foundation.h>
 #import <ImageIO/ImageIO.h>
+#import <CoreGraphics/CoreGraphics.h>
 #include "PMNativeOSFrameSequence.hpp"
 #include <cmath>
+#include <algorithm>
 #include <cerrno>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -111,6 +113,11 @@ NSData *readFile(int directory, NSString *name, size_t limit, NSError **error) {
     NSArray<NSString *> *frames;
     NSUInteger width, height;
     double fps;
+    NSString *cachedName;
+    NSData *cachedRGBA;
+    NSUInteger cachedLimit, cachedWidth, cachedHeight;
+    uint64_t revision;
+
 }
 @end
 @implementation PMNativeOSFrameSequence
@@ -179,4 +186,48 @@ CGImageRef PMOSFrameSequenceCopyFrame(NSObject *object, NSUInteger index, NSUInt
         if (!image) reject(error,@"Sequence PNG decode failed");
     } @finally { CFRelease(source); }
     return image;
+}
+
+NSData *PMOSFrameSequenceRGBAFrame(NSObject *object, NSUInteger index, NSUInteger pixels,
+    NSUInteger *width, NSUInteger *height, uint64_t *revision, NSError **error) {
+    if (error) *error = nil;
+    PMNativeOSFrameSequence *sequence = (PMNativeOSFrameSequence *)object;
+    if (!sequence || index >= sequence->frames.count || !pixels || pixels > 2048) {
+        reject(error,@"Invalid sequence frame index or decode size"); return nil;
+    }
+    NSString *name = sequence->frames[index];
+    if (!sequence->cachedRGBA || sequence->cachedLimit != pixels || ![sequence->cachedName isEqualToString:name]) {
+        // Drop the previous decoded buffer before allocating its replacement.
+        sequence->cachedRGBA = nil; sequence->cachedName = nil;
+        CGImageRef image = PMOSFrameSequenceCopyFrame(object,index,pixels,error);
+        if (!image) return nil;
+        size_t w = CGImageGetWidth(image), h = CGImageGetHeight(image);
+        NSMutableData *rgba = [NSMutableData dataWithLength:w*h*4];
+        CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+        CGContextRef context = space ? CGBitmapContextCreate(rgba.mutableBytes,w,h,8,w*4,space,
+            kCGBitmapByteOrder32Big | kCGImageAlphaPremultipliedLast) : nullptr;
+        if (space) CGColorSpaceRelease(space);
+        if (!context) { CGImageRelease(image); reject(error,@"PMA RGBA allocation failed"); return nil; }
+        // Quartz bitmap row zero is the image top; Unity raw textures start at
+        // the bottom. Flip the draw once, preserving the authored orientation.
+        CGContextTranslateCTM(context,0,h);
+        CGContextScaleCTM(context,1,-1);
+        CGContextSetBlendMode(context,kCGBlendModeCopy);
+        CGContextDrawImage(context,CGRectMake(0,0,w,h),image);
+        CGContextRelease(context); CGImageRelease(image);
+        // UI/Default and the authored additive shader both expect straight RGB.
+        auto *bytes = static_cast<unsigned char *>(rgba.mutableBytes);
+        for (size_t i=0; i<w*h*4; i+=4) {
+            unsigned a=bytes[i+3];
+            if (a==255) continue;
+            for (size_t c=0;c<3;++c)
+                bytes[i+c]=a ? static_cast<unsigned char>(std::min(255u,(unsigned(bytes[i+c])*255+a/2)/a)) : 0;
+        }
+        sequence->cachedRGBA=rgba; sequence->cachedName=name; sequence->cachedLimit=pixels;
+        sequence->cachedWidth=w; sequence->cachedHeight=h; ++sequence->revision;
+    }
+    if (width) *width=sequence->cachedWidth;
+    if (height) *height=sequence->cachedHeight;
+    if (revision) *revision=sequence->revision;
+    return sequence->cachedRGBA;
 }

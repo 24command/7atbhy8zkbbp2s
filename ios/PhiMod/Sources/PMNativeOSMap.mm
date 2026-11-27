@@ -1,5 +1,6 @@
 #include "PMNativeOSMap.hpp"
 #include "PMNativeOSMapBlend.hpp"
+#include "PMNativeOSFrameSequenceBudget.hpp"
 
 namespace pmnativeosmap { namespace rendering {
 inline bool rgbTracks(const PMOSNode &n) {
@@ -121,6 +122,7 @@ inline bool same(layout::Anchors a, layout::Anchors b) {
 #import <UIKit/UIKit.h>
 #include <chrono>
 #include <memory>
+#include <set>
 
 namespace pmnativeosmap {
 namespace {
@@ -142,8 +144,14 @@ struct DragLayer {
     bool attached=false;
     float alpha=1;
 };
+struct Art { Handle sprite{}, silhouette{}; float aspect=1; };
 struct Item {
     std::shared_ptr<Media> media;
+    NSString *artPath = nil;
+    Handle image{}, fitter{}, flashSprite{};
+    int flashFace = -1;
+    bool artReadable=false, artMask=false, artLoaded=false;
+
     layout::Anchors home{}, authored{}, slot{}, placedBounds{};
     PMOSMotion motion{};
     layout::Pose pose;
@@ -178,7 +186,10 @@ struct Map {
     Handle additiveMaterial{};
     bool hasAdditive=false;
     float rootOpacity=0; // Explicit opacity for child groups ignoring ancestors.
-    std::vector<Handle> handles, assets;
+    std::vector<Handle> handles, assets, pageAssets;
+    std::map<std::string,Art> pageArt;
+    std::vector<int> pagePixels;
+
     std::vector<Item> items;
     std::vector<PMOSTrackKey> trackKeys;
     int layer{}, screens{}, page{};
@@ -216,6 +227,15 @@ void flag(Runtime &r, P obj, const char *method, bool value) {
 void destroy(Map &m, Handle handle) {
     P obj = m.get(handle);
     if (m.r.alive(obj)) m.r.stat(m.r.type("UnityEngine", "Object"), "Destroy", {"UnityEngine.Object"}, {obj});
+}
+// Retired page resources must leave both ownership lists; revisits cannot grow
+// handles/assets indefinitely or destroy the same Unity object twice.
+void releaseAsset(Map &m, Handle handle) {
+    if (!handle) return;
+    destroy(m,handle);
+    m.assets.erase(std::remove(m.assets.begin(),m.assets.end(),handle),m.assets.end());
+    m.handles.erase(std::remove(m.handles.begin(),m.handles.end(),handle),m.handles.end());
+    m.r.gchandle_free(handle);
 }
 template<class Work> bool checked(Work work, NSString **reason = nullptr) {
     NSString *message = nil;
@@ -289,14 +309,13 @@ CGImageRef createThumbnail(NSString *path, int pixels) {
     if (!image) throw std::runtime_error("Map thumbnail decode failed");
     return image;
 }
-struct Art { Handle sprite, silhouette; float aspect; };
-Handle newTexture(Map &m) {
+Handle newTexture(Map &m, int width = 2, int height = 2) {
     Runtime &r = m.r;
     P tex = r.object_new(r.type("UnityEngine", "Texture2D"));
     m.assets.push_back(m.keep(tex));
-    int size = 2, format = 4;
+    int format = 4; // TextureFormat.RGBA32 (retail dump)
     bool mip = false;
-    r.call(tex, ".ctor", {"System.Int32", "System.Int32", "UnityEngine.TextureFormat", "System.Boolean"}, {&size,&size,&format,&mip});
+    r.call(tex, ".ctor", {"System.Int32", "System.Int32", "UnityEngine.TextureFormat", "System.Boolean"}, {&width,&height,&format,&mip});
     return m.assets.back();
 }
 void upload(Runtime &r, P tex, NSData *data, bool discardCPU) {
@@ -403,15 +422,18 @@ void applyNumeric(Map &m, Item &item, const layout::Numeric &value, layout::Pose
 }
 #include "PMNativeOSMapDrag.inc"
 
-int preflight(const PMOSPage &page, NSArray<NSDictionary *> *models, NSMutableSet<NSString *> *maskPaths) {
+NSString *pageArtKey(int screen, NSString *path) {
+    return [NSString stringWithFormat:@"%d:%@",screen,path];
+}
+std::vector<int> preflight(const PMOSPage &page, NSArray<NSDictionary *> *models, NSMutableSet<NSString *> *maskPaths) {
     if (page.nodes <= 0 || page.nodes > PMOSMaxNodes || models.count != NSUInteger(page.nodes) ||
         page.screens <= 0 || page.screens > PMOSMaxScreens) throw std::runtime_error("Map declaration/model count mismatch");
     int transition = layout::reservedScreen(page);
     if (transition >= page.screens || transition < -1 || page.initialScreen < -1 ||
         (page.initialScreen >= 0 && !layout::canDisplay(page.screens,transition,page.initialScreen)))
         throw std::runtime_error("Map has an invalid initial or reserved screen");
-    NSMutableSet<NSString *> *paths = [NSMutableSet set];
-    NSUInteger animatedNodes = 0;
+    std::vector<std::set<std::string>> paths(page.screens);
+    std::vector<size_t> animatedNodes(page.screens);
     for (int i = 0; i < page.nodes; ++i) {
         const auto &n = page.elements[i];
         if ((n.blend != PMOSBlendNormal && n.blend != PMOSBlendAdd) ||
@@ -430,8 +452,8 @@ int preflight(const PMOSPage &page, NSArray<NSDictionary *> *models, NSMutableSe
         if (!path) continue; // A locked song may intentionally have no cover.
         if (![path isKindOfClass:NSString.class] || !path.isAbsolutePath) throw std::runtime_error("Map image requires a resolved absolute path");
 
-        if (isAnimated(path)) ++animatedNodes;
-        else [paths addObject:path];
+        if (isAnimated(path)) ++animatedNodes[n.screen];
+        else paths[n.screen].insert(path.UTF8String);
     }
     // Core owns schema validation; this is a renderer capability guard. A
     // stationary authored chain is mirrored exactly, including animated TRS.
@@ -448,9 +470,16 @@ int preflight(const PMOSPage &page, NSArray<NSDictionary *> *models, NSMutableSe
             throw std::runtime_error("Invalid map flash face");
         if (page.elements[n.tapFaceIndex].kind != PMOSImage) continue;
         NSString *path = models[n.tapFaceIndex][@"path"];
-        if (path && !isAnimated(path)) [maskPaths addObject:path];
+        if (path && !isAnimated(path)) [maskPaths addObject:pageArtKey(page.elements[n.tapFaceIndex].screen,path)];
     }
-    return std::min(1536, int(std::sqrt(4.*1024*1024 / std::max<NSUInteger>(1, paths.count + maskPaths.count + animatedNodes))));
+    std::vector<int> limits(page.screens);
+    for (int screen=0;screen<page.screens;++screen) {
+        size_t surfaces=paths[screen].size()+animatedNodes[screen];
+        for (const auto &path:paths[screen])
+            if ([maskPaths containsObject:pageArtKey(screen,[NSString stringWithUTF8String:path.c_str()])]) ++surfaces;
+        limits[screen]=residency::dimensionLimit(surfaces);
+    }
+    return limits;
 }
 void validateParent(Runtime &r, P parent) {
     if (!r.alive(parent) || r.object_get_class(parent) != r.type("UnityEngine", "RectTransform"))
@@ -483,7 +512,7 @@ void caption(Map &m, P parent, P font, const char *label) {
     r.call(text, "set_resizeTextMaxSize", {"System.Int32"}, {&size});
     flag(r, text, "set_raycastTarget", false);
 }
-void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *models, P font, int pixels, NSSet<NSString *> *maskPaths) {
+void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *models, P font, const std::vector<int> &pixels, NSSet<NSString *> *maskPaths) {
     Runtime &r = m.r;
     m.screens = page.screens;
     m.transitionScreen = layout::reservedScreen(page);
@@ -495,7 +524,7 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
     if (page.aspect > 0) fit(r, m.get(root.go), float(page.aspect), false);
     add(r, m.get(root.go), "UnityEngine.UI", "RectMask2D");
     m.rootGroup = m.keep(add(r, m.get(root.go), "UnityEngine", "CanvasGroup"));
-    std::map<std::string,Art> art;
+    m.pagePixels = pixels;
     NSMutableSet *readable = [NSMutableSet set];
     bool hasBacking = false;
     for (int i = 0; i < page.nodes; ++i) {
@@ -569,18 +598,13 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
             }
         }
         if (animated) {
-            item.media = buildMedia(m, tr, path, n.fill, n.loop, pixels,
+            item.media = buildMedia(m, tr, path, n.fill, n.loop, pixels[n.screen],
                                     n.blend == PMOSBlendAdd ? &item.additive : nullptr);
             if (spriteTint) item.tint = item.media->raw;
         } else if (path) {
-            const char *key = path.UTF8String;
-            if (!key) throw std::runtime_error("Invalid map image path");
-            auto found = art.find(key);
-            if (found == art.end()) {
-                Art loaded = loadArt(m, path, pixels, [readable containsObject:path], [maskPaths containsObject:path]);
-                found = art.emplace(key, loaded).first;
-            }
-            item.silhouette = found->second.silhouette;
+            item.artPath = [path copy];
+            item.artReadable = [readable containsObject:path];
+            item.artMask = [maskPaths containsObject:pageArtKey(n.screen,path)];
             Object picture = child(m, tr, "Artwork");
             item.pictureRect = picture.rect;
             P image = add(r, m.get(picture.go), "UnityEngine.UI", "Image");
@@ -588,14 +612,15 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
             if (n.blend == PMOSBlendAdd)
                 bindAdditive(m,item.additive,picture.go,item.tint ? item.tint : m.keep(image));
             stretch(r, m.get(picture.rect));
-            r.call(image, "set_sprite", {"UnityEngine.Sprite"}, {m.get(found->second.sprite)});
+            item.image = m.keep(image);
+            flag(r,image,"set_enabled",false);
             flag(r, image, "set_raycastTarget", alphaHit);
             if (alphaHit) {
                 float threshold = 51.5f / 255;
                 r.call(image, "set_alphaHitTestMinimumThreshold", {"System.Single"}, {&threshold});
                 item.hitObject = picture.go;
             }
-            fit(r, m.get(picture.go), found->second.aspect, n.fill);
+            item.fitter = m.keep(fit(r, m.get(picture.go), 1, n.fill));
         }
         if (item.affineDrag) buildDragLayer(m,item);
         if (item.drop >= 0) bindDrag(m,go);
@@ -615,14 +640,48 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
         stretch(r, m.get(overlay.rect));
         P graphic = add(r, m.get(overlay.go), "UnityEngine.UI", "Image");
         if (masked) {
-            if (!target.silhouette) throw std::runtime_error("Missing map flash silhouette");
-            r.call(graphic, "set_sprite", {"UnityEngine.Sprite"}, {m.get(target.silhouette)});
+            item.flashFace = face;
+            flag(r,graphic,"set_enabled",false);
         }
         flag(r, graphic, "set_raycastTarget", false);
         float clearWhite[] = {1,1,1,0};
         r.call(graphic, "set_color", {"UnityEngine.Color"}, {clearWhite});
         item.flash = m.keep(graphic);
     }
+}
+// UI objects remain stable for input/drag ownership; only the active page owns
+// decoded artwork. Hidden/timed nodes acquire on their first visible refresh.
+void acquireArt(Map &m, Item &item) {
+    if (!item.artPath || item.artLoaded) return;
+    auto found=m.pageArt.find(item.artPath.UTF8String);
+    if (found==m.pageArt.end()) {
+        size_t first=m.assets.size();
+        Art art=loadArt(m,item.artPath,m.pagePixels.at(m.page),item.artReadable,item.artMask);
+        m.pageAssets.insert(m.pageAssets.end(),m.assets.begin()+first,m.assets.end());
+        found=m.pageArt.emplace(item.artPath.UTF8String,art).first;
+    }
+    const auto &art=found->second;
+    m.r.call(m.get(item.image),"set_sprite",{"UnityEngine.Sprite"},{m.get(art.sprite)});
+    float aspect=art.aspect;
+    m.r.call(m.get(item.fitter),"set_aspectRatio",{"System.Single"},{&aspect});
+    flag(m.r,m.get(item.image),"set_enabled",true);
+    item.silhouette=art.silhouette; item.artLoaded=true;
+}
+void releasePageArt(Map &m) {
+    for (auto &item:m.items) {
+        if (item.image) {
+            m.r.call(m.get(item.image),"set_sprite",{"UnityEngine.Sprite"},{nullptr});
+            flag(m.r,m.get(item.image),"set_enabled",false);
+        }
+        if (item.flashFace>=0) {
+            m.r.call(m.get(item.flash),"set_sprite",{"UnityEngine.Sprite"},{nullptr});
+            flag(m.r,m.get(item.flash),"set_enabled",false);
+        }
+        item.silhouette=0; item.flashSprite=0; item.artLoaded=false;
+    }
+    m.pageArt.clear();
+    for (auto i=m.pageAssets.rbegin();i!=m.pageAssets.rend();++i) releaseAsset(m,*i);
+    m.pageAssets.clear();
 }
 void refresh(Map &m, double t) {
     if (!m.r.alive(m.get(m.root))) throw std::runtime_error("Map scene has unloaded");
@@ -651,6 +710,7 @@ void refresh(Map &m, double t) {
             else syncMedia(m, *item.media, mode == readiness::MediaMode::Play, t);
         }
         if (!active) { syncAdditive(m,item); continue; }
+        acquireArt(m,item);
         if (item.numericNode || item.motion.enter || item.motion.bob || item.motion.tapTime) {
             float pulse = m.tap.owner == int(i) ? m.tap.pulse(t) : 0;
             auto pose = layout::motion(item.motion, t - item.shownSince, pulse);
@@ -669,6 +729,14 @@ void refresh(Map &m, double t) {
         }
         item.inheritedAlpha = inherited;
         syncAdditive(m,item);
+    }
+    for (auto &item:m.items) {
+        if (item.flashFace<0) continue;
+        Handle sprite=m.items.at(item.flashFace).silhouette;
+        if (sprite==item.flashSprite) continue;
+        m.r.call(m.get(item.flash),"set_sprite",{"UnityEngine.Sprite"},{m.get(sprite)});
+        flag(m.r,m.get(item.flash),"set_enabled",sprite!=0);
+        item.flashSprite=sprite;
     }
     if (m.affinePlacements) refreshAffinePlacements(m);
     if (m.affineMirrors) syncDragLayers(m);
@@ -702,7 +770,7 @@ Visit open(Runtime &r, P parent, const PMOSPage &page, NSArray<NSDictionary *> *
     auto m = std::make_unique<Map>(r);
     if (!checked([&]{
         NSMutableSet<NSString *> *maskPaths = [NSMutableSet set];
-        int pixels = preflight(page, models, maskPaths);
+        auto pixels = preflight(page, models, maskPaths);
         validateParent(r, parent);
         build(*m, parent, page, models, font, pixels, maskPaths);
         refresh(*m, m->time());
@@ -730,6 +798,7 @@ bool displayPage(Runtime &r, Visit id, int screen) {
             if (item.media) stopMedia(m, *item.media);
             item.manualSince = 0;
         }
+        releasePageArt(m);
         m.page = screen;
         m.elapsed = 0;
         m.resumed = Clock::now();

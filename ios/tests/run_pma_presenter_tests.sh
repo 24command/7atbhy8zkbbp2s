@@ -12,6 +12,7 @@ export CXX="$(xcrun --sdk macosx --find clang++)"
 python3 "$ROOT/tests/test_native_os_frame_sequence.py"
 python3 "$ROOT/tests/test_pma_one_shot_presenter.py"
 python3 "$ROOT/tests/test_pma_map_clock.py"
+python3 "$ROOT/tests/test_pma_map_performance.py"
 SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 xcrun --sdk iphoneos clang++ -std=c++17 -fobjc-arc -fsyntax-only \
   -arch arm64 -isysroot "$SDK" -miphoneos-version-min=15.0 \

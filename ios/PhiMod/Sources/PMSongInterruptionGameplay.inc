@@ -10,10 +10,13 @@ template<class Host> class Gameplay {
  typename Host::Snapshot saved{};
  uint64_t generation=0;
  bool bound=false,frozen=false,recovering=false,triggering=false,quitClaimed=false;
- bool reportedRecovery=false;
+ bool reportedRecovery=false,reportedDue=false,reportedFailure=false;
  void discard(){
   ++generation;bound=false;frozen=false;recovering=false;triggering=false;quitClaimed=false;
-  reportedRecovery=false;host.release(owner);owner={};saved={};
+  reportedRecovery=reportedDue=reportedFailure=false;host.release(owner);owner={};saved={};
+ }
+ void failure(const char *stage,const char *message){
+  if(!reportedFailure){reportedFailure=true;host.error(stage,message);}
  }
  bool owns(uint64_t ticket)const{return bound&&ticket==generation;}
  void enforce(){
@@ -36,14 +39,14 @@ template<class Host> class Gameplay {
    if(!reportedRecovery){host.error("resume (held; retrying)",e.what());reportedRecovery=true;}
    // Resume may have scheduled sound before another managed operation failed.
    // Re-pause it and retain the native hold; do not release on partial rollback.
-   try{host.pause(owner);}catch(const std::exception &pauseError){host.error("re-pause",pauseError.what());}
+   try{host.pause(owner);}catch(const std::exception &pauseError){failure("re-pause",pauseError.what());}
    enforce();return false;
   }
  }
  bool freeze(uint64_t ticket){
   if(!owns(ticket)||frozen||!host.live(owner))return false;
   try{
-   if(!host.eligible(owner))return false;
+   if(!host.eligible(owner)){failure("freeze","host no longer eligible");return false;}
    host.capture(owner,saved); // Complete snapshot before the first mutation.
    if(!owns(ticket)||!host.live(owner))return false;
    frozen=true;
@@ -51,8 +54,11 @@ template<class Host> class Gameplay {
    host.hold(owner,saved);
    host.pause(owner); // 4.0.4 AddressableAudioSource.Pause, NEVER ProgressControl.Play(false).
    host.hold(owner,saved); // Pause resets wrapper clock bookkeeping; preserve exposed clocks.
-   return owns(ticket)&&host.live(owner);
-  }catch(const std::exception &e){host.error("freeze",e.what());return false;}
+   const bool held=owns(ticket)&&host.live(owner);
+   if(held)host.event("freeze",owner);
+   else failure("freeze","owner changed during pause");
+   return held;
+  }catch(const std::exception &e){failure("freeze",e.what());return false;}
  }
  void close(uint64_t ticket){
   if(!owns(ticket)||!frozen||recovering||quitClaimed||!host.live(owner))return;
@@ -61,6 +67,7 @@ template<class Host> class Gameplay {
  }
 public:
  explicit Gameplay(Host &adapter):host(adapter){}
+ void reportFailure(const char *stage,const char *message){failure(stage,message);}
  bool holding()const{return bound&&frozen;}
  bool validHost(){return bound&&host.live(owner);}
  void invalidated(){
@@ -79,8 +86,8 @@ public:
   // The UI copies these into the accepted playing payload in Begin, not Arm.
   host.configure([this,ticket]{return owns(ticket)&&host.live(owner);},
                  [this,ticket]{if(owns(ticket))invalidated();});
-  if(!host.begin(identifier,slot))return false;
-  try{host.acquire(owner,level,progress);bound=true;return true;}
+  if(!host.begin(identifier,slot)){failure("begin","pending exact chart/slot not accepted");return false;}
+  try{host.acquire(owner,level,progress);bound=true;host.event("bound",owner);return true;}
   catch(const std::exception &e){host.error("bind",e.what());end();return false;}
  }
  bool tick(Entry entry,Object object){
@@ -90,7 +97,7 @@ public:
   // Once held, all entries still perform the exact owner and scene checks below.
   if(entry!=Entry::Progress&&!frozen&&!recovering)return false;
   if(!host.matches(owner,entry,object))return false;
-  if(!host.live(owner)){end();return false;}
+  if(!host.live(owner)){failure("owner","bound level/progress/scene no longer live");end();return false;}
   if(recovering)return !restore();
   if(frozen){
    if(!triggering&&!quitClaimed&&!host.blocking()){
@@ -102,13 +109,16 @@ public:
   }
   if(triggering)return false;
   const uint64_t ticket=generation;
-  if(!host.eligible(owner)||!host.due(host.time(owner))||!owns(ticket))return false;
+  if(!host.due(host.time(owner))||!owns(ticket))return false;
+  if(!reportedDue){reportedDue=true;host.event("due",owner);}
+  if(!host.eligible(owner))return false;
   triggering=true;
   bool attached=false;
   try{attached=host.trigger([this,ticket]{return freeze(ticket);},[this,ticket]{close(ticket);});}
-  catch(const std::exception &e){host.error("present",e.what());}
+  catch(const std::exception &e){failure("present",e.what());}
   if(!owns(ticket))return false; // End/invalidation/replacement may have reentered.
   triggering=false;
+  if(!attached)failure("present","trigger rejected or presentation failed");
   if(!attached&&frozen){if(!recovering)invalidated();return holding();}
   return frozen;
  }
@@ -144,7 +154,7 @@ struct NativeHost {
  }
  void acquire(Owner&o,P level,P pc){
   keep(o,Level,level);keep(o,Progress,pc);o.scene=levelScene(level);
-  if(!live(o))throw std::runtime_error("Interruption level/scene mismatch");
+  if(!live(o)){event("bind failure",o);throw std::runtime_error("Interruption level/scene mismatch");}
  }
  void release(Owner&o){
   for(auto &root:o.roots){if(root)R().gchandle_free(root);root=0;}
@@ -249,7 +259,23 @@ struct NativeHost {
   catch(const std::exception&e){diagf("Interruption user quit: %s",e.what());}
   std::exit(EXIT_SUCCESS);
  }
- void error(const char*stage,const char*message){diagf("Song interruption %s: %s",stage,message);}
+ // Event transitions only; never called from the pre-threshold hot-hook fast path.
+ void describe(const char *stage,P level,P pc,int scene){
+  try{auto&r=R();P info=pc?r.get<P>(pc,"levelInformation"):nullptr,audio=pc?r.get<P>(pc,"audioSource"):nullptr;
+   int active=sceneValue(r.stat(r.type("UnityEngine.SceneManagement","SceneManager"),"GetActiveScene"));
+   diagf("Song interruption %s level=%p pc=%p scene=%d active=%d now=%.6f playing=%d info=%p chartLoaded=%d levelBegan=%d levelOver=%d leave=%d break=%d challenge=%d audio=%p audioLoaded=%d audioPlay=%d",
+         stage,level,pc,scene,active,pc?r.get<float>(pc,"nowTime"):-1,pc&&r.get<bool>(pc,"isPlaying"),info,
+         info&&r.get<bool>(info,"chartLoaded"),info&&r.get<bool>(info,"levelBegan"),info&&r.get<bool>(info,"levelOver"),
+         pc&&r.get<bool>(pc,"leave"),pc&&r.get<bool>(pc,"levelBreak"),pc&&r.get<bool>(pc,"_inChallengeMode"),
+         audio,audio&&r.get<bool>(audio,"loadOver"),audio&&r.get<bool>(audio,"playFlag"));
+  }catch(const std::exception&e){diagf("Song interruption %s diagnostic unavailable: %s",stage,e.what());}
+ }
+ void event(const char *stage,const Owner&o){describe(stage,object(o,Level),object(o,Progress),o.scene);}
+ void launch(const char *stage,P level){
+  try{describe(stage,level,R().get<P>(level,"progressControl"),levelScene(level));}
+  catch(const std::exception&e){diagf("Song interruption %s diagnostic unavailable: %s",stage,e.what());}
+ }
+ void error(const char*stage,const char*message){diagf("Song interruption failure %s: %s",stage,message);}
 };
 NativeHost nativeHost;
 Gameplay<NativeHost> gameplay(nativeHost);
@@ -258,8 +284,8 @@ Gameplay<NativeHost> gameplay(nativeHost);
 // Old invalidation/freeze/quit callbacks therefore cannot mutate a newer owner.
 bool tick(Entry entry,P self){
  try{return gameplay.tick(entry,self);}
- catch(const std::exception&e){diagf("Song interruption entry: %s",e.what());return gameplay.holding();}
+ catch(const std::exception&e){gameplay.reportFailure("entry",e.what());return gameplay.holding();}
 }
-struct PauseFence { ~PauseFence(){try{gameplay.fence();}catch(const std::exception&e){diagf("Song interruption fence: %s",e.what());}} };
+struct PauseFence { ~PauseFence(){try{gameplay.fence();}catch(const std::exception&e){gameplay.reportFailure("fence",e.what());}} };
 } // namespace songinterruption
 #endif

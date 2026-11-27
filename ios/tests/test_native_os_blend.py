@@ -58,7 +58,7 @@ class MapBlend(unittest.TestCase):
         self.assertIn('set_alphaHitTestMinimumThreshold',native)
         # Existing node/pixel budgets and mask hierarchy remain unchanged.
         self.assertIn('page.nodes > PMOSMaxNodes',native)
-        self.assertIn('4.*1024*1024',native)
+        self.assertIn('residency::dimensionLimit(surfaces)',native)
         self.assertIn('add(r, go, "UnityEngine.UI", "RectMask2D")',native)
 
 

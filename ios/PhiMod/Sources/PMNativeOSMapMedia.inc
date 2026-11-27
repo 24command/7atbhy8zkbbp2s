@@ -6,9 +6,15 @@ struct GifSource {
     size_t count = 0;
     ~GifSource() { if (source) CFRelease(source); }
 };
+// Queue/main-queue blocks hold this weakly. Cancelling a visit drops completed
+// bytes immediately instead of retaining a page of frames in queued callbacks.
+struct GifDelivery { NSData *bytes = nil; };
 struct GifVisit {
     std::shared_ptr<GifSource> decoder = std::make_shared<GifSource>();
+    std::shared_ptr<GifDelivery> delivery;
     NSData *ready = nil;
+    NSUInteger width=0, height=0;
+    uint64_t revision=0;
     playback::SequenceClock sequenceClock;
     playback::SequenceSlot readySlot{}, requestSlot{};
     size_t frame = 0, count = 0;
@@ -19,7 +25,8 @@ struct GifVisit {
 struct Media {
     NSString *path = nil;
     Handle raw{}, fitter{}, player{}, texture{};
-    int pixels{};
+    int pixels{}, textureWidth{}, textureHeight{};
+    uint64_t uploadedRevision=0;
     bool loop{}, playing{}, received{}, failed{}, deferred{}, slowStartReported{};
     double started{};
     P lastVideoTexture{}; // borrowed from VideoPlayer and RawImage
@@ -30,20 +37,30 @@ bool isAnimated(NSString *path) {
     NSString *ext = path.pathExtension.lowercaseString;
     return [ext isEqualToString:@"gif"] || [ext isEqualToString:@"mp4"] || [ext isEqualToString:@"pma"];
 }
+dispatch_queue_t gifDecodeQueue() {
+    static dispatch_queue_t queue = dispatch_queue_create("PhiMod.map.GIF", DISPATCH_QUEUE_SERIAL);
+    return queue;
+}
 void requestGif(Media &media) {
     auto &g = *media.gif;
     std::weak_ptr<GifVisit> visit = media.gif;
-    auto decoder = g.decoder;
+    std::weak_ptr<GifSource> queuedDecoder = g.decoder;
+    g.delivery = std::make_shared<GifDelivery>();
+    std::weak_ptr<GifDelivery> delivery = g.delivery;
     NSString *path = media.path;
     int pixels = media.pixels;
     size_t frame = g.frame;
     const bool sequence=[path.pathExtension.lowercaseString isEqualToString:@"pma"];
     const auto ticket=g.requestSlot;
     g.pending = true;
-    static dispatch_queue_t queue = dispatch_queue_create("PhiMod.map.GIF", DISPATCH_QUEUE_SERIAL);
+    dispatch_queue_t queue = gifDecodeQueue();
     dispatch_async(queue, ^{ @autoreleasepool {
         if (visit.expired()) return;
-        NSData *png = nil;
+        auto decoder = queuedDecoder.lock();
+        if (!decoder) return;
+        NSData *png = nil; // GIF PNG or PMA straight RGBA, selected by sequence.
+        NSUInteger width=0, height=0;
+        uint64_t revision=0;
         float aspect = 1;
         double delay = .1;
         bool ok = checked([&]{
@@ -54,11 +71,9 @@ void requestGif(Media &media) {
                 decoder->count = PMOSFrameSequenceCount(decoder->sequence);
                 delay = PMOSFrameSequenceDelay(decoder->sequence);
                 if (visit.expired()) return;
-                CGImageRef image = PMOSFrameSequenceCopyFrame(decoder->sequence,frame,pixels,&error);
-                if (!image) throw std::runtime_error((error.localizedDescription ?: @"PMA frame decode failed").UTF8String);
-                @try { aspect = float(CGImageGetWidth(image))/CGImageGetHeight(image); png = encodeImage(image); }
-                @finally { CGImageRelease(image); }
-                if (!png.length) throw std::runtime_error("Map PMA frame encode failed");
+                png = PMOSFrameSequenceRGBAFrame(decoder->sequence,frame,pixels,&width,&height,&revision,&error);
+                if (!png) throw std::runtime_error((error.localizedDescription ?: @"PMA frame decode failed").UTF8String);
+                aspect = float(width)/height;
                 return;
             }
             if (!decoder->source) {
@@ -88,9 +103,16 @@ void requestGif(Media &media) {
             if (!png.length) throw std::runtime_error("Map GIF frame encode failed");
         });
         size_t count = decoder->count;
+        if (visit.expired()) return;
+        auto payload = delivery.lock();
+        if (!payload) return;
+        payload->bytes = png;
         dispatch_async(dispatch_get_main_queue(), ^{
             if (auto owner = visit.lock()) {
-                if (owner->frame != frame || owner->decoder != decoder) return;
+                auto decoder = queuedDecoder.lock();
+                auto payload = delivery.lock();
+                if (owner->frame != frame || owner->decoder != decoder || !payload) return;
+                owner->delivery.reset();
                 owner->pending = false;
                 if (sequence) {
                     // Late success can advance the displayed frame without changing
@@ -99,7 +121,8 @@ void requestGif(Media &media) {
                     if (!(ok ? owner->sequenceClock.accepts(ticket) : owner->sequenceClock.acceptsFailure(ticket))) return;
                     owner->readySlot=ticket;
                 }
-                owner->failed = !ok; owner->ready = png;
+                owner->failed = !ok; owner->ready = payload->bytes;
+                owner->width=width; owner->height=height; owner->revision=revision;
                 owner->aspect = aspect; owner->delay = delay; owner->count = count;
             }
         });
@@ -108,7 +131,7 @@ void requestGif(Media &media) {
 std::shared_ptr<Media> buildMedia(Map &m, P tr, NSString *path, bool cover, bool loop, int pixels,
                                   blend::Layer *additive = nullptr) {
     auto media = std::make_shared<Media>();
-    media->path = [path copy]; media->loop = loop; media->pixels = std::min(1024,pixels);
+    media->path = [path copy]; media->loop = loop; media->pixels = [path.pathExtension.lowercaseString isEqualToString:@"gif"] ? std::min(1024,pixels) : pixels;
     Object childObject = child(m,tr,"Map Media");
     P go = m.get(childObject.go);
     stretch(m.r,m.get(childObject.rect));
@@ -128,9 +151,8 @@ std::shared_ptr<Media> buildMedia(Map &m, P tr, NSString *path, bool cover, bool
         m.r.call(player,"set_audioOutputMode",{"UnityEngine.Video.VideoAudioOutputMode"},{&silent});
         flag(m.r,player,"set_isLooping",loop);
         m.r.call(player,"set_url",{"System.String"},{m.r.managedString([NSURL fileURLWithPath:path].absoluteString)});
-    } else {
-        media->texture = newTexture(m);
     }
+    // Textures are acquired by warm/play, never for an inactive page.
     return media;
 }
 // Explicit cancellation is also used by displayPage; a staged player is not
@@ -141,11 +163,13 @@ void stopMedia(Map &m, Media &media) {
     media.gif.reset(); // Invalidates decoder queue completions through their weak owner.
     media.first.reset();
     media.lastVideoTexture = nullptr; media.received = false;
-    if (!live) return;
+    if (!live && !media.texture) return;
     P raw = m.get(media.raw), player = m.get(media.player);
     flag(m.r,raw,"set_enabled",false);
     m.r.call(raw,"set_texture",{"UnityEngine.Texture"},{nullptr});
     if (player) m.r.call(player,"Stop");
+    releaseAsset(m,media.texture); media.texture=0;
+    media.textureWidth=media.textureHeight=0; media.uploadedRevision=0;
 }
 void failMedia(Map &m, Media &media, NSString *reason) {
     if (media.failed) return;
@@ -173,6 +197,28 @@ void deferMedia(Media &media, NSString *reason) {
     media.deferred=true;
     PMDiagnosticsWrite([[NSString stringWithFormat:@"Map media still preparing (%@): %@; continue behind poster",media.path,reason] UTF8String]);
     // A deadline is NOT a decoder failure. Retain Prepare/GIF work and ownership.
+}
+// The only PMA upload adapter. The pointer remains owned by g.ready throughout
+// the synchronous managed calls. No managed byte array, PNG encode or LoadImage.
+P uploadSequence(Map &m, Media &media) {
+    auto &g=*media.gif;
+    if (!g.ready || !g.width || !g.height || g.width>2048 || g.height>2048 ||
+        g.ready.length!=g.width*g.height*4) throw std::runtime_error("Invalid PMA RGBA payload");
+    if (media.texture && media.uploadedRevision==g.revision) return m.get(media.texture);
+    if (!media.texture) media.texture=newTexture(m,int(g.width),int(g.height));
+    else if (media.textureWidth!=int(g.width) || media.textureHeight!=int(g.height)) {
+        int w=int(g.width),h=int(g.height),format=4; bool mip=false;
+        if (!m.r.unbox<bool>(m.r.call(m.get(media.texture),"Reinitialize",
+            {"System.Int32","System.Int32","UnityEngine.TextureFormat","System.Boolean"},{&w,&h,&format,&mip})))
+            throw std::runtime_error("PMA texture resize failed");
+    }
+    media.textureWidth=int(g.width); media.textureHeight=int(g.height);
+    P texture=m.get(media.texture);
+    const void *bytes=g.ready.bytes; int size=int(g.ready.length); bool no=false;
+    m.r.call(texture,"LoadRawTextureData",{"System.IntPtr","System.Int32"},{&bytes,&size});
+    m.r.call(texture,"Apply",{"System.Boolean","System.Boolean"},{&no,&no});
+    media.uploadedRevision=g.revision;
+    return texture;
 }
 void warmMedia(Map &m, Media &media, bool expired) {
     if (media.failed || media.first.held()) return;
@@ -208,8 +254,12 @@ void warmMedia(Map &m, Media &media, bool expired) {
             if (g.failed) { failMedia(m,media,@"first GIF frame decode failed"); return; }
             if (g.pending) return;
             if (!g.ready) { requestGif(media); return; }
-            P texture = m.get(media.texture);
-            upload(r,texture,g.ready,false);
+            P texture;
+            if ([media.path.pathExtension.lowercaseString isEqualToString:@"pma"]) texture=uploadSequence(m,media);
+            else {
+                if (!media.texture) media.texture=newTexture(m);
+                texture=m.get(media.texture); upload(r,texture,g.ready,false);
+            }
             attachMedia(m,media,texture,g.aspect);
             g.ready = nil; g.due = g.delay; // Authored t=0; never charge hidden wall time.
             if (![media.path.pathExtension.lowercaseString isEqualToString:@"pma"]) {
@@ -261,6 +311,8 @@ void syncMedia(Map &m, Media &media, bool play, double t) {
                 media.gif->sequenceClock.start(t,false); // New visit has a fresh zero origin.
             }
         }
+        if (!player && ![media.path.pathExtension.lowercaseString isEqualToString:@"pma"] && !media.texture)
+            media.texture=newTexture(m);
         P texture = nullptr;
         float aspect = 1;
         if (player) {
@@ -282,8 +334,8 @@ void syncMedia(Map &m, Media &media, bool play, double t) {
             if (g.failed && !g.sequenceClock.acceptsFailure(g.readySlot)) g.failed=false;
             if (g.failed && g.readySlot==wanted) {failMedia(m,media,@"PMA frame decode failed");return;}
             if (g.ready && g.sequenceClock.canDisplay(g.readySlot)) {
-                texture=m.get(media.texture);aspect=g.aspect;
-                upload(r,texture,g.ready,false);g.ready=nil;
+                texture=uploadSequence(m,media);aspect=g.aspect;
+                g.ready=nil;
                 g.sequenceClock.displayed(g.readySlot);
                 // Never finish solely because time passed: the last image must upload.
                 g.finished=!media.loop && g.count && g.readySlot.frame==g.count-1;

@@ -10,13 +10,23 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class SongInterruptionRuntime(unittest.TestCase):
+    def test_legacy_window_uses_same_interruption_owner(self):
+        text=(ROOT/'PhiMod/Sources/PMSongInterruption.mm').read_text(encoding='utf8')
+        self.assertIn('pmsonginterruption::windowActive(',text)
+        self.assertIn('UIApplication.sharedApplication.windows',text)
+        self.assertIn('initWithFrame:host.window.frame',text)
+        self.assertIn('initWithWindowScene:host.window.windowScene',text)
+        self.assertIn('state.firstDisplay(ticket, now, true, true)',text)
+        self.assertIn('state.claimAlert(ticket, now, true)',text)
+        self.assertEqual(text.count('[alert addAction:'),1)
+
     def test_production_owner(self):
         compiler = os.environ.get('CXX') or shutil.which('clang++') or shutil.which('g++') or shutil.which('cl')
         vcvars = Path('D:/Program Files (x86)/Microsoft Visual Studio/2019/Community/VC/Auxiliary/Build/vcvars64.bat')
         if not compiler and not (os.name == 'nt' and vcvars.is_file()):
             self.skipTest('C++17 compiler unavailable')
         # Never put build products/cache in the source checkout or on C:/F:.
-        base = Path(os.environ.get('PM_INTERRUPTION_TEST_TMP', 'G:/PhiMod-package30/interruption-tests' if os.name == 'nt' else '/tmp/interruption-tests'))
+        base = Path(os.environ.get('PM_INTERRUPTION_TEST_TMP', 'G:/phimod项目/本地测试归档/OS-blue-performance-fix-20261127/tests' if os.name == 'nt' else '/tmp/interruption-tests'))
         if os.name == 'nt' and base.resolve().drive.upper() not in ('D:', 'G:'):
             self.fail('Interruption test scratch must be on D: or G:')
         base.mkdir(parents=True, exist_ok=True)
@@ -40,7 +50,7 @@ class SongInterruptionRuntime(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             result = subprocess.run([str(output)], cwd=folder, env=env, capture_output=True, text=True, timeout=20)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('18 groups passed', result.stdout)
+            self.assertIn('19 groups passed', result.stdout)
             print(result.stdout.strip())
 
 

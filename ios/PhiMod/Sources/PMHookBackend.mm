@@ -139,48 +139,54 @@ void logProgressSnapshot(Runtime&r,P p,const char*source,uint64_t count){
 }
 #include "PMDoorGameplay.inc"
 #include "PMSongInterruptionGameplay.inc"
-bool bindDoor(Runtime &r,P level,phimod::Options &options){
- const bool hpEligible=doorPlayEligible(options);
- if((!hpEligible&&!PMDoorReplayPending()&&!PMSongInterruptionPending()) || pmchallenge::variable())return false;
+bool bindDoor(Runtime &r,P level,phimod::Options &options,bool interruptionOnly=false){
+ const bool hpEligible=!interruptionOnly&&doorPlayEligible(options);
+ auto reject=[&](const char *reason){
+  if(interruptionOnly)diagf("Song interruption bind failure: %s level=%p",reason,level);
+  return false;
+ };
+ if((!hpEligible&&!PMDoorReplayPending()&&!PMSongInterruptionPending()) || pmchallenge::variable())return reject("no eligible launch or variable challenge");
  P pc=r.get<P>(level,"progressControl"), start=r.get<P>(r.mainGame(),"levelStartInfo");
- if(!pc || !start || r.get<bool>(pc,"_inChallengeMode"))return false;
+ if(!pc || !start || r.get<bool>(pc,"_inChallengeMode"))return reject("progress/start missing or challenge mode");
  NSString *identifier=r.string(r.get<P>(start,"songsId"));
  NSString *label=[r.string(r.get<P>(start,"songsLevel")) stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
- if(!identifier.length || !label.length)return false;
+ if(!identifier.length || !label.length)return reject("empty chart ID or difficulty");
  int slot=PMStockDifficulty(label);
  NSString *group=identifier;
  NSString *key=r.string(r.get<P>(start,"chartAddressableKey"));
- if(!key.length)return false;
+ if(!key.length)return reject("empty chartAddressableKey");
  const bool installed=[key hasPrefix:@"PM/"];
  if(installed){
   // GetLevelStartInfo keeps the native transport level and substitutes the
   // installed ID and chart key. Multiple named charts can share the AT slot.
   NSString *prefix=[NSString stringWithFormat:@"PM/%@/chart@",identifier];
-  if(![key hasPrefix:prefix])return false;
+  if(![key hasPrefix:prefix])return reject("installed chart key/ID mismatch");
   NSDictionary *chart=nil;
   for(NSDictionary *row in [PMContentStore.shared snapshot][@"songs"]){
    if(![row[@"id"] isEqualToString:identifier])continue;
-   if(chart)return false;
+   if(chart)return reject("duplicate installed chart ID");
    chart=row;
   }
-  if(!chart || ![chart[@"level"] length])return false;
+  if(!chart || ![chart[@"level"] length])return reject("installed chart/difficulty unavailable");
   int stock=PMStockDifficulty(chart[@"level"]);
   int transport=stock<0?3:stock;
   if(stock<0 && [label isEqualToString:PMDifficultyName(chart[@"level"])])slot=transport;
-  if(slot!=transport)return false;
+  if(slot!=transport)return reject("transport difficulty mismatch");
   if([chart[@"groupId"] length])group=chart[@"groupId"];
  }
  // A replay uses the same resolved native tuple but never acquires a door owner.
- if(applyChapterReplay(PMDoorConsumeReplay(group,slot,identifier),options)){
+ if(!interruptionOnly&&applyChapterReplay(PMDoorConsumeReplay(group,slot,identifier),options)){
   PMCancelSongInterruptionLaunch();return true;
  }
  // Pending widens identity validation, NOT HP eligibility. Only the resolved
  // installed chart ID + transport slot may consume the OS-armed interruption.
  bool terminal=false;
- if(PMSongInterruptionPending()){
+ if(interruptionOnly&&PMSongInterruptionPending()){
+  diagf("Song interruption binding chart=%s slot=%d key=%s pc=%p",identifier.UTF8String,slot,key.UTF8String,pc);
   if(installed&&slot>=0)terminal=songinterruption::gameplay.begin(level,pc,identifier,slot);
-  else PMCancelSongInterruptionLaunch();
+  else {reject("not an installed chart/slot");PMCancelSongInterruptionLaunch();}
  }
+ if(interruptionOnly)return terminal; // Never consume/reapply HP or replay at Progress.Start.
  if(!hpEligible){PMDoorCancelPending();pmstory::cancelLaunch();return terminal;}
  double hp=0,delta[4]={};
  if(slot<0 || !PMDoorBeginExactTrack(group,slot,identifier,&hp,delta))return terminal;
@@ -198,9 +204,19 @@ bool bindDoor(Runtime &r,P level,phimod::Options &options){
 void prepareDoor(Runtime &r,P level,phimod::Options &options){
  try{if(bindDoor(r,level,options))return;}
  catch(const std::exception &e){diagf("Door bind failed: %s",e.what());abandonBoundDoor();}
- songinterruption::gameplay.end();
+ // HP still prepares before native Awake. A terminal launch is consumed only
+ // at Progress.Start, with active-scene validation; early missing fields are not a rejection.
+ if(!PMSongInterruptionPending())songinterruption::gameplay.end();
  pmstory::cancelLaunch();
  PMDoorCancelPending();
+}
+void prepareSongInterruption(Runtime &r,P pc){
+ if(!PMSongInterruptionPending())return;
+ // Ignore a different Progress.Start; it cannot consume this scene's launch.
+ if(!currentLevel || r.get<P>(currentLevel,"progressControl")!=pc)return;
+ if(!broken&&!pmsecretcourse::active()&&bindDoor(r,currentLevel,frozenOptions,true))return;
+ if(broken||pmsecretcourse::active())diagf("Song interruption bind failure: backend=%d secretCourse=%d",broken,pmsecretcourse::active());
+ songinterruption::gameplay.end();
 }
 void fault(const std::exception &e){abandonBoundDoor();diagf("fault: %s",e.what());NSLog(@"[PhiMod] Gameplay failure: %s",e.what());lastError=e.what();broken=true;guard.store(true);if(attempt)attempt->failClosed();}
 bool applying(){return ready&&!broken&&attempt&&attempt->shouldApplyGameplay();}
@@ -252,6 +268,7 @@ void onAwake(P self,P mi){
  timingHints::enabled=PMSettingBool("earlyLateHints");
  timingHints::showBad=timingHints::enabled && PMSettingBool("earlyLateBad");
  diagf("LevelControl.Awake enter");
+ if(PMSongInterruptionPending())songinterruption::nativeHost.launch("Awake pending",self);
  try{pmcontent::levelBegin(R());}catch(const std::exception&e){diagf("Content begin: %s",e.what());}
  try{pmfeatures::levelBegin(R(),self);}catch(const std::exception&e){diagf("Feature begin: %s",e.what());}
  try{pmunlock::clear(R());}catch(const std::exception&e){diagf("Unlock cleanup: %s",e.what());}
@@ -270,6 +287,7 @@ void onAwake(P self,P mi){
  if(broken){songinterruption::gameplay.end();pmstory::cancelLaunch();PMDoorCancelPending();}
  diagf("LevelControl.Awake calling original hpActive=%d",pmhp::active());
  orig<VoidFn>(h::levelAwake)(self,mi);
+ if(PMSongInterruptionPending())songinterruption::nativeHost.launch("Awake returned pending",self);
  try{pmcontent::difficultyIntro(R(),self);}catch(const std::exception&e){diagf("Difficulty intro: %s",e.what());}
  diagf("LevelControl.Awake returned");
 }
@@ -296,6 +314,10 @@ void onProgressStart(P self,P mi){
  diagf("ProgressControl.Start enter");
  try{pmpractice::begin(R(),self);diagf("Practice clock/pitch armed before ProgressControl.Start");}catch(const std::exception&e){diagf("Practice pre-start setup failed; original audio path retained: %s",e.what());try{pmpractice::clear(R());}catch(...){}}
  orig<VoidFn>(h::progressStart)(self,mi);
+ // 4.0.4 Start (0x1593244) initializes volume/difficulty, not a gameplay tick.
+ // Bind after native Start; Awake can precede the active-scene handoff.
+ try{prepareSongInterruption(R(),self);}
+ catch(const std::exception &e){diagf("Song interruption Start bind failure: %s",e.what());songinterruption::gameplay.end();}
  if(self==pauseLockedDoor){
   try{
    auto &r=R();

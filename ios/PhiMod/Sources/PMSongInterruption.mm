@@ -1,6 +1,8 @@
 #import "PMSongInterruption.h"
 #import "PMChapterArt.h"
 #import "PMCoverImage.h"
+#import "PMDiagnostics.h"
+#include "PMSongInterruptionWindow.hpp"
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #include "PMSongInterruptionState.hpp"
@@ -180,6 +182,16 @@ static PMInterruptionHost gameHost() {
             result = {window.rootViewController, unity, window};
         }
     }
+    if(!result.window){
+        // Legacy UnityAppController has no UIScene/connectedScenes entry.
+        for(UIWindow *window in UIApplication.sharedApplication.windows){
+            if(window.windowScene || window.hidden || window.windowLevel!=UIWindowLevelNormal)continue;
+            UIView *unity=unityViewIn(window.rootViewController.viewIfLoaded);
+            if(!unity)continue;
+            if(result.window)return {};
+            result={window.rootViewController,unity,window};
+        }
+    }
     return result;
 }
 static double continuousSeconds() {
@@ -190,8 +202,9 @@ static double continuousSeconds() {
     return (double)mach_continuous_time() * ((double)scale.numer / scale.denom) * 1e-9;
 }
 static BOOL activeWindow(UIWindow *window) {
-    return window && window.windowScene && UIApplication.sharedApplication.applicationState == UIApplicationStateActive &&
-           window.windowScene.activationState == UISceneActivationStateForegroundActive;
+    return pmsonginterruption::windowActive(window!=nil,window.hidden,
+        UIApplication.sharedApplication.applicationState==UIApplicationStateActive,window.windowScene!=nil,
+        window.windowScene.activationState==UISceneActivationStateForegroundActive);
 }
 static CGFloat windowAspect(UIWindow *window) {
     CGSize size = window.bounds.size;
@@ -358,10 +371,11 @@ static void notifyInvalidation(const std::shared_ptr<PMInterruptionPayload>& pay
     [self.imageWindow layoutIfNeeded];
     if (!state.owns(ticket)) return;
     const double now = continuousSeconds();
-    if (state.firstDisplay(ticket, now, true, true)) return; // Even delay=0 gets an image frame.
+    if (state.firstDisplay(ticket, now, true, true)) { PMDiagnosticsWrite("Song interruption: blue image displayed; realtime delay started"); return; } // Even delay=0 gets an image frame.
     if (!state.claimAlert(ticket, now, true)) return;
     auto payload = state.payload();
     if (self.imageController.presentedViewController) { [self invalidate:ticket]; return; }
+    PMDiagnosticsWrite("Song interruption: presenting single-button quit alert");
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:payload->prepared.title
         message:payload->prepared.message preferredStyle:UIAlertControllerStyleAlert];
     __weak PMSongInterruptionOwner *weak = self;
@@ -385,7 +399,7 @@ static void notifyInvalidation(const std::shared_ptr<PMInterruptionPayload>& pay
     void (^callback)(void) = self.quit;
     self.quit = nil;
     // No native calls, fallback exit, saves, navigation or second dialog here.
-    if (callback) callback();
+    if (callback) { PMDiagnosticsWrite("Song interruption: user pressed close application"); callback(); }
 }
 @end
 
@@ -407,7 +421,9 @@ BOOL PMArmSongInterruption(PMPreparedSongInterruption *prepared, NSString *chart
     if (host.window && !completeCover(payload, windowAspect(host.window))) {
         owner->state.cancelLaunch(); return NO;
     }
-    return owner->state.arm(std::move(payload), chartID.UTF8String, slot, prepared.at, prepared.delay);
+    BOOL armed=owner->state.arm(std::move(payload), chartID.UTF8String, slot, prepared.at, prepared.delay);
+    PMDiagnosticsWrite([[NSString stringWithFormat:@"Song interruption arm chart=%@ slot=%d at=%.3f accepted=%d",chartID,slot,prepared.at,armed] UTF8String]);
+    return armed;
 }
 BOOL PMSongInterruptionPending(void) {
     return NSThread.isMainThread && interruptionOwner()->state.pending();
@@ -425,6 +441,7 @@ BOOL PMBeginSongInterruption(NSString *chartID, int slot) {
     }
     [owner clearUI];
     notifyInvalidation(previous);
+    PMDiagnosticsWrite([[NSString stringWithFormat:@"Song interruption begin chart=%@ slot=%d accepted=%d",chartID,slot,accepted] UTF8String]);
     return accepted && owner->state.owns(ticket); // Invalidation may reenter.
 }
 void PMCancelSongInterruptionLaunch(void) {
@@ -477,8 +494,10 @@ BOOL PMTriggerSongInterruption(BOOL (^freeze)(void), void (^quit)(void)) {
         controller.gameController = host.controller;
         [controller loadViewIfNeeded];
         controller.imageView.image = cover;
-        UIWindow *window = [[UIWindow alloc] initWithWindowScene:host.window.windowScene];
-        window.frame = host.window.windowScene.coordinateSpace.bounds;
+        UIWindow *window = host.window.windowScene ? [[UIWindow alloc] initWithWindowScene:host.window.windowScene]
+                                                   : [[UIWindow alloc] initWithFrame:host.window.frame];
+        // Match the validated game's coordinate space, including legacy rotation.
+        window.frame = host.window.windowScene ? host.window.windowScene.coordinateSpace.bounds : host.window.frame;
         window.windowLevel = host.window.windowLevel + 1;
         window.rootViewController = controller;
         owner.imageController = controller; owner.imageWindow = window;

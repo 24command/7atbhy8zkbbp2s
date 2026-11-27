@@ -104,7 +104,7 @@ class MapReadinessAdapter(unittest.TestCase):
         self.assertIn('if (auto owner = visit.lock())', MEDIA)
 
     def test_reserved_timeline_resources_are_not_acquired(self):
-        preflight = between(MAP, 'int preflight(', 'void validateParent(')
+        preflight = between(MAP, 'std::vector<int> preflight(', 'void validateParent(')
         self.assertLess(preflight.index('layout::reserved(page,n.screen)'), preflight.index('models[i]'))
         self.assertIn('layout::suppressed(page,n)', preflight) # Silhouette budget pass.
         build = between(MAP, 'void build(', 'void refresh(')

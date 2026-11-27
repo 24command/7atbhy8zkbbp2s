@@ -1,4 +1,7 @@
 // Compile the production Gameplay<> controller, not a second state-machine model.
+#include <algorithm>
+#include <memory>
+#include "../PhiMod/Sources/PMSongInterruptionState.hpp"
 #include <array>
 #include <cassert>
 #include <cmath>
@@ -18,31 +21,37 @@ struct FakeHost {
  struct Snapshot {bool canPause=true,canOver=true,stopJudge=false,playing=true;float now=159,audio=159.1f,wrapper=159.2f;};
  Snapshot state;
  int currentLevel=1,currentScene=7,roots=0,pauses=0,resumes=0,quits=0,protects=0,triggers=0,captures=0,ends=0;
- bool sound=true,playFlag=true,pendingValue=false,uiPlaying=false,uiBlocking=false,ready=true,denyTrigger=false,failPresentation=false;
+ bool sound=true,playFlag=true,uiPlaying=false,uiBlocking=false,ready=true,denyTrigger=false,failPresentation=false;
  bool failAcquire=false,failCapture=false,failPause=false,failHold=false;
  int resumeFailures=0;
  int matchReads=0,liveReads=0,eligibilityReads=0,timeReads=0,dueReads=0;
  std::array<int,5> probes()const{return {matchReads,liveReads,eligibilityReads,timeReads,dueReads};}
- std::string pendingID;int pendingSlot=-1;double at=159;
+ pmsonginterruption::Owner<std::shared_ptr<int>> uiState;
+ int activeScene=7,levelProgress=11;
+ bool checkNativeOwner=false;
+ int beginCalls=0;
+ std::vector<std::string> events,errors;
  std::function<bool()> configuredGuard,playingGuard,freezeCallback;
  std::function<void()> configuredInvalidation,playingInvalidation,quitCallback;
  std::vector<std::string> calls;
- void arm(std::string id="installed-OS",int slot=3){pendingValue=true;pendingID=id;pendingSlot=slot;}
- void cancel(){pendingValue=false;}
+ void arm(std::string id="installed-OS",int slot=3){assert(uiState.arm(std::make_shared<int>(1),id,slot,159,2));}
+ void cancel(){uiState.cancelLaunch();}
  void configure(std::function<bool()>guard,std::function<void()>invalidated){configuredGuard=guard;configuredInvalidation=invalidated;}
- bool pending(){return pendingValue;}
+ bool pending(){return uiState.pending();}
  bool begin(std::string id,int slot){
   auto previous=playingInvalidation;
-  bool ok=pendingValue&&id==pendingID&&slot==pendingSlot;pendingValue=false;
+  ++beginCalls;
+  bool ok=uiState.begin(id,slot); // Actual PMBeginSongInterruption state, including destructive mismatch.
+  auto ticket=uiState.ticket();
   uiPlaying=ok;uiBlocking=false;playingGuard=ok?configuredGuard:std::function<bool()>{};
   playingInvalidation=ok?configuredInvalidation:std::function<void()>{};
-  if(previous)previous();return ok;
+  if(previous)previous();return ok&&uiState.owns(ticket);
  }
- void invalidate(){auto old=playingInvalidation;playingInvalidation={};uiPlaying=uiBlocking=false;if(old)old();}
- void end(){++ends;pendingValue=false;invalidate();}
- void acquire(Owner&o,int level,int pc){o={level,pc,currentScene};roots+=2;if(failAcquire)throw std::runtime_error("acquire");}
+ void invalidate(){uiState.retirePlaying();auto old=playingInvalidation;playingInvalidation={};uiPlaying=uiBlocking=false;if(old)old();}
+ void end(){++ends;uiState.end();invalidate();}
+ void acquire(Owner&o,int level,int pc){o={level,pc,currentScene};roots+=2;if(failAcquire||(checkNativeOwner&&(!level||!pc||!live(o))))throw std::runtime_error("acquire level/progress/scene");}
  void release(Owner&o){if(o.level)roots-=2;o={};}
- bool live(const Owner&o){++liveReads;return o.level&&o.level==currentLevel&&o.scene==currentScene;}
+ bool live(const Owner&o){++liveReads;return o.level&&o.level==currentLevel&&o.scene==currentScene&&(!checkNativeOwner||(o.pc==levelProgress&&o.scene==activeScene));}
  bool inScene(const Owner&o,int scene){return o.scene==scene;}
  bool matches(const Owner&o,Entry entry,int object){
   ++matchReads;
@@ -51,7 +60,7 @@ struct FakeHost {
  }
  bool eligible(const Owner&){++eligibilityReads;return ready&&state.playing;}
  double time(const Owner&){++timeReads;return state.now;}
- bool due(double value){++dueReads;return uiPlaying&&playingGuard&&playingGuard()&&std::isfinite(value)&&value>=at;}
+ bool due(double value){++dueReads;return uiPlaying&&playingGuard&&playingGuard()&&uiState.due(value);}
  void capture(Owner&,Snapshot&s){++captures;calls.push_back("capture");if(failCapture)throw std::runtime_error("capture");s=state;}
  void protect(){++protects;calls.push_back("protect");}
  void hold(const Owner&,const Snapshot&s){
@@ -69,13 +78,15 @@ struct FakeHost {
  bool blocking(){if(uiBlocking&&(!playingGuard||!playingGuard()))invalidate();return uiBlocking;}
  bool trigger(std::function<bool()>freeze,std::function<void()>quit){
   ++triggers;if(denyTrigger)return false;
+  auto ticket=uiState.requestTrigger();if(!ticket)return false;
   freezeCallback=freeze;quitCallback=quit;
-  if(!freeze()){invalidate();return false;}
+  if(!uiState.frozen(ticket,freeze())){invalidate();return false;}
   if(failPresentation){invalidate();return false;}
   uiBlocking=true;return true;
  }
  void quit(){++quits;}
- void error(const char*,const char*){}
+ void event(const char*stage,const Owner&){events.emplace_back(stage);}
+ void error(const char*stage,const char*message){errors.push_back(std::string(stage)+": "+message);}
 };
 struct Run {
  FakeHost h;songinterruption::Gameplay<FakeHost> g{h};
@@ -148,5 +159,46 @@ int main(){int groups=0;
   before=r.h.probes();assert(r.frame(Entry::Judge,12));assert(r.frame(Entry::Audio,13));assert(r.frame(Entry::Notes,14));
   assert(r.h.matchReads==before[0]+3&&r.h.liveReads>before[1]);
   r.h.currentScene=8;assert(!r.frame(Entry::Judge,12));assert(!r.g.holding()&&r.h.roots==0&&r.h.resumes==0);++groups;}
+ // Legacy reproduction using BOTH production Gameplay and PMBegin's actual Owner.
+ // Awake may observe the entering level while the outgoing OS is still active.
+ {Run r;r.h.checkNativeOwner=true;r.h.activeScene=6;r.h.arm("installed-vortex-IN",2);r.g.awake();
+  assert(!r.g.begin(1,11,std::string("installed-vortex-IN"),2));
+  assert(r.h.beginCalls==1&&!r.h.pending()&&!r.h.uiState.payload()&&r.h.roots==0);
+  r.h.activeScene=7; // Native Awake/scene activation completes; consumed launch cannot be retried.
+  assert(!r.g.begin(1,11,std::string("installed-vortex-IN"),2));assert(!r.frame());++groups;}
+ // Correct hook lifecycle: keep pending through Awake and its early null pc; exact Begin only at Start.
+ {Run r;r.h.checkNativeOwner=true;r.h.activeScene=6;r.h.levelProgress=0;
+  r.h.arm("installed-vortex-IN",2);r.g.awake();
+  assert(r.h.pending()&&r.h.beginCalls==0&&r.h.roots==0);
+  r.h.levelProgress=11;r.h.activeScene=7; // Existing Progress.Start, after native Awake.
+  assert(r.g.begin(1,11,std::string("installed-vortex-IN"),2));
+  assert(r.h.beginCalls==1&&!r.h.pending()&&r.h.playingGuard());
+  r.h.state.now=158.99f;assert(!r.frame());r.h.state.now=159;assert(r.frame());
+  assert(r.h.events==std::vector<std::string>({"bound","due","freeze"}));
+  const auto ticket=r.h.uiState.ticket();
+  assert(r.h.uiState.firstDisplay(ticket,10,true,true));
+  assert(!r.h.uiState.claimAlert(ticket,11.999,true));assert(r.h.uiState.claimAlert(ticket,12,true));
+  assert(r.h.quits==0); // Timer never quits: sole validated user action must claim it.
+  assert(r.h.uiState.claimQuit(ticket));r.h.quitCallback();r.h.quitCallback();assert(r.h.quits==1);++groups;}
+ // Moving Begin does not soften exact installed ID / transport IN slot checks.
+ {for(int mismatch=0;mismatch<2;++mismatch){Run r;r.h.arm("installed-vortex-IN",2);r.g.awake();
+   assert(!r.g.begin(1,11,std::string(mismatch?"installed-vortex-IN":"vortex-group"),mismatch?3:2));
+   assert(!r.h.pending()&&r.h.roots==0&&!r.frame());
+  }++groups;}
+ // Awake with a fully available host still must preserve pending until the single Start Begin.
+ {Run r;r.h.checkNativeOwner=true;r.h.arm();r.g.awake();assert(r.h.pending()&&r.h.beginCalls==0);
+  assert(r.g.begin(1,11,std::string("installed-OS"),3));assert(r.h.beginCalls==1&&r.frame());++groups;}
+ // Diagnostic events are once per binding, including rejected trigger retries and held ticks.
+ {Run r;r.bind();r.h.denyTrigger=true;
+  for(int n=0;n<1000;++n)assert(!r.frame());
+  assert(r.h.events==std::vector<std::string>({"bound","due"})&&r.h.errors.size()==1);
+  r.h.denyTrigger=false;assert(r.frame());
+  for(int n=0;n<1000;++n){assert(r.frame());assert(r.frame(Entry::Audio,13));}
+  assert(r.h.events==std::vector<std::string>({"bound","due","freeze"})&&r.h.errors.size()==1);++groups;}
+ // Due is observable even when native readiness rejects freezing; readiness can recover later.
+ {Run r;r.bind();r.h.ready=false;
+  for(int n=0;n<1000;++n)assert(!r.frame());
+  assert(r.h.events==std::vector<std::string>({"bound","due"})&&r.h.triggers==0);
+  r.h.ready=true;assert(r.frame());assert(r.h.events==std::vector<std::string>({"bound","due","freeze"}));++groups;}
  std::cout<<groups<<" native gameplay groups passed\n";
 }

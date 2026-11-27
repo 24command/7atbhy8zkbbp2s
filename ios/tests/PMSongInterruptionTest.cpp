@@ -1,4 +1,5 @@
 #include "../PhiMod/Sources/PMSongInterruptionState.hpp"
+#include "../PhiMod/Sources/PMSongInterruptionWindow.hpp"
 #include "../PhiMod/Core/PMCoverGeometry.hpp"
 #include <cassert>
 #include <functional>
@@ -235,7 +236,21 @@ void hostLossKeepsNextPendingButEndClearsAll() {
     h.arm("third"); h.owner.end(); assert(!h.owner.pending() && h.alive == 0);
 }
 }
+static void legacyAndSceneWindowEligibility() {
+ using pmsonginterruption::windowActive;
+ assert(windowActive(true,false,true,false,false)); // Retail legacy Unity, no scene manifest.
+ assert(windowActive(true,false,true,true,true));
+ assert(!windowActive(false,false,true,false,false));
+ assert(!windowActive(true,true,true,false,false));
+ assert(!windowActive(true,false,false,false,false));
+ assert(!windowActive(true,false,true,true,false));
+ // Both host kinds run the exact same first-display / realtime-two-second owner.
+ for(bool scene:{false,true}){
+  assert(windowActive(true,false,true,scene,scene));
+ }
+}
 int main() {
+    legacyAndSceneWindowEligibility();
     fullWindowGeometryAfterOrientationChange();
     exactIdentityAndOneConsumption();
     capturedPendingSurvivesOldPlayingRetirement();
@@ -254,5 +269,5 @@ int main() {
     cancellationInvalidatesAllOldCallbacks();
     reentrantFreezeCannotAttachOldPixels();
     hostLossKeepsNextPendingButEndClearsAll();
-    std::cout << "Song interruption ownership/timing: 18 groups passed\n";
+    std::cout << "Song interruption ownership/timing: 19 groups passed\n";
 }

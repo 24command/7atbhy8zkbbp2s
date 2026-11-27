@@ -31,9 +31,9 @@ class NativeSongInterruption(unittest.TestCase):
         vcvars = Path('D:/Program Files (x86)/Microsoft Visual Studio/2019/Community/VC/Auxiliary/Build/vcvars64.bat')
         if not compiler and not (os.name == 'nt' and vcvars.is_file()):
             self.skipTest('C++17 compiler unavailable')
-        base = Path(os.environ.get('PM_NATIVE_INTERRUPTION_TMP', 'D:/Users/test/kld-terminal-audit/tests' if os.name == 'nt' else '/tmp/pm-native-interruption'))
-        if os.name == 'nt' and base.resolve().drive.upper() != 'D:':
-            self.fail('Native interruption scratch must be on D:')
+        base = Path(os.environ.get('PM_NATIVE_INTERRUPTION_TMP', 'G:/phimod项目/本地测试归档/OS-blue-performance-fix-20261127/tests' if os.name == 'nt' else '/tmp/pm-native-interruption'))
+        if os.name == 'nt' and base.resolve().drive.upper() not in ('D:', 'G:'):
+            self.fail('Native interruption scratch must be on D: or G:')
         base.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='native-', dir=base) as folder:
             folder = Path(folder)
@@ -54,7 +54,7 @@ class NativeSongInterruption(unittest.TestCase):
             for command, timeout in [(command, 120), ([str(output)], 20)]:
                 result = subprocess.run(command, cwd=folder, env=env, capture_output=True, text=True, errors='replace', timeout=timeout)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('28 native gameplay groups passed', result.stdout)
+            self.assertIn('34 native gameplay groups passed', result.stdout)
             print(result.stdout.strip())
 
     def test_existing_hooks_hold_before_original_or_practice(self):
@@ -94,7 +94,7 @@ class NativeSongInterruption(unittest.TestCase):
         bind = body(BACKEND, 'bool bindDoor(')
         self.assertIn('!hpEligible&&!PMDoorReplayPending()&&!PMSongInterruptionPending()', bind)
         consume = bind.index('songinterruption::gameplay.begin(level,pc,identifier,slot)')
-        for check in ('if(![key hasPrefix:prefix])return false;', 'if(slot!=transport)return false;',
+        for check in ('if(![key hasPrefix:prefix])return reject(', 'if(slot!=transport)return reject(',
                       'PMDoorConsumeReplay(group,slot,identifier)', 'if(installed&&slot>=0)'):
             self.assertLess(bind.index(check), consume)
         self.assertLess(consume, bind.index('if(!hpEligible)'))
@@ -106,6 +106,65 @@ class NativeSongInterruption(unittest.TestCase):
         self.assertIn('!pmsecretcourse::active()', HELPER)
         normal = body(BACKEND, 'void onNormalStart(')
         self.assertLess(normal.index('PMCancelSongInterruptionLaunch();'), normal.index('pmstory::captureLaunch();'))
+
+    def test_start_consumes_terminal_pending_without_reapplying_hp(self):
+        awake = body(BACKEND, 'void onAwake(')
+        self.assertLess(awake.index('prepareDoor('), awake.index('orig<VoidFn>(h::levelAwake)'))
+        self.assertLess(awake.index('pmhp::prepare('), awake.index('orig<VoidFn>(h::levelAwake)'))
+        self.assertNotIn('prepareSongInterruption(', awake)
+        original = awake.index('orig<VoidFn>(h::levelAwake)')
+        self.assertLess(awake.index('nativeHost.launch("Awake pending"'), original)
+        self.assertGreater(awake.index('nativeHost.launch("Awake returned pending"'), original)
+        prepare = body(BACKEND, 'void prepareDoor(')
+        self.assertIn('if(!PMSongInterruptionPending())songinterruption::gameplay.end();', prepare)
+        start = body(BACKEND, 'void onProgressStart(')
+        self.assertLess(start.index('orig<VoidFn>(h::progressStart)(self,mi);', start.index('pmpractice::begin')),
+                        start.index('prepareSongInterruption(R(),self)'))
+        bind = body(BACKEND, 'bool bindDoor(')
+        self.assertIn('if(interruptionOnly&&PMSongInterruptionPending())', bind)
+        self.assertIn('!interruptionOnly&&applyChapterReplay(', bind)
+        self.assertLess(bind.index('if(interruptionOnly)return terminal;'), bind.index('PMDoorBeginExactTrack'))
+        terminal = body(BACKEND, 'void prepareSongInterruption(')
+        self.assertLess(terminal.index('"progressControl")!=pc'), terminal.index('bindDoor('))
+        self.assertIn('bindDoor(r,currentLevel,frozenOptions,true)', terminal)
+
+    def test_verified_404_awake_start_machine_code(self):
+        analysis = Path(os.environ.get('PHIGROS_404_ANALYSIS', 'G:/phimod项目/Phigros_4.0.4.ipa/analysis'))
+        binary = analysis / 'UnityFramework'
+        if not binary.is_file():
+            self.skipTest('local retail 4.0.4 binary unavailable')
+        from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
+        decoder = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
+        data = binary.read_bytes()
+        def instruction(address):
+            op = next(decoder.disasm(data[address:address + 4], address))
+            return op.mnemonic, op.op_str
+        # Awake attaches level mods; it does NOT initialize progressControl/levelInformation.
+        self.assertEqual(instruction(0x1581B34), ('bl', '#0x154a738'))  # Doppelganger.TryAttach
+        self.assertEqual(instruction(0x1581C0C), ('bl', '#0x37f2998'))  # InstantiateAsync
+        awake = list(decoder.disasm(data[0x1581A4C:0x1581CD4], 0x1581A4C))
+        self.assertFalse(any(op.mnemonic.startswith('st') and '[x19' in op.op_str for op in awake))
+        # Start reads existing audioSource and LevelStartInfo.songsLevel, sets volume/index.
+        self.assertEqual(instruction(0x1593258), ('ldr', 'x0, [x0, #0x38]'))
+        self.assertEqual(instruction(0x1593268), ('bl', '#0x15c85fc'))
+        self.assertEqual(instruction(0x15932AC), ('ldr', 'x0, [x8, #0x38]'))
+        self.assertEqual(instruction(0x15932B4), ('bl', '#0x14cb004'))
+        self.assertEqual(instruction(0x15932B8), ('str', 'w0, [x19, #0xd8]'))
+        # LevelControl.Start's coroutine marks chartLoaded only after asynchronous chart setup.
+        self.assertEqual(instruction(0x158582C), ('strb', 'w9, [x8, #0x68]'))
+        dump = (analysis / 'dump.cs').read_text(encoding='utf-8-sig')
+        # NativeHost.keep/eligible/live use Runtime.alive (Unity Object.op_Implicit).
+        # In 4.0.4 every rooted component really is a Unity object, including Info.
+        for component in ('LevelControl', 'ProgressControl', 'LevelInformation', 'JudgeControl',
+                          'AddressableAudioSource', 'NoteUpdateManager'):
+            self.assertIn('public class ' + component + ' : MonoBehaviour //', dump)
+        self.assertIn('public sealed class AudioSource : AudioBehaviour //', dump)
+        level = dump.split('public class LevelControl : MonoBehaviour', 1)[1].split('// Methods', 1)[0]
+        self.assertIn('public ProgressControl progressControl; // 0x28', level)
+        start_info = dump.split('public class LevelStartInfo //', 1)[1].split('// Properties', 1)[0]
+        for field in ('public string songsId; // 0x10', 'public string songsLevel; // 0x38',
+                      'public string chartAddressableKey; // 0x50'):
+            self.assertIn(field, start_info)
 
     def test_scene_ownership_callbacks_and_story_fence(self):
         begin = body(HELPER, 'template<class Identifier> bool begin(')
