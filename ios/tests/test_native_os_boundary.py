@@ -158,7 +158,8 @@ template<class F>void guardInput(F f){try{f();}catch(const std::exception&){}}
 '''
         code += definition(COORD, 'enum class Mode') + '; Mode mode=Mode::idle;\n'
         code += r'''
-bool refuse=false, gated=false;
+bool refuse=false, gated=false,busy=false;
+int loadMessages=0;void PMOSShowLoadError(const char*){++loadMessages;}
 int revision=1, leaves=0, restores=0, destroys=0;
 struct {struct {int revision=1;} shared;} PMContentStore;
 double now=0;
@@ -182,6 +183,10 @@ template<class F>bool cutChecked(F f){try{f();return true;}catch(...){return fal
         # for the portable fake runtime, whose chapter keys are interned pointers.
         callbacks = '\n'.join(definition(COORD, signature) for signature in (
             'bool wantsOSHome(', 'void selectorPreloaded(', 'void selectorLoaded(', 'void ready('))
+        callbacks = callbacks.replace('NSString *reason=err.localizedDescription ?: @"章节脚本加载失败";',
+            'const char *reason=err ? err->localizedDescription.UTF8String : "load failed";')
+        callbacks = callbacks.replace('PMOSShowLoadError([reason stringByAppendingString:@"\\n修正文件后可点击 OS 按钮重新加载。"]);',
+            'PMOSShowLoadError(reason);').replace('reason.UTF8String','reason')
         for objc, cpp in {
             'key.UTF8String?:""': '"pm_test"',
             '[chapter isEqual:key]': '(chapter==key)', '[bridge.chapter isEqual:key]': '(bridge.chapter==key)',
@@ -266,7 +271,10 @@ int main(){
     resetEntryBridge(r);checkpoint=true;selectorLoaded(r,18,&key);ready(r,button,&key);
     finishWorker(&lua);assert(bridge.cover && requestedEntry==generation);
     resetEntryBridge(r);selectorLoaded(r,18,&key);finishWorker(nil); // failure before ready
-    ready(r,button,&key);finishWorker(nil);assert(!worker && !bridge.cover && mode==Mode::idle);
+    ready(r,button,&key);finishWorker(nil);assert(!worker && !bridge.cover && mode==Mode::list && visible && !program && !requestedEntry && loadMessages==1);
+    // A retry explicitly opens OS even though the visible List was remembered.
+    navigation.presentedList("pm_test",true,true,true);
+    ready(r,button,&key);finishWorker(&lua);assert(program==&lua && requestedEntry==generation);
     resetEntryBridge(r);selectorLoaded(r,18,&key);ready(r,button,&key);detach(r);
     finishWorker(nil);assert(!worker && !bridge.cover && mode==Mode::idle); // obsolete waiter cannot retry
     resetEntryBridge(r);selectorLoaded(r,18,&key);ready(r,button,&key);

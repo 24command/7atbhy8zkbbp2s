@@ -10,12 +10,14 @@
 #import "PMStockIntroResolver.hpp"
 #import "PMStoryCueRun.h"
 #import "PMSongInterruption.h"
+#import "PMNativeOSInterruptionPlan.h"
 #import "PMDifficultyMetadata.h"
 #import <UIKit/UIGeometry.h>
 #import <AVFoundation/AVFoundation.h>
 #include <cmath>
 #include <algorithm>
 #include <memory>
+#include <exception>
 #include <utility>
 
 static int readStoryFlag(void *context, const char *key, int *value) {
@@ -55,7 +57,15 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
       @autoreleasepool {
           NSError *error = nil;
-          PMNativeOSProgram *program = [[self alloc] initWithChapter:identifier error:&error];
+          PMNativeOSProgram *program = nil;
+          @try {
+              try { program = [[self alloc] initWithChapter:identifier error:&error]; }
+              catch (const std::exception &exception) {
+                  error=[NSError errorWithDomain:@"PhiMod.ChapterOS" code:1 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithUTF8String:exception.what()] ?: @"章节 OS 资源准备失败"}];
+              }
+          } @catch (NSException *exception) {
+              error=[NSError errorWithDomain:@"PhiMod.ChapterOS" code:1 userInfo:@{NSLocalizedDescriptionKey:exception.reason ?: @"章节 OS 资源准备失败"}];
+          }
           dispatch_async(dispatch_get_main_queue(), ^{
             completion(program, error);
           });
@@ -129,17 +139,15 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
         const auto &spec=plan->songInterruptions[i];
         NSString *sid=order[spec.song-1];
         NSString *difficulty=spec.difficulty[0] ? [NSString stringWithUTF8String:spec.difficulty] : nil;
-        if (difficulty.length && [PMDifficultyName(difficulty) caseInsensitiveCompare:PMDifficultyName(songs[sid][@"level"])]!=NSOrderedSame)
-            return fail(@"songInterruption difficulty must match its installed chart");
-        if (bySong[sid][@"interruption"]) return fail(@"Ambiguous songInterruption for the same installed chart");
         NSDictionary *config=@{@"song":@(spec.song), @"difficulty":difficulty ?: @"", @"at":@(spec.at), @"delay":@(spec.delay),
             @"src":[NSString stringWithUTF8String:spec.src], @"title":[NSString stringWithUTF8String:spec.title],
             @"message":[NSString stringWithUTF8String:spec.message], @"button":[NSString stringWithUTF8String:spec.button],
             @"action":@"quit"};
-        NSError *error=nil;
-        PMPreparedSongInterruption *prepared=PMPrepareSongInterruption(config,chapterDir,&error);
-        if (!prepared) return fail(error.localizedDescription ?: @"Invalid song interruption image");
-        NSMutableDictionary *row=[bySong[sid] mutableCopy];row[@"interruption"]=prepared;bySong[sid]=[row copy];
+        bySong[sid]=PMOSBindInterruption(bySong[sid],difficulty,songs[sid][@"level"],^id(NSError **preparationError){
+            return PMPrepareSongInterruption(config,chapterDir,preparationError);
+        });
+        if(bySong[sid][@"interruptionError"])
+            PMDiagnosticsWrite([[NSString stringWithFormat:@"Chapter OS song %@: %@",sid,bySong[sid][@"interruptionError"]] UTF8String]);
     }
     NSMutableArray *cards = [NSMutableArray array];
     NSMutableSet *overridden = [NSMutableSet set];

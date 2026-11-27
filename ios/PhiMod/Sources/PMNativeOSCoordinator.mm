@@ -16,6 +16,7 @@
 #include "PMNativeOSRows.hpp"
 #include "PMNativeOSSwitch.hpp"
 #import "PMNativeOSProgram.h"
+#import "PMNativeOSLoadError.h"
 #import "PMNativeOSActions.hpp"
 #import "PMChapterOS.h"
 #import "PMOSCheckpoint.h"
@@ -363,6 +364,8 @@ bool armGameplay(NSDictionary *card,const rows::Start &song){
 bool playSelection(Runtime &r,NSDictionary *card,NSDictionary *choice){
  if(!card || !choice || !program.visibleBySong[choice[@"songID"]] || busy || (mode!=Mode::map && mode!=Mode::detail) ||
     revision!=PMContentStore.shared.revision || !scene::activeRoot(r) || PMUnlockMediaBusy())return false;
+ NSString *interruptionError=program.visibleBySong[choice[@"songID"]][@"interruptionError"];
+ if(interruptionError.length){PMOSShowLoadError(interruptionError);return false;}
  if(card[@"secretCourse"]){
   NSInteger tier=[card[@"lifeTier"] integerValue];busy=true;
   bool started=false;
@@ -469,6 +472,7 @@ void abortSelectorEntry(Runtime &r){
 }
 void ready(Runtime &r,P owner,NSString *key){
  if(transitioning() || mode==Mode::map || mode==Mode::detail)return;
+ const bool retryOS=mode==Mode::list && !program && selector==owner && [chapter isEqual:key];
  // Scene staging is optional. A failed preflight or Unity scene lookup must
  // still allow the live selector to load the declaration and bind its switch.
  int ownerScene=0;
@@ -489,15 +493,23 @@ void ready(Runtime &r,P owner,NSString *key){
  auto current=^bool{return epoch==generation && ticket==bridge.ticket && selector==owner && mode==Mode::loading;};
  PMNativeOSLoadCompletion loaded=^(PMNativeOSProgram *p,NSError *err){
   if(!current())return;
-  if(!p || libraryRevision!=PMContentStore.shared.revision){
-   mode=Mode::idle;
+  if(libraryRevision!=PMContentStore.shared.revision){
+   mode=Mode::idle;program=nil;requestedEntry=0;releaseEntryCover(*game);return;
+  }
+  if(!p){
+   // Keep a retryable OS switch on this confirmed script-bearing chapter.
+   // Never enter a scene with a null declaration or reuse an old chapter plan.
+   mode=Mode::list;program=nil;requestedEntry=0;gated=false;busy=false;
    releaseEntryCover(*game);
-   if(err)PMDiagnosticsWrite(err.localizedDescription.UTF8String);
+   if(toggle::bind(*game,owner,key.UTF8String))toggle::show(*game,toggle::Face::List,true);
+   NSString *reason=err.localizedDescription ?: @"章节脚本加载失败";
+   PMDiagnosticsWrite(reason.UTF8String);
+   PMOSShowLoadError([reason stringByAppendingString:@"\n修正文件后可点击 OS 按钮重新加载。"]);
    return;
   }
   program=p;revision=libraryRevision;lifeTier=p.selectedLifeTier;gated=p.listSwitchHidden;mode=Mode::list;
   if(toggle::bind(*game,owner,key.UTF8String))toggle::show(*game,gated?toggle::Face::Hidden:toggle::Face::List,!gated);
-  if(!returning && wantsOSHome(p,key))requestedEntry=epoch;
+  if(retryOS || (!returning && wantsOSHome(p,key)))requestedEntry=epoch;
  };
  // Join the preflight if it is still running. A missing result gets one
  // live load, while a successful declaration is consumed exactly once.
@@ -620,7 +632,10 @@ bool claims(Runtime &r,P button){
 void dispatchOwned(Runtime &r,P b){
  if(bridge.cover || cutTicket)return;
  if(mode==Mode::list){
-  if(toggle::press(r,b)==toggle::Press::OpenOS){PMDiagnosticsWrite("Chapter OS: list switch pressed");mode=Mode::listPending;requestedEntry=generation;}
+  if(toggle::press(r,b)==toggle::Press::OpenOS){
+   if(!program){P owner=selector;NSString *key=[chapter copy];ready(r,owner,key);return;}
+   PMDiagnosticsWrite("Chapter OS: list switch pressed");mode=Mode::listPending;requestedEntry=generation;
+  }
   return;
  }
  if(mode==Mode::listPending || transitioning())return;

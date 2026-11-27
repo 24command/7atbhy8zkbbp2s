@@ -34,12 +34,14 @@ jobs:
             ios/PhiMod/Sources/PMNativeOSEntryTimeline.mm \
             ios/PhiMod/Sources/PMNativeOSMap.mm \
             ios/PhiMod/Sources/PMNativeOSProgram.mm \
+            ios/PhiMod/Sources/PMNativeOSLoadError.mm \
             ios/PhiMod/Sources/PMNativeOSActions.mm \
             ios/PhiMod/Sources/PMUnlockMedia.mm \
             ios/PhiMod/Sources/PMHookBackend.mm \
             ios/PhiMod/Sources/PMSongInterruption.mm \
             ios/PhiMod/Sources/PMNativeOSMap.mm \
             ios/PhiMod/Sources/PMNativeOSProgram.mm \
+            ios/PhiMod/Sources/PMNativeOSLoadError.mm \
             ios/PhiMod/Sources/PMContentRuntime.mm
       - name: Test native OS transition boundaries
         run: |
