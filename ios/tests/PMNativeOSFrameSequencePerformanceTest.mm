@@ -21,6 +21,7 @@ namespace residency=pmnativeosmap::residency;
 namespace readiness=pmnativeosmap::readiness;
 namespace playback=pmnativeosmap::playback;
 namespace blend=pmnativeosmap::blend;
+namespace {
 using Handle=uint32_t;
 struct Managed {
     std::string kind;
@@ -282,6 +283,7 @@ static void playbackAndCancellation(NSString *dir) {
     assert(media->first.held() && m.r.uploads==2 && m.get(media->texture)!=first);
     stopMedia(m,*media);assert(m.assets.empty());
 }
+} // test adapter namespace: do not collide with Carbon Handle
 int main(){@autoreleasepool {
     NSString *root=[NSHomeDirectory() stringByAppendingPathComponent:[@".pma-performance-" stringByAppendingString:NSUUID.UUID.UUIDString]];
     NSString *dir=[root stringByAppendingPathComponent:@"os-media"];
