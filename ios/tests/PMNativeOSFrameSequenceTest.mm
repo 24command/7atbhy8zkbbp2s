@@ -19,7 +19,7 @@ static void png(NSString *path, size_t width, size_t height) {
 }
 int main() { @autoreleasepool {
     NSFileManager *fm = NSFileManager.defaultManager;
-    NSString *root = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
+    NSString *root = [NSHomeDirectory() stringByAppendingPathComponent:[@".pma-test-" stringByAppendingString:NSUUID.UUID.UUIDString]];
     NSString *chapter = [root stringByAppendingPathComponent:@"chapter"];
     NSString *dir = [chapter stringByAppendingPathComponent:@"os-media"];
     assert([fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil]);
@@ -58,6 +58,8 @@ int main() { @autoreleasepool {
     assert([fm removeItemAtPath:path error:nil]);assert(symlink(outside.fileSystemRepresentation,path.fileSystemRepresentation)==0);assert(!PMOSFrameSequenceOpen(path,&error));
     assert([fm removeItemAtPath:path error:nil]);write(valid);
     NSString *saved=[chapter stringByAppendingPathComponent:@"saved"];assert([fm moveItemAtPath:dir toPath:saved error:nil]);assert(symlink(saved.fileSystemRepresentation,dir.fileSystemRepresentation)==0);assert(!PMOSFrameSequenceOpen(path,&error));
+    // The already-open sequence owns its pinned directory even after a rename.
+    image=PMOSFrameSequenceCopyFrame(sequence,0,2,&error);assert(image);CGImageRelease(image);
     assert([fm removeItemAtPath:dir error:nil]);assert([fm moveItemAtPath:saved toPath:dir error:nil]);
     assert(PMOSArtPath(chapter,@"test.pma"));assert(!PMOSEntryVideoPath(chapter,@"test.pma"));assert(!PMOSArtPath(chapter,@"../test.pma"));
     using pmnativeosmap::playback::nextFrame;

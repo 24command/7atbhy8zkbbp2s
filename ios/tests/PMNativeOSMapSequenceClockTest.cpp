@@ -165,4 +165,16 @@ static void readyFramesAndCanceledVisitsNeverRewind() {
  visit.reset();visit=std::make_shared<SequenceClock>();visit->start(100,true);
  assert(old.expired());assert(visit->sample(100,12,1./30.,true).frame==0);
 }
-int main(){zeroOriginAndReveal();longSourceDoesNotDrift();loopsAndBoundaries();staleAndFutureResults();finalFrameIsRequired();boundedPrefetchAt60fps();gifAndBadInput();repeated100msAt30fpsMakesProgress();slowDecodeAcrossLoopBoundary();failedLateFrameDoesNotStopNewerFrames();readyFramesAndCanceledVisitsNeverRewind();std::cout<<"PMA map clock: 11 groups passed\n";}
+static void delayedFirstFrameStillBecomesVisible() {
+ SequenceClock clock;clock.start(0,false);
+ // Metadata/frame-zero decode can sit behind other map images for >1 loop.
+ clock.sample(5,45,1./30.,true);
+ assert(clock.wanted.cycle==3 && clock.accepts({0,0}) && clock.canDisplay({0,0}));
+ clock.displayed({0,0});assert(clock.hasShown);
+ assert(!clock.accepts({0,0}) && !clock.accepts({44,2}));
+ auto latest=clock.wanted;assert(clock.canDisplay(latest));clock.displayed(latest);
+ assert(!clock.canDisplay({0,0}));
+ clock.start(10,false);clock.sample(10,45,1./30.,true);
+ assert(!clock.canDisplay({1,0})); // Bootstrap never exposes a future frame.
+}
+int main(){delayedFirstFrameStillBecomesVisible();zeroOriginAndReveal();longSourceDoesNotDrift();loopsAndBoundaries();staleAndFutureResults();finalFrameIsRequired();boundedPrefetchAt60fps();gifAndBadInput();repeated100msAt30fpsMakesProgress();slowDecodeAcrossLoopBoundary();failedLateFrameDoesNotStopNewerFrames();readyFramesAndCanceledVisitsNeverRewind();std::cout<<"PMA map clock: 12 groups passed\n";}

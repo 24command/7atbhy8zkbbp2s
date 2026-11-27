@@ -35,19 +35,47 @@ bool number(id value, double minimum, double maximum, bool integral) {
     double n = [value doubleValue];
     return std::isfinite(n) && n >= minimum && n <= maximum && (!integral || n == std::floor(n));
 }
-// Pin the directory; reject symlinks in every author-controlled path component.
-// /var is Apple's system alias of /private/var, not an author-controlled link.
-int openMediaDirectory(NSString *directory) {
-    if (![directory hasPrefix:@"/"] || ![directory.lastPathComponent isEqualToString:@"os-media"]) return -1;
-    if ([directory hasPrefix:@"/var/"]) directory = [@"/private" stringByAppendingString:directory];
-    int fd = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    for (NSString *part in directory.pathComponents) {
-        if ([part isEqualToString:@"/"]) continue;
-        if (!part.length || [part isEqualToString:@"."] || [part isEqualToString:@".."]) { if (fd >= 0) close(fd); return -1; }
-        int next = fd < 0 ? -1 : openat(fd, part.fileSystemRepresentation, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-        if (fd >= 0) close(fd);
+// Only Apple's /var alias is normalized; never resolve author-controlled symlinks.
+NSString *containerSpelling(NSString *path) {
+    return [path hasPrefix:@"/var/"] ? [@"/private" stringByAppendingString:path] : path;
+}
+int directoryOpenError(NSError **error, NSString *operation, NSString *path, int code) {
+    if (error) {
+        NSError *underlying = [NSError errorWithDomain:NSPOSIXErrorDomain code:code userInfo:nil];
+        *error = [NSError errorWithDomain:@"PhiMod.FrameSequence" code:1 userInfo:@{
+            NSLocalizedDescriptionKey:[NSString stringWithFormat:@"Sequence directory %@ failed (%@): %@ (errno %d)",
+                operation,path,underlying.localizedDescription,code],
+            NSUnderlyingErrorKey:underlying}];
+    }
+    return -1;
+}
+// Pin the trusted app container directly: its ancestors need search permission,
+// but opening each ancestor for reading can be denied by the iOS sandbox.
+// Every component below the container remains subject to O_NOFOLLOW.
+int openMediaDirectory(NSString *directory, NSError **error) {
+    NSString *home = containerSpelling(NSHomeDirectory());
+    directory = containerSpelling(directory);
+    if (![home hasPrefix:@"/"] || [home isEqualToString:@"/"] ||
+        ![directory hasPrefix:[home stringByAppendingString:@"/"]] ||
+        ![directory.lastPathComponent isEqualToString:@"os-media"] ||
+        [directory rangeOfCharacterFromSet:NSCharacterSet.controlCharacterSet].location != NSNotFound) {
+        reject(error,@"Sequence must be in an unlinked os-media directory inside the app container");
+        return -1;
+    }
+    NSArray<NSString *> *parts = [[directory substringFromIndex:home.length + 1] pathComponents];
+    for (NSString *part in parts) {
+        if (!part.length || [part isEqualToString:@"."] || [part isEqualToString:@".."] || [part isEqualToString:@"/"]) {
+            reject(error,@"Invalid sequence directory component"); return -1;
+        }
+    }
+    int fd = open(home.fileSystemRepresentation, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) return directoryOpenError(error,@"open container",home,errno);
+    for (NSString *part in parts) {
+        int next = openat(fd, part.fileSystemRepresentation, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        int code = errno; // close() must not replace the failing openat() errno.
+        close(fd);
+        if (next < 0) return directoryOpenError(error,@"openat component",part,code);
         fd = next;
-        if (fd < 0) break;
     }
     return fd;
 }
@@ -94,8 +122,8 @@ NSObject *PMOSFrameSequenceOpen(NSString *path, NSError **error) {
     if (error) *error = nil;
     if (!basename(path.lastPathComponent,@"pma")) { reject(error,@"Invalid sequence manifest filename"); return nil; }
     PMNativeOSFrameSequence *sequence = [PMNativeOSFrameSequence new];
-    sequence->directoryFD = openMediaDirectory(path.stringByDeletingLastPathComponent);
-    if (sequence->directoryFD < 0) { reject(error,@"Sequence must be in an unlinked os-media directory"); return nil; }
+    sequence->directoryFD = openMediaDirectory(path.stringByDeletingLastPathComponent,error);
+    if (sequence->directoryFD < 0) return nil;
     NSData *data = readFile(sequence->directoryFD,path.lastPathComponent,ManifestLimit,error);
     if (!data) return nil;
     id root = [NSJSONSerialization JSONObjectWithData:data options:0 error:error];

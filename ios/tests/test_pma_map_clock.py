@@ -46,5 +46,5 @@ class PMAMapClock(unittest.TestCase):
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             result=subprocess.run([str(out)],capture_output=True,text=True,timeout=15)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
-            self.assertIn('PMA map clock: 11 groups passed',result.stdout)
+            self.assertIn('PMA map clock: 12 groups passed',result.stdout)
 if __name__=='__main__':unittest.main()

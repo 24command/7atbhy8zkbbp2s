@@ -2,6 +2,7 @@
 // Foundation and ImageIO must be imported before this header. C linkage permits
 // inclusion by MapMedia.inc inside its private C++ namespace, without Map.mm edits.
 extern "C" {
+// Paths must be inside NSHomeDirectory(), with no symlinks below that trusted container.
 // Call only on a decoder queue. This validates metadata/files, never preloads frames.
 NSObject *PMOSFrameSequenceOpen(NSString *path, NSError **error);
 NSUInteger PMOSFrameSequenceCount(NSObject *sequence);
