@@ -26,6 +26,14 @@ def body(text, signature):
 
 
 class NativeSongInterruption(unittest.TestCase):
+    def test_actual_readiness_does_not_require_level_began(self):
+        source=(ROOT/'PhiMod/Sources/PMSongInterruptionGameplay.inc').read_text(encoding='utf8')
+        native=source.split(' bool eligible(const Owner&o){',1)[1].split(' double time(',1)[0]
+        self.assertIn('eligiblePlayback(',native)
+        self.assertNotIn('"levelBegan"',native)
+        for field in ('chartLoaded','loadOver','isPlaying','playFlag','levelOver','leave','levelBreak','_inChallengeMode'):
+            self.assertIn('"'+field+'"',native)
+
     def test_production_controller(self):
         compiler = os.environ.get('CXX') or shutil.which('clang++') or shutil.which('g++') or shutil.which('cl')
         vcvars = Path('D:/Program Files (x86)/Microsoft Visual Studio/2019/Community/VC/Auxiliary/Build/vcvars64.bat')
@@ -54,7 +62,7 @@ class NativeSongInterruption(unittest.TestCase):
             for command, timeout in [(command, 120), ([str(output)], 20)]:
                 result = subprocess.run(command, cwd=folder, env=env, capture_output=True, text=True, errors='replace', timeout=timeout)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('34 native gameplay groups passed', result.stdout)
+            self.assertIn('39 native gameplay groups passed', result.stdout)
             print(result.stdout.strip())
 
     def test_existing_hooks_hold_before_original_or_practice(self):
@@ -103,7 +111,8 @@ class NativeSongInterruption(unittest.TestCase):
         self.assertNotIn('options.assisted', HELPER)
         self.assertNotIn('pmhp::', HELPER)
         self.assertNotIn('doorPlayEligible', HELPER)
-        self.assertIn('!pmsecretcourse::active()', HELPER)
+        self.assertIn('pmsecretcourse::active(),levelOverStarted', HELPER)
+        self.assertIn('!s.secretCourse && !s.ending', HELPER)
         normal = body(BACKEND, 'void onNormalStart(')
         self.assertLess(normal.index('PMCancelSongInterruptionLaunch();'), normal.index('pmstory::captureLaunch();'))
 

@@ -24,6 +24,7 @@ struct FakeHost {
  bool sound=true,playFlag=true,uiPlaying=false,uiBlocking=false,ready=true,denyTrigger=false,failPresentation=false;
  bool failAcquire=false,failCapture=false,failPause=false,failHold=false;
  int resumeFailures=0;
+ bool audioLoaded=true,levelOver=false,leaving=false,levelBreak=false,inChallenge=false,secret=false,ending=false;
  int matchReads=0,liveReads=0,eligibilityReads=0,timeReads=0,dueReads=0;
  std::array<int,5> probes()const{return {matchReads,liveReads,eligibilityReads,timeReads,dueReads};}
  pmsonginterruption::Owner<std::shared_ptr<int>> uiState;
@@ -58,7 +59,8 @@ struct FakeHost {
   int offset=entry==Entry::Progress?0:entry==Entry::Judge?1:entry==Entry::Audio?2:3;
   return object==o.pc+offset;
  }
- bool eligible(const Owner&){++eligibilityReads;return ready&&state.playing;}
+ bool eligible(const Owner&){++eligibilityReads;return songinterruption::eligiblePlayback(
+  {ready,audioLoaded,state.playing,playFlag,levelOver,leaving,levelBreak,inChallenge,secret,ending});}
  double time(const Owner&){++timeReads;return state.now;}
  bool due(double value){++dueReads;return uiPlaying&&playingGuard&&playingGuard()&&uiState.due(value);}
  void capture(Owner&,Snapshot&s){++captures;calls.push_back("capture");if(failCapture)throw std::runtime_error("capture");s=state;}
@@ -95,6 +97,31 @@ struct Run {
 };
 
 int main(){int groups=0;
+ // Replay the exact supplied device fields. levelBegan=0 is deliberately not a
+ // requirement; genuine loaded/playing flags are shared with production NativeHost.
+ {Run r;r.bind();r.h.state.now=159.015259f;r.h.state.audio=159.067f;r.h.state.wrapper=159.067f;
+  assert(r.h.ready&&r.h.audioLoaded&&r.h.playFlag&&r.h.state.playing);
+  assert(r.frame());assert(r.h.pauses==1&&r.h.triggers==1);++groups;}
+ // Manual pause before the threshold keeps the song clock and ownership. Long
+ // elapsed wall time is irrelevant until playback reaches the authored time.
+ {Run r;r.bind();r.h.state.now=158.9f;r.h.state.playing=false;r.h.playFlag=false;
+  for(int i=0;i<1000;i++)assert(!r.frame());assert(r.h.triggers==0&&r.h.roots==2);
+  r.h.state.playing=true;r.h.playFlag=true;assert(!r.frame());r.h.state.now=159;
+  assert(r.frame());assert(r.h.pauses==1&&r.h.triggers==1);++groups;}
+ // Pause/focus callbacks may land after the time crossing but before the hook.
+ // Catch up once on resume; never require equality to exactly159 or a second crossing.
+ {Run r;r.bind();r.h.state.now=159.2f;r.h.state.playing=false;r.h.playFlag=false;
+  assert(!r.frame());assert(r.h.triggers==0);r.h.state.playing=true;assert(!r.frame());
+  r.h.playFlag=true;assert(r.frame());for(int i=0;i<5;i++)assert(r.frame());assert(r.h.triggers==1);++groups;}
+ // Inactive app rejects the UI before freeze. Keep the same bound owner until
+ // activation, even when its native clock has advanced past the threshold.
+ {Run r;r.bind();r.h.state.now=159.015259f;r.h.denyTrigger=true;
+  for(int i=0;i<5;i++)assert(!r.frame());assert(r.h.pauses==0&&r.h.roots==2);
+  r.h.denyTrigger=false;r.h.state.now=160;assert(r.frame());assert(r.h.pauses==1);++groups;}
+ {using songinterruption::PlaybackState;using songinterruption::eligiblePlayback;
+  PlaybackState s{true,true,true,true};assert(eligiblePlayback(s));
+  for(int i=0;i<10;i++){auto t=s;bool *fields[]={&t.chartLoaded,&t.audioLoaded,&t.playing,&t.audioPlaying,&t.levelOver,&t.leaving,&t.broken,&t.inChallenge,&t.secretCourse,&t.ending};*fields[i]=i>=4;assert(!eligiblePlayback(t));}++groups;}
+
  {Run r;assert(!r.g.begin(1,11,std::string("ordinary"),3));assert(!r.frame());assert(r.h.roots==0);++groups;}
  {Run r;r.h.arm();assert(!r.g.begin(1,11,std::string("wrong-installed-chart"),3));assert(!r.h.pending());assert(!r.frame());++groups;}
  {Run r;r.h.arm();assert(!r.g.begin(1,11,std::string("installed-OS"),2));assert(!r.h.pending());++groups;}
@@ -118,7 +145,7 @@ int main(){int groups=0;
  {Run r;r.bind();assert(r.frame());auto lateQuit=r.h.quitCallback,lateInvalidated=r.h.playingInvalidation;auto lateFreeze=r.h.freezeCallback;
   r.g.end();assert(r.h.roots==0&&!r.g.holding());lateQuit();lateInvalidated();assert(!lateFreeze());assert(r.h.quits==0&&r.h.resumes==0);++groups;}
  {Run r;r.bind();assert(r.frame());auto oldQuit=r.h.quitCallback,oldInvalidated=r.h.playingInvalidation;auto oldGuard=r.h.playingGuard;
-  r.h.arm();r.g.awake();assert(r.h.pending());r.h.currentLevel=2;r.h.currentScene=8;r.h.state=FakeHost::Snapshot{};
+  r.h.arm();r.g.awake();assert(r.h.pending());r.h.currentLevel=2;r.h.currentScene=8;r.h.state=FakeHost::Snapshot{};r.h.playFlag=true;r.h.sound=true;
   assert(r.g.begin(2,21,std::string("installed-OS"),3));oldQuit();oldInvalidated();assert(!oldGuard());assert(r.h.resumes==0&&r.h.roots==2);
   assert(r.frame(Entry::Progress,21));assert(r.h.quits==0&&r.h.pauses==2);++groups;}
  {Run r;r.bind();assert(r.frame());r.h.currentLevel=2;assert(!r.frame());assert(r.h.resumes==0&&r.h.quits==0&&r.h.roots==0);++groups;}

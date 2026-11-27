@@ -138,5 +138,6 @@ python3 "$ROOT/tests/test_import_picker_lifecycle.py"
 
 python3 "$ROOT/tests/test_song_interruption.py"
 python3 "$ROOT/tests/test_song_interruption_gameplay.py"
+python3 "$ROOT/tests/test_song_interruption_lifecycle.py"
 python3 "$ROOT/tests/test_native_os_enter_scene.py"
 python3 "$ROOT/tests/test_native_os_blend.py"

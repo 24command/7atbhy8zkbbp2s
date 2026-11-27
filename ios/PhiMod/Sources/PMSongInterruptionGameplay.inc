@@ -2,6 +2,18 @@
 // compiled verbatim by PMSongInterruptionGameplayTest.cpp with a fake adapter.
 namespace songinterruption {
 enum class Entry { Progress, Judge, Audio, Notes };
+// Native levelBegan is not a sustained playing flag: the supplied device trace
+// has levelBegan=0 with loaded chart/audio actively advancing through159s.
+// Evaluate actual playback/termination state; paused/not-loaded tracks remain armed.
+struct PlaybackState {
+ bool chartLoaded=false,audioLoaded=false,playing=false,audioPlaying=false;
+ bool levelOver=false,leaving=false,broken=false,inChallenge=false,secretCourse=false,ending=false;
+};
+inline bool eligiblePlayback(const PlaybackState &s){
+ return s.chartLoaded && s.audioLoaded && s.playing && s.audioPlaying &&
+        !s.levelOver && !s.leaving && !s.broken && !s.inChallenge && !s.secretCourse && !s.ending;
+}
+
 
 template<class Host> class Gameplay {
  using Object=typename Host::Object;
@@ -188,10 +200,11 @@ struct NativeHost {
  }
  bool eligible(const Owner&o){
   auto&r=R();P pc=object(o,Progress),info=r.get<P>(pc,"levelInformation"),audio=r.get<P>(pc,"audioSource");
-  return !pmsecretcourse::active()&&!levelOverStarted&&r.alive(info)&&r.alive(audio)&&
-   r.get<bool>(info,"chartLoaded")&&r.get<bool>(info,"levelBegan")&&!r.get<bool>(info,"levelOver")&&
-   r.get<bool>(pc,"isPlaying")&&!r.get<bool>(pc,"leave")&&!r.get<bool>(pc,"levelBreak")&&
-   !r.get<bool>(pc,"_inChallengeMode")&&r.get<bool>(audio,"loadOver")&&r.get<bool>(audio,"playFlag");
+  if(!r.alive(info)||!r.alive(audio))return false;
+  return eligiblePlayback({r.get<bool>(info,"chartLoaded"),r.get<bool>(audio,"loadOver"),
+   r.get<bool>(pc,"isPlaying"),r.get<bool>(audio,"playFlag"),r.get<bool>(info,"levelOver"),
+   r.get<bool>(pc,"leave"),r.get<bool>(pc,"levelBreak"),r.get<bool>(pc,"_inChallengeMode"),
+   pmsecretcourse::active(),levelOverStarted});
  }
  double time(const Owner&o){return R().get<float>(object(o,Progress),"nowTime");}
  void capture(Owner&o,Snapshot&s){
