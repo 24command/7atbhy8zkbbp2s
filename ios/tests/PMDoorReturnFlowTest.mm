@@ -1,4 +1,5 @@
 #import "../PhiMod/Sources/PMDoorRun.h"
+#import "../PhiMod/Sources/PMDiagnostics.h"
 #import "../PhiMod/Sources/PMOSAuthorProgress.h"
 #import "../PhiMod/Core/PMChapterVM.h"
 #include <cassert>
@@ -46,5 +47,5 @@ int main(){@autoreleasepool{
  check(1);
  std::thread([]{@autoreleasepool{auto store=[[PMOSAuthorProgress alloc]initWithRoot:root chapter:@"chapter"];assert([store commitValues:@{@"scene.red-return":@1}]);}}).join();check(2);
  assert(PMDoorArmReplay(@"group",2,@"chart-IN"));assert(PMDoorConsumeReplay(@"group",2,@"chart-IN"));PMDoorFinish(YES);check(2);
- assert([NSFileManager.defaultManager removeItemAtPath:root error:nil]);puts("Door outcome -> persisted clear/new -> real VM return scene -> clear/gem -> once completion passed");
+ assert([NSFileManager.defaultManager removeItemAtPath:root error:nullptr]);puts("Door outcome -> persisted clear/new -> real VM return scene -> clear/gem -> once completion passed");
 }return 0;}
