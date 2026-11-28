@@ -106,14 +106,15 @@ bool gated=false,busy=false,mapOK=true,chromeOK=true;
 pmnativeosnavigation::Visit navigation;
 struct Plan{struct Intro{bool declared=false;} enterScene;} plan;
 struct Program{Plan*page=&plan;bool entrySceneSeen=false;explicit operator bool()const{return true;}} program;
-struct Clock{bool finished=false,committing=false;int starts=0;void shown(double){++starts;}} enterSceneClock;
+struct Clock{bool finished=false,committing=false;int starts=0;double last=0;void shown(double now){++starts;last=now;}} enterSceneClock;
 double CACurrentMediaTime(){return 100;}
 int canceledInterruptions=0;
 void PMCancelSongInterruptionLaunch(){++canceledInterruptions;}
 
 template<class F>bool cutChecked(F f){try{f();return true;}catch(...){return false;}}
 namespace chrome {enum class Face{Map};bool present(Runtime&,uint64_t,Face,bool,int,bool){return chromeOK;}}
-namespace map {bool present(Runtime&,uint64_t,bool,bool,bool){return mapOK;}}
+namespace map {bool present(Runtime&,uint64_t,bool,bool,bool){return mapOK;} bool playbackState(Runtime&,uint64_t,int &page,double &time,bool &running){page=0;time=42;running=true;return mapOK;}}
+int audioSyncs=0;void syncMapAudio(Runtime&){++audioSyncs;}
 """
         code += definition(COORD, 'enum class Mode') + ';Mode mode=Mode::list;\n'
         code += definition(COORD, 'bool selectorReady(') + '\n'
@@ -150,7 +151,7 @@ void reset(){
  navigation={};navigation.presentedOS("kld");
  runtime={};selector=&owner;mode=Mode::list;bridge.cover=false;cutTicket=0;
  requestedEntry=0;generation=1;resume={};gate=0;launches=ends=0;expectedOS=false;
- plan={};program={};enterSceneClock={};canceledInterruptions=0;
+ plan={};program={};enterSceneClock={};canceledInterruptions=0;audioSyncs=0;
 }
 """
         code += definition(HOOK, 'void onNormalStart(').replace('^{', '[=]{') + '\n'
@@ -190,11 +191,12 @@ int main(){
  navigation.chapter("other");expectedOS=true;resume();
  assert(navigation.wantsOS("kld",false,false,false));
  // Only successful presentation records OS, not a failed mount/preparation.
- reset();normalStart(runtime,&owner);mapOK=false;assert(!presentMap(runtime));
+ reset();normalStart(runtime,&owner);mapOK=false;assert(!presentMap(runtime));assert(audioSyncs==0);
  assert(!navigation.wantsOS("kld",false,false,false));
- mapOK=true;chromeOK=false;assert(!presentMap(runtime));
+ mapOK=true;chromeOK=false;assert(!presentMap(runtime));assert(audioSyncs==0);
  assert(!navigation.wantsOS("kld",false,false,false));
- chromeOK=true;assert(presentMap(runtime));assert(navigation.wantsOS("kld",true,false,false));
+ chromeOK=true;assert(presentMap(runtime));assert(navigation.wantsOS("kld",true,false,false));assert(audioSyncs==1);
+ plan.enterScene.declared=true;assert(presentMap(runtime));assert(enterSceneClock.starts==1 && enterSceneClock.last==42 && audioSyncs==2);
 }
 """
         self.check_cpp(code)
@@ -225,7 +227,7 @@ template<class F>bool cutChecked(F f){try{f();return true;}catch(...){return fal
 pmnativeosnavigation::Visit navigation;
 struct Plan{struct Intro{bool declared=false;} enterScene;} plan;
 struct Program{Plan*page=&plan;bool entrySceneSeen=false;explicit operator bool()const{return true;}} program;
-struct Clock{bool finished=false,committing=false;int starts=0;void shown(double){++starts;}} enterSceneClock;
+struct Clock{bool finished=false,committing=false;int starts=0;double last=0;void shown(double now){++starts;last=now;}} enterSceneClock;
 double CACurrentMediaTime(){return 100;}
 int canceledInterruptions=0;
 void PMCancelSongInterruptionLaunch(){++canceledInterruptions;}
@@ -281,7 +283,7 @@ int main(){
         play = definition(COORD, 'bool playSelection(Runtime &r,NSDictionary *card,NSDictionary *choice){')
         self.assertNotIn('navigation.', play)  # cancelled/failed Start is not a face transition
         self.assertLess(play.index('if(card[@"secretCourse"])'), play.index('scene::playStartSound(r)'))
-        self.assertIn('if(shown)navigation.presentedOS', definition(COORD, 'bool presentMap('))
+        self.assertIn('if(shown){navigation.presentedOS', definition(COORD, 'bool presentMap('))
 
     @unittest.skipUnless(os.getenv('PHIGROS_404_IPA'), 'requires retail 4.0.4 IPA')
     def test_clear_boundary_matches_actual_build_settings(self):
