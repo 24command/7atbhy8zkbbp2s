@@ -55,6 +55,19 @@ typedef struct {double x,y,w,h,start,duration,fade;int kind,parent,depth,cover,o
     PMOSTrack tracks[PMOSTrackPropertyCount];
 } PMOSNode;
 enum { PMOSProgressKeyMax = 64, PMOSProgressAccessLimit = 128 };
+/* Page audio is declarative: preparing a page must never start playback.
+   Page cues use the active page clock; tap cues run only after accepted input.
+   Two exclusive channels prevent accidental BGM/effect overlap within a channel. */
+enum { PMOSMaxAudioCues = 64 };
+typedef enum { PMOSAudioPage, PMOSAudioTap } PMOSAudioEvent;
+typedef enum { PMOSAudioBGM, PMOSAudioEffect } PMOSAudioChannel;
+typedef struct {
+    int screen, loop;
+    PMOSAudioEvent event;
+    PMOSAudioChannel channel;
+    double start, duration, volume;
+    char src[256], introSrc[256], target[64];
+} PMOSAudioCue;
 enum { PMOSMaxChallenges = 32, PMOSMaxChallengeTiers = 16,
        PMOSChallengeIdMax = PMOSProgressKeyMax - (sizeof("door..clear") - 1) };
 typedef enum { PMOSChallengeLocked, PMOSChallengeClosed, PMOSChallengeClear } PMOSChallengeState;
@@ -86,6 +99,11 @@ typedef struct {
     int song;
     char difficulty[96];
     double at, delay; /* Finite at >= 0; delay in [0,600], default 2 seconds. */
+    int staged; /* Explicit stage duration opts in; legacy delay keeps old timing. */
+    double effectDuration, blackDuration, blueDuration, audioVolume;
+    double effectAudioDelay, blackAudioDelay, blueAudioDelay;
+    int audioTail;
+    char effectAudioSrc[256], blackAudioSrc[256], blueAudioSrc[256];
     char src[256], title[256], message[1024], button[256];
     PMOSSongInterruptionAction action; /* Required explicit Lua action='quit'. */
 } PMOSSongInterruption;
@@ -190,6 +208,8 @@ typedef struct {int nodes,screens;double aspect;char names[PMOSMaxScreens][PMOSS
     int songInterruptionCount;
     PMOSSongInterruption songInterruptions[PMOSMaxSongInterruptions];
     PMOSEnterScene enterScene;
+    int audioCueCount;
+    PMOSAudioCue audioCues[PMOSMaxAudioCues];
 } PMOSPage;
 typedef struct PMOSSession PMOSSession;
 typedef struct {int song, dest, element, visible; char error[384]; int checkpoint; char difficulty[96]; int challenge;

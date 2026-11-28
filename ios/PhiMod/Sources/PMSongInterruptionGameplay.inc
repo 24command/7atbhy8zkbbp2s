@@ -142,6 +142,22 @@ public:
 
 #ifndef PM_SONG_INTERRUPTION_GAMEPLAY_TEST
 namespace songinterruption {
+struct GlitchScope {
+ pmsongglitch::NativeHost host;
+ pmsongglitch::NativeVisual visual;
+ bool queued=false;
+ explicit GlitchScope(Runtime &r):host(r),visual(host){}
+};
+std::vector<std::shared_ptr<GlitchScope>> retiredGlitches;
+double visualNow(){return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();}
+void drainGlitches(){
+ for(auto it=retiredGlitches.begin();it!=retiredGlitches.end();){
+  if((*it)->visual.stop())it=retiredGlitches.erase(it);else ++it;
+ }
+}
+void retainFailedGlitch(const std::shared_ptr<GlitchScope>& scope){
+ if(scope->visual.cleanupPending() && !scope->queued){scope->queued=true;retiredGlitches.push_back(scope);}
+}
 struct NativeHost {
  using Object=P;
  enum Root { Level,Progress,Info,Judge,Audio,Notes,UnityAudio,RootCount };
@@ -255,6 +271,21 @@ struct NativeHost {
  }
  void configure(std::function<bool()>valid,std::function<void()>invalidated){
   PMSetSongInterruptionHostGuard(^BOOL{return valid();},^{invalidated();});
+  drainGlitches();
+  auto scope=std::make_shared<GlitchScope>(R());
+  PMSetSongInterruptionEffectHandler(^BOOL(PMSongInterruptionEffectEvent event,UIView *container,NSTimeInterval duration){
+   (void)container;bool ok=true;const double now=visualNow();
+   switch(event){
+    case PMSongInterruptionEffectStart:ok=scope->visual.start(1,duration,now);break;
+    case PMSongInterruptionEffectFrame:ok=scope->visual.validate(1);break;
+    case PMSongInterruptionEffectPause:ok=scope->visual.pause(1,now);break;
+    case PMSongInterruptionEffectResume:ok=scope->visual.resume(1,now);break;
+    case PMSongInterruptionEffectStop:ok=scope->visual.stop(1);break;
+   }
+   retainFailedGlitch(scope);
+   if(!ok)PMDiagnosticsWrite("Song interruption: native D321 visual unavailable or changed; restoring gameplay");
+   return ok;
+  });
  }
  bool pending(){return PMSongInterruptionPending();}
  bool begin(NSString*identifier,int slot){return PMBeginSongInterruption(identifier,slot);}
@@ -296,7 +327,7 @@ Gameplay<NativeHost> gameplay(nativeHost);
 // numeric-generation guards before the UI copies them into its playing payload.
 // Old invalidation/freeze/quit callbacks therefore cannot mutate a newer owner.
 bool tick(Entry entry,P self){
- try{return gameplay.tick(entry,self);}
+ try{if(!retiredGlitches.empty())drainGlitches();return gameplay.tick(entry,self);}
  catch(const std::exception&e){gameplay.reportFailure("entry",e.what());return gameplay.holding();}
 }
 struct PauseFence { ~PauseFence(){try{gameplay.fence();}catch(const std::exception&e){gameplay.reportFailure("fence",e.what());}} };

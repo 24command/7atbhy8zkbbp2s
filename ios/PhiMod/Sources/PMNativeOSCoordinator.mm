@@ -16,6 +16,7 @@
 #include "PMNativeOSRows.hpp"
 #include "PMNativeOSSwitch.hpp"
 #import "PMNativeOSProgram.h"
+#import "PMNativeOSAudio.h"
 #import "PMNativeOSLoadError.h"
 #import "PMNativeOSActions.hpp"
 #import "PMChapterOS.h"
@@ -59,7 +60,42 @@ void stopClock(){if(clockSource){dispatch_source_cancel(clockSource);clockSource
 struct ScheduledUnlock { int index; double remaining; };
 std::deque<ScheduledUnlock> unlockQueue;
 double previousUnlockTick=0;
-void clearScene(Runtime &r,uint64_t closingVisit=visit){enterSceneClock.reset();mapRevealed=nil;unlockQueue.clear();previousUnlockTick=0;stopClock(); [actions invalidate]; actions=nil; mountMap=nil; applyCheckpoint=nil; if(detailID)panel::close(r,detailID);detailID=0;if(mapID)map::close(r,mapID);mapID=0;if(closingVisit)chrome::close(r,closingVisit);chromeView={};rows::release();detail=nil;selected=nil;choices=nil;busy=false;}
+uint64_t audioMap=0, acceptedAudioTap=0;
+int audioScreen=-1;double audioPageTime=0;
+bool audioHostSuspended=true, audioStarting=false;
+void resetMapAudio(){
+ [program.audio resetPlayback];[program.audio setSuspended:YES];
+ audioMap=0;audioScreen=-1;audioPageTime=0;audioHostSuspended=true;audioStarting=false;
+}
+void syncMapAudio(Runtime &r){
+ PMNativeOSAudio *audio=program.audio;if(!audio)return;
+ int screen=-1;double time=0;bool running=false;
+ const bool valid=mapID && map::playbackState(r,mapID,screen,time,running);
+ const bool detailFace=mode==Mode::detail;
+ const bool foreground=UIApplication.sharedApplication.applicationState==UIApplicationStateActive;
+ const bool active=valid && foreground && !audioStarting && !PMUnlockMediaBusy() &&
+                   ((mode==Mode::map && running) || detailFace);
+ if(!active){
+  if(!audioHostSuspended){[audio setSuspended:YES];audioHostSuspended=true;}
+  return;
+ }
+ if(audioMap!=mapID || (audioScreen==screen && time<audioPageTime)){
+  [audio resetPlayback];audioMap=mapID;audioScreen=-1;
+ }
+ [audio setPageClockHeld:detailFace];
+ if(audioHostSuspended){[audio setSuspended:NO];audioHostSuspended=false;}
+ [audio activateScreen:screen time:time];[audio tickAt:time active:YES];
+ audioScreen=screen;audioPageTime=time;
+}
+void mapTapAccepted(uint64_t owner,int index){
+ if(owner!=mapID || mode!=Mode::map || busy || !program.audio || index<0 ||
+    index>=program.page->nodes)return;
+ syncMapAudio(*game);
+ if(audioHostSuspended)return;
+ const PMOSNode &node=program.page->elements[index];
+ [program.audio tap:++acceptedAudioTap node:@(node.id) time:audioPageTime];
+}
+void clearScene(Runtime &r,uint64_t closingVisit=visit){resetMapAudio();enterSceneClock.reset();mapRevealed=nil;unlockQueue.clear();previousUnlockTick=0;stopClock(); [actions invalidate]; actions=nil; mountMap=nil; applyCheckpoint=nil; if(detailID)panel::close(r,detailID);detailID=0;if(mapID)map::close(r,mapID);mapID=0;if(closingVisit)chrome::close(r,closingVisit);chromeView={};rows::release();detail=nil;selected=nil;choices=nil;busy=false;}
 NSDictionary *entry(NSDictionary *card){NSString *sid=card[@"sid"]?:card[@"installedID"];if(!sid)return nil;NSMutableDictionary *e=[@{@"songID":sid} mutableCopy];if(card[@"difficulty"])e[@"difficulty"]=card[@"difficulty"];return e;}
 NSArray *options(NSDictionary *card){NSArray *replays=card[@"replaySongs"];if(replays.count)return replays;NSDictionary *e=entry(card);return e?@[e]:@[];}
 void discardHandoff(){handoffScene=0;}
@@ -91,8 +127,8 @@ bool presentMap(Runtime &r){
  const bool entry=program && program.page->enterScene.declared && !program.entrySceneSeen && !enterSceneClock.finished;
  busy=entry;
  const bool shown=chrome::present(r,visit,chrome::Face::Map,!entry,0,!gated)&&map::present(r,mapID,true,!enterSceneClock.committing,!entry);
- if(shown && entry)enterSceneClock.shown(CACurrentMediaTime());
- if(shown)navigation.presentedOS(chapter.UTF8String?:"");
+ if(shown && entry){int page=-1;double time=0;bool running=false;if(map::playbackState(r,mapID,page,time,running)&&running)enterSceneClock.shown(time);}
+ if(shown){navigation.presentedOS(chapter.UTF8String?:"");syncMapAudio(r);}
  return shown;
 }
 void closePanel(Runtime &r){if(detailID)panel::close(r,detailID);detailID=0;detail=nil;choices=nil;selected=nil;if(!presentMap(r))leave(r,false);}
@@ -109,7 +145,7 @@ void openPanel(Runtime &r,NSDictionary *card){
  panel::Speech speech{card[@"speechHeading"],card[@"caption"],[card[@"seconds"] doubleValue],card[@"waveform"]};
  detailID=panel::open(r,program.nativeChapter==8?panel::Style::c8:panel::Style::c9,chromeView.detailRoot,row.row,row.slot,speech,false,row.cover);
  if(!detailID){if(!presentMap(r))leave(r,false);return;}
- detail=card;selected=first;choices=available;mode=Mode::detail;
+ detail=card;selected=first;choices=available;mode=Mode::detail;syncMapAudio(r);
  if(!chrome::present(r,visit,chrome::Face::Detail,true,allowedSlots()))closePanel(r);
 }
 bool playSelection(Runtime &r,NSDictionary *card,NSDictionary *choice);
@@ -146,7 +182,11 @@ void tickEntryScene(Runtime &r){
  if(mode!=Mode::map || !program || !program.page->enterScene.declared || program.entrySceneSeen || enterSceneClock.finished)return;
  if(UIApplication.sharedApplication.applicationState!=UIApplicationStateActive)return;
  const auto spec=program.page->enterScene;
- if(!enterSceneClock.claim(CACurrentMediaTime(),spec.duration))return;
+ // Resource-only work while the entrance owns input. Never select the target
+ // or run its Lua lifecycle early; displayPage below is the sole activation.
+ if(enterSceneClock.running && !enterSceneClock.committing)map::preloadPage(r,mapID,spec.toScreen);
+ int page=-1;double pageTime=0;bool running=false;
+ if(!map::playbackState(r,mapID,page,pageTime,running) || !running || !enterSceneClock.claim(pageTime,spec.duration))return;
  map::present(r,mapID,true,false,false);
  const uint64_t token=visit,epoch=generation,owner=mapID;
  [program markEntrySceneSeen:^(BOOL saved){
@@ -245,6 +285,7 @@ void arrived(Runtime &r,uint64_t token,scene::Route route,P root){
      NSString *reason=nil;
      mapID=map::open(*game,chromeView.parent,*actions.page,actions.nodes,chromeView.font,^(uint64_t m,int i){activate(m,i);},&reason);
      if (!mapID) { PMDiagnosticsWrite(reason.UTF8String?:"Native chapter map unavailable"); return NO; }
+     map::setTapObserver(*game,mapID,^(uint64_t m,int i){mapTapAccepted(m,i);});
      const auto &intro=actions.page->enterScene;
      if(intro.declared && !map::displayPage(*game,mapID,(enterSceneClock.finished || program.entrySceneSeen)?intro.toScreen:intro.initialScreen))return NO;
      if(cutTicket){
@@ -298,7 +339,7 @@ void arrived(Runtime &r,uint64_t token,scene::Route route,P root){
  previousUnlockTick=CACurrentMediaTime();
  clockSource=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());
  dispatch_source_set_timer(clockSource,DISPATCH_TIME_NOW,NSEC_PER_SEC/30,NSEC_PER_MSEC*3);
- dispatch_source_set_event_handler(clockSource,^{if(visit!=token)return;tickEntryScene(*game);tickUnlocks(*game);if(mode==Mode::map)map::tick(*game,mapID);});dispatch_resume(clockSource);
+ dispatch_source_set_event_handler(clockSource,^{if(visit!=token)return;tickEntryScene(*game);tickUnlocks(*game);if(mode==Mode::map)map::tick(*game,mapID);syncMapAudio(*game);});dispatch_resume(clockSource);
  };
  if(cutTicket){mapRevealed=[revealed copy];pollPreparedMap(game,token,epoch,cutTicket);}
  else {
@@ -370,7 +411,7 @@ bool playSelection(Runtime &r,NSDictionary *card,NSDictionary *choice){
   NSInteger tier=[card[@"lifeTier"] integerValue];busy=true;
   bool started=false;
   cutChecked([&]{started=PMChapterStartSecretCourseWithPauseLock(chapter,card[@"challengeID"],card[@"secretCourse"],tier<0?lifeTier:tier,[card[@"noPause"] boolValue]);});
-  if(!started)busy=false;
+  if(!started)busy=false;else {audioStarting=true;syncMapAudio(r);}
   return started;
  }
  NSString *sid=choice[@"songID"], *diff=choice[@"difficulty"];
@@ -379,6 +420,7 @@ bool playSelection(Runtime &r,NSDictionary *card,NSDictionary *choice){
  const uint64_t token=visit,epoch=generation;
  const Mode source=mode;Runtime *rt=&r;
  busy=true;
+ audioStarting=true;syncMapAudio(r);
  // Accepted Start owns the cue once, before intro; missing audio is nonfatal.
  (void)scene::playStartSound(r);
  BOOL (^sameFace)(void)=^BOOL{return visit==token && generation==epoch && mode==source;};
@@ -388,7 +430,7 @@ bool playSelection(Runtime &r,NSDictionary *card,NSDictionary *choice){
   if(!sameFace())return;
   auto finished=^(bool routed){
    if(!routed && armed){PMDoorCancelPending();pmstory::cancelLaunch();PMCancelSongInterruptionLaunch();armed=false;}
-   if(!routed && sameFace())busy=false;
+   if(!routed && sameFace()){busy=false;audioStarting=false;syncMapAudio(*rt);}
   };
   cutChecked(^{
    if(!completed || !valid())return;
@@ -407,7 +449,7 @@ bool playSelection(Runtime &r,NSDictionary *card,NSDictionary *choice){
   if(!started)finished(false);
  };
  bool intro=false;
- if(!cutChecked([&]{intro=pmunlock::chapterStartIntro(r,song.chartID,valid,resume);})){busy=false;return false;}
+ if(!cutChecked([&]{intro=pmunlock::chapterStartIntro(r,song.chartID,valid,resume);})){busy=false;audioStarting=false;syncMapAudio(r);return false;}
  if(intro)return true;
  resume(YES);
  return started;

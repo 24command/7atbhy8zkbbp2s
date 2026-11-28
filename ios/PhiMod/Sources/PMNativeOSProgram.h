@@ -3,7 +3,7 @@
 #import "../Core/PMChapterVM.h"
 
 NS_ASSUME_NONNULL_BEGIN
-@class PMNativeOSProgram;
+@class PMNativeOSProgram, PMNativeOSAudio;
 typedef void (^PMNativeOSLoadCompletion)(PMNativeOSProgram * _Nullable program, NSError * _Nullable error);
 // action is borrowed for the duration of the completion. On failure its error field is set.
 typedef void (^PMNativeOSClickCompletion)(BOOL success, const PMOSAction *action);
@@ -11,6 +11,8 @@ typedef void (^PMNativeOSClickCompletion)(BOOL success, const PMOSAction *action
 @interface PMNativeOSProgram : NSObject
 // Borrowed immutable declaration; retain the program while using *page. Node indices match nodes.
 @property(nonatomic, readonly) const PMOSPage *page;
+// Prepared silently on the Program worker; activation belongs to the live map.
+@property(nonatomic, readonly, strong, nullable) PMNativeOSAudio *audio;
 @property(nonatomic, readonly, copy) NSString *chapter;
 @property(nonatomic, readonly, copy) NSString *chapterName;
 @property(nonatomic, readonly, copy) NSString *scriptHash;

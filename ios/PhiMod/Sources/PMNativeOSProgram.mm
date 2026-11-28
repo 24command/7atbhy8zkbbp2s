@@ -1,4 +1,5 @@
 #import "PMNativeOSProgram.h"
+#import "PMNativeOSAudio.h"
 #import "PMChapterArt.h"
 #import "PMDiagnostics.h"
 #import "PMChapterEditing.h"
@@ -135,14 +136,37 @@ template <class Page> static int nativeChapterFlag(const Page &, long) { return 
         bySong[sid] = [row copy];
     }
     NSString *chapterDir = file.stringByDeletingLastPathComponent;
+    if(plan->audioCueCount) {
+        NSMutableArray<NSDictionary *> *cues=[NSMutableArray arrayWithCapacity:plan->audioCueCount];
+        for(int i=0;i<plan->audioCueCount;++i) {
+            const PMOSAudioCue &cue=plan->audioCues[i];
+            [cues addObject:@{@"screen":@(cue.screen), @"src":@(cue.src), @"introSrc":@(cue.introSrc),
+                @"event":cue.event==PMOSAudioTap?@"tap":@"page",
+                @"channel":cue.channel==PMOSAudioBGM?@"bgm":@"effect", @"target":@(cue.target),
+                @"start":@(cue.start), @"duration":@(cue.duration), @"volume":@(cue.volume), @"loop":@(cue.loop!=0)}];
+        }
+        NSError *audioError=nil;
+        _audio=[[PMNativeOSAudio alloc]initWithCues:cues chapterDir:chapterDir error:&audioError];
+        if(audioError)PMDiagnosticsWrite([NSString stringWithFormat:@"Chapter OS audio unavailable: %@",audioError.localizedDescription].UTF8String);
+        for(NSError *warning in _audio.diagnostics)
+            PMDiagnosticsWrite([NSString stringWithFormat:@"Chapter OS audio cue unavailable: %@",warning.localizedDescription].UTF8String);
+    }
+
     for (int i=0; i<plan->songInterruptionCount; ++i) {
         const auto &spec=plan->songInterruptions[i];
         NSString *sid=order[spec.song-1];
         NSString *difficulty=spec.difficulty[0] ? [NSString stringWithUTF8String:spec.difficulty] : nil;
-        NSDictionary *config=@{@"song":@(spec.song), @"difficulty":difficulty ?: @"", @"at":@(spec.at), @"delay":@(spec.delay),
+        NSMutableDictionary *config=[@{@"song":@(spec.song), @"difficulty":difficulty ?: @"", @"at":@(spec.at), @"delay":@(spec.delay),
             @"src":[NSString stringWithUTF8String:spec.src], @"title":[NSString stringWithUTF8String:spec.title],
             @"message":[NSString stringWithUTF8String:spec.message], @"button":[NSString stringWithUTF8String:spec.button],
-            @"action":@"quit"};
+            @"action":@"quit"} mutableCopy];
+        if(spec.staged) {
+            config[@"effectDuration"]=@(spec.effectDuration);config[@"blackDuration"]=@(spec.blackDuration);
+            config[@"blueDuration"]=@(spec.blueDuration);config[@"audioVolume"]=@(spec.audioVolume);config[@"audioTail"]=@(spec.audioTail!=0);
+            if(spec.effectAudioSrc[0]){config[@"effectAudioSrc"]=@(spec.effectAudioSrc);config[@"effectAudioDelay"]=@(spec.effectAudioDelay);}
+            if(spec.blackAudioSrc[0]){config[@"blackAudioSrc"]=@(spec.blackAudioSrc);config[@"blackAudioDelay"]=@(spec.blackAudioDelay);}
+            if(spec.blueAudioSrc[0]){config[@"blueAudioSrc"]=@(spec.blueAudioSrc);config[@"blueAudioDelay"]=@(spec.blueAudioDelay);}
+        }
         bySong[sid]=PMOSBindInterruption(bySong[sid],difficulty,songs[sid][@"level"],^id(NSError **preparationError){
             return PMPrepareSongInterruption(config,chapterDir,preparationError);
         });

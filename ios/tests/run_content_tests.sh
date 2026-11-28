@@ -23,6 +23,8 @@ clang++ -std=c++17 -fobjc-arc -DPMDOOR_RUN_HOST_TEST -framework Foundation -fram
   ./chaptervm
   clang -std=c99 -O2 -UNDEBUG "$ROOT/tests/PMChapterPMAOneShotTest.c" ./*.o -o chaptervm
   ./chaptervm
+  clang -std=c99 -O2 -UNDEBUG "$ROOT/tests/PMChapterAudioTest.c" ./*.o -o chaptervm
+  ./chaptervm
   clang -std=c99 -O2 -UNDEBUG "$ROOT/tests/PMChapterInterruptionTest.c" ./*.o -o chaptervm
   ./chaptervm
   clang -std=c99 -O2 -UNDEBUG "$ROOT/tests/PMChapterEnterSceneTest.c" ./*.o -o chaptervm
@@ -60,6 +62,12 @@ clang++ -std=c++17 -fobjc-arc -DPMDOOR_RUN_HOST_TEST -framework Foundation -fram
     "$ROOT/PhiMod/Sources/PMOSAuthorProgress.mm" ./*.o -o chaptercover
   ./chaptercover
 )
+python3 "$ROOT/tests/test_song_interruption_timeline.py"
+python3 "$ROOT/tests/test_song_interruption_glitch.py"
+clang++ -std=c++17 -O2 "$ROOT/tests/PMNativeOSAudioTimelineTest.cpp" -o "$OUT/core"
+"$OUT/core"
+clang++ -std=c++17 -fobjc-arc -DPM_NATIVE_OS_AUDIO_HOST_TEST -framework Foundation -framework AVFoundation "$ROOT/tests/PMNativeOSAudioTest.mm" -o "$OUT/core"
+"$OUT/core"
 python3 "$ROOT/tests/test_native_os_frame_sequence.py"
 python3 "$ROOT/tests/run_chapter_puzzle.py" clang -O2
 python3 "$ROOT/tests/test_story_sequence.py"

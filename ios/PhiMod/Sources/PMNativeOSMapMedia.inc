@@ -24,7 +24,8 @@ struct GifVisit {
 };
 struct Media {
     NSString *path = nil;
-    Handle raw{}, fitter{}, player{}, texture{};
+    Handle raw{}, fitter{}, player{}, playerObject{}, texture{};
+    bool preloaded = false;
     int pixels{}, textureWidth{}, textureHeight{};
     uint64_t uploadedRevision=0;
     bool loop{}, playing{}, received{}, failed{}, deferred{}, slowStartReported{};
@@ -129,7 +130,7 @@ void requestGif(Media &media) {
     }});
 }
 std::shared_ptr<Media> buildMedia(Map &m, P tr, NSString *path, bool cover, bool loop, int pixels,
-                                  blend::Layer *additive = nullptr) {
+                                  blend::Layer *additive = nullptr, P resourceParent = nullptr) {
     auto media = std::make_shared<Media>();
     media->path = [path copy]; media->loop = loop; media->pixels = [path.pathExtension.lowercaseString isEqualToString:@"gif"] ? std::min(1024,pixels) : pixels;
     Object childObject = child(m,tr,"Map Media");
@@ -142,7 +143,12 @@ std::shared_ptr<Media> buildMedia(Map &m, P tr, NSString *path, bool cover, bool
     flag(m.r,raw,"set_enabled",false);
     media->fitter = m.keep(fit(m.r,go,1,cover));
     if ([path.pathExtension.lowercaseString isEqualToString:@"mp4"]) {
-        P player = add(m.r,go,"UnityEngine.Video","VideoPlayer");
+        // Resource-only host: preparing a target must never activate its UI
+        // hierarchy (OnEnable, input, authored state). No renderer or audio.
+        Object decoder = child(m,resourceParent ? resourceParent : tr,"Map Video Decoder");
+        media->playerObject = decoder.go;
+        flag(m.r,m.get(decoder.go),"SetActive",false);
+        P player = add(m.r,m.get(decoder.go),"UnityEngine.Video","VideoPlayer");
         media->player = m.keep(player);
         flag(m.r,player,"set_playOnAwake",false);
         int url = 1, apiOnly = 4, silent = 0;
@@ -152,14 +158,14 @@ std::shared_ptr<Media> buildMedia(Map &m, P tr, NSString *path, bool cover, bool
         flag(m.r,player,"set_isLooping",loop);
         m.r.call(player,"set_url",{"System.String"},{m.r.managedString([NSURL fileURLWithPath:path].absoluteString)});
     }
-    // Textures are acquired by warm/play, never for an inactive page.
+    // Textures are acquired by explicit warm/play, never by hierarchy construction.
     return media;
 }
 // Explicit cancellation is also used by displayPage; a staged player is not
 // "playing", so cancellation must not depend on the old playing edge alone.
 void stopMedia(Map &m, Media &media) {
     bool live = media.playing || media.first.started() || media.received || bool(media.gif);
-    media.playing = false; media.deferred = false;
+    media.playing = false; media.deferred = false; media.preloaded = false;
     media.gif.reset(); // Invalidates decoder queue completions through their weak owner.
     media.first.reset();
     media.lastVideoTexture = nullptr; media.received = false;
@@ -167,7 +173,7 @@ void stopMedia(Map &m, Media &media) {
     P raw = m.get(media.raw), player = m.get(media.player);
     flag(m.r,raw,"set_enabled",false);
     m.r.call(raw,"set_texture",{"UnityEngine.Texture"},{nullptr});
-    if (player) m.r.call(player,"Stop");
+    if (player) { m.r.call(player,"Stop"); if (media.playerObject) flag(m.r,m.get(media.playerObject),"SetActive",false); }
     releaseAsset(m,media.texture); media.texture=0;
     media.textureWidth=media.textureHeight=0; media.uploadedRevision=0;
 }
@@ -233,6 +239,7 @@ void warmMedia(Map &m, Media &media, bool expired) {
                 NSDictionary *attrs = [NSFileManager.defaultManager attributesOfItemAtPath:media.path error:nil];
                 if (![attrs[NSFileType] isEqual:NSFileTypeRegular] || ![attrs[NSFileSize] unsignedLongLongValue])
                     throw std::runtime_error("Map video is missing or empty");
+                if (media.playerObject) flag(r,m.get(media.playerObject),"SetActive",true);
                 r.call(player,"Prepare");
             } else media.gif = std::make_shared<GifVisit>();
         }
@@ -305,7 +312,7 @@ void syncMedia(Map &m, Media &media, bool play, double t) {
         }
         if (!media.playing) {
             media.playing = true; media.started = t; media.slowStartReported = false;
-            if (player) r.call(player,"Play");
+            if (player) { if (media.playerObject) flag(r,m.get(media.playerObject),"SetActive",true); r.call(player,"Play"); }
             else {
                 media.gif = std::make_shared<GifVisit>();
                 media.gif->sequenceClock.start(t,false); // New visit has a fresh zero origin.

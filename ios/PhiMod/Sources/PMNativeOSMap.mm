@@ -174,14 +174,29 @@ struct Item {
     bool manual{}, active = true;
     float alpha = 1, inheritedAlpha = 1;
 };
+struct StillDelivery {
+    NSData *image = nil, *silhouette = nil;
+    float aspect = 1;
+    bool complete = false;
+};
+struct PagePreload {
+    preload::Plan plan;
+    std::map<std::string,Art> art;
+    std::vector<Handle> assets;
+    std::set<std::string> failed;
+    std::shared_ptr<StillDelivery> pending;
+    int pendingNode = -1;
+};
 struct Map {
     explicit Map(Runtime &runtime): r(runtime) {}
     Runtime &r;
-    id<NSObject> resignObserver = nil;
+    id<NSObject> resignObserver = nil, activeObserver = nil;
+    bool foregroundPaused = false;
     Visit id{};
-    Activate activate = nil;
+    Activate activate = nil, tapObserver = nil;
     layout::PendingTap tap;
     readiness::Ticket preparation;
+    PagePreload preload;
     Handle root{}, rootGroup{}, orphan{};
     Handle additiveMaterial{};
     bool hasAdditive=false;
@@ -211,7 +226,7 @@ struct Map {
         return handles.back();
     }
     P get(Handle h) { return h ? r.gchandle_get_target(h) : nullptr; }
-    double time() const { return elapsed + (running ? std::chrono::duration<double>(Clock::now()-resumed).count() : 0.); }
+    double time() const { return elapsed + (running && !foregroundPaused ? std::chrono::duration<double>(Clock::now()-resumed).count() : 0.); }
 };
 std::unique_ptr<Map> current;
 Visit sequence{};
@@ -249,8 +264,10 @@ template<class Work> bool checked(Work work, NSString **reason = nullptr) {
     return false;
 }
 void dispose(Map &m) {
+    m.preload.pending.reset(); // Queued CPU completions cannot revive this visit.
     if (m.hasAdditive) checked([&]{ hideAdditive(m); });
     if (m.resignObserver) [NSNotificationCenter.defaultCenter removeObserver:m.resignObserver];
+    if (m.activeObserver) [NSNotificationCenter.defaultCenter removeObserver:m.activeObserver];
     if (m.root) checked([&]{ if (m.r.alive(m.get(m.root))) flag(m.r, m.get(m.root), "SetActive", false); });
     if (m.orphan && m.orphan != m.root) checked([&]{ destroy(m, m.orphan); });
     checked([&]{ destroy(m, m.root); });
@@ -331,9 +348,8 @@ void upload(Runtime &r, P tex, NSData *data, bool discardCPU) {
         {"UnityEngine.Texture2D", "System.Byte[]", "System.Boolean"}, {tex,bytes,&discardCPU})))
         throw std::runtime_error("Unity rejected map image");
 }
-Handle loadSprite(Map &m, CGImageRef image, bool readable) {
+Handle uploadSprite(Map &m, NSData *data, bool readable) {
     Runtime &r = m.r;
-    NSData *data = encodeImage(image);
     P tex = m.get(newTexture(m));
     upload(r, tex, data, !readable);
     float rect[] = {0,0,float(r.unbox<int>(r.call(tex,"get_width"))),float(r.unbox<int>(r.call(tex,"get_height")))};
@@ -342,6 +358,9 @@ Handle loadSprite(Map &m, CGImageRef image, bool readable) {
     Handle handle = m.keep(sprite);
     m.assets.push_back(handle);
     return handle;
+}
+Handle loadSprite(Map &m, CGImageRef image, bool readable) {
+    return uploadSprite(m,encodeImage(image),readable);
 }
 Art loadArt(Map &m, NSString *path, int pixels, bool readable, bool needsSilhouette) {
     CGImageRef image = createThumbnail(path, pixels);
@@ -599,7 +618,7 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
         }
         if (animated) {
             item.media = buildMedia(m, tr, path, n.fill, n.loop, pixels[n.screen],
-                                    n.blend == PMOSBlendAdd ? &item.additive : nullptr);
+                                    n.blend == PMOSBlendAdd ? &item.additive : nullptr, m.get(m.rootRect));
             if (spriteTint) item.tint = item.media->raw;
         } else if (path) {
             item.artPath = [path copy];
@@ -649,8 +668,9 @@ void build(Map &m, P parent, const PMOSPage &page, NSArray<NSDictionary *> *mode
         item.flash = m.keep(graphic);
     }
 }
-// UI objects remain stable for input/drag ownership; only the active page owns
-// decoded artwork. Hidden/timed nodes acquire on their first visible refresh.
+#include "PMNativeOSMapPreload.inc"
+// UI objects remain stable for input/drag ownership. The active page and at
+// most one entry target own artwork; hidden/timed nodes still acquire lazily.
 void acquireArt(Map &m, Item &item) {
     if (!item.artPath || item.artLoaded) return;
     auto found=m.pageArt.find(item.artPath.UTF8String);
@@ -705,9 +725,17 @@ void refresh(Map &m, double t) {
             item.active = active;
         }
         if (item.media) {
-            auto mode = readiness::mediaMode(active,m.preparation.active(),m.visible,m.running);
-            if (mode == readiness::MediaMode::Warm) warmMedia(m, *item.media, m.preparation.expired(wallTime()));
-            else syncMedia(m, *item.media, mode == readiness::MediaMode::Play, t);
+            auto &media = *item.media;
+            const bool retain = preload::retainMedia(media.preloaded,item.screen,m.page,active,m.visible,m.running);
+            if (!retain) {
+                if (media.preloaded) {
+                    media.preloaded = false;
+                    if (active && !media.first.held()) deferMedia(media,@"entry target not ready at switch");
+                }
+                auto mode = readiness::mediaMode(active,m.preparation.active(),m.visible,m.running);
+                if (mode == readiness::MediaMode::Warm) warmMedia(m, media, m.preparation.expired(wallTime()));
+                else syncMedia(m, media, mode == readiness::MediaMode::Play, t);
+            }
         }
         if (!active) { syncAdditive(m,item); continue; }
         acquireArt(m,item);
@@ -781,10 +809,23 @@ Visit open(Runtime &r, P parent, const PMOSPage &page, NSArray<NSDictionary *> *
     Visit token = m->id;
     m->resignObserver = [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationWillResignActiveNotification
         object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *) {
-            if (current && current->id == token) current->tap.cancel();
+            if (current && current->id == token) {
+                current->elapsed=current->time();current->foregroundPaused=true;
+                current->tap.cancel();
+                checked([&]{ cancelPreload(*current); });
+            }
         }];
+    m->activeObserver = [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidBecomeActiveNotification
+        object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *) {
+            if(current && current->id==token && current->foregroundPaused){current->resumed=Clock::now();current->foregroundPaused=false;}
+        }];
+    m->foregroundPaused=UIApplication.sharedApplication.applicationState!=UIApplicationStateActive;
     current = std::move(m);
     return sequence;
+}
+bool setTapObserver(Runtime &r, Visit id, Activate observer) {
+    if(!matches(r,id))return false;
+    current->tapObserver=[observer copy];return true;
 }
 bool displayPage(Runtime &r, Visit id, int screen) {
     if (!matches(r,id) || !layout::canDisplay(current->screens,current->transitionScreen,screen)) return false;
@@ -794,15 +835,32 @@ bool displayPage(Runtime &r, Visit id, int screen) {
         hideAdditive(m); // Clear isolated groups before changing page/media state.
         if (m.preparation.active() && !m.visible) flag(r,m.get(m.root),"SetActive",false);
         m.preparation.invalidate();
+        const bool adopt = m.preload.plan.matches(m.page,screen);
         for (auto &item : m.items) {
-            if (item.media) stopMedia(m, *item.media);
+            if (item.media && !(adopt && item.screen == screen && item.media->preloaded))
+                stopMedia(m, *item.media);
             item.manualSince = 0;
         }
         releasePageArt(m);
+        if (adopt) {
+            m.pageArt.swap(m.preload.art);
+            m.pageAssets.swap(m.preload.assets);
+        }
+        cancelPreload(m,adopt ? screen : -1);
         m.page = screen;
         m.elapsed = 0;
         m.resumed = Clock::now();
     });
+}
+bool preloadPage(Runtime &r, Visit id, int screen) {
+    if (!matches(r,id) || screen == current->page ||
+        !layout::canDisplay(current->screens,current->transitionScreen,screen)) return false;
+    Map &m = *current;
+    if (!m.visible || !m.running || m.input ||
+        UIApplication.sharedApplication.applicationState != UIApplicationStateActive) return false;
+    if (checked([&]{ stepPreload(m,screen); })) return true;
+    checked([&]{ cancelPreload(m); });
+    return false;
 }
 bool setElement(Runtime &r, Visit id, int index, bool visible) {
     if (!matches(r,id) || index < 0 || size_t(index) >= current->items.size() || !current->items[index].object) return false;
@@ -848,6 +906,7 @@ ReadinessResult pollPrepared(Runtime &r, Visit id, uint64_t token) {
 }
 bool present(Runtime &r, Visit id, bool visible, bool runClock, bool input) {
     return change(r,id,[&](Map &m){
+        if (!visible) cancelPreload(m);
         bool hierarchyWasActive = m.visible || m.preparation.active();
         bool running = visible && runClock;
         if (running && m.preparation.active()) {
@@ -879,14 +938,17 @@ void dispatchNode(Map &m, int index) {
 }
 void selectNode(Map &m, int index) {
     if (!m.input || m.tap.busy() || !eligible(m, index) || m.items[index].locked) return;
+    if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive) return;
+    Activate notice=m.tapObserver;Visit token=m.id;
     int owner = m.items[index].feedbackOwner;
     if (owner >= 0) {
-        if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive) return;
         m.tap.begin(index, owner, m.time(), m.items[owner].motion.tapTime);
         refresh(m, m.time());
+        if(notice)notice(token,index);
         return;
     }
-    dispatchNode(m, index);
+    if(notice)notice(token,index);
+    if(current && current->id==token)dispatchNode(*current, index);
 }
 bool tick(Runtime &r, Visit id) {
     if (!matches(r,id)) return false;
@@ -903,6 +965,15 @@ bool tick(Runtime &r, Visit id) {
         int release = puzzleInput(m);
         if (release >= 0) selectNode(m, release);
     })) { close(r,id); return false; }
+    return true;
+}
+bool playbackState(Runtime &r, Visit id, int &screen, double &time, bool &running) {
+    screen = -1; time = 0; running = false;
+    if (!matches(r,id)) return false;
+    const Map &m = *current;
+    screen = m.page;
+    time = m.time();
+    running = m.visible && m.running && !m.foregroundPaused;
     return true;
 }
 P anchor(Runtime &r, Visit id, int index) {

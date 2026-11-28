@@ -1,6 +1,7 @@
 #pragma once
 #include "../Core/PMChapterVM.h"
 #include "PMNativeOSMapReadiness.hpp"
+#include "PMNativeOSMapPreload.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -179,8 +180,18 @@ using Activate = void (^)(Visit, int nodeIndex);
 // callback as buttons, after the piece has been placed on its declared target.
 Visit open(Runtime &, void *parent, const PMOSPage &page, NSArray<NSDictionary *> *models,
            void *font, Activate activate, NSString **reason = nullptr);
+// Accepted input notification precedes delayed feedback/Lua dispatch. No notice
+// for locked, hidden, disabled, busy or staging nodes. Audio may use this signal.
+bool setTapObserver(Runtime &, Visit, Activate observer);
 bool displayPage(Runtime &, Visit, int screen); // reset time, retain overrides; reject reserved timeline screen
 bool setElement(Runtime &, Visit, int nodeIndex, bool visible);
+// Optional enterScene target resource work; call once per foreground scene tick.
+// Does not select/activate the page, run its clock or dispatch authored actions.
+// One still resource/decoder step per call; CPU still decode is asynchronous. Target
+// nodes remain inactive, including when a silent resource-only video decodes.
+// displayPage adopts a matching cache, otherwise discards it. close cancels it.
+// A short entrance may leave cold assets for the normal display path; no wait.
+bool preloadPage(Runtime &, Visit, int screen);
 // Optional covered-transition staging. Call after open/displayPage, before any
 // authored time has run, with visible=false and a nonzero transition token.
 // prepare keeps the hierarchy active but alpha=0, clock=0 and input disabled.
@@ -207,6 +218,10 @@ ReadinessResult pollPrepared(Runtime &, Visit, uint64_t transitionToken);
 // a reveal. While awaiting a Lua action, pass input=false to prevent repeat input.
 bool present(Runtime &, Visit, bool visible, bool runClock, bool input);
 bool tick(Runtime &, Visit); // call on the scene update while presented
+// Read-only selected-page clock (seconds); preload never changes these values.
+// running means visible and advancing, independent of the input gate. A frozen
+// page keeps its elapsed time. Invalid visit/thread returns false and {-1,0,false}.
+bool playbackState(Runtime &, Visit, int &screen, double &time, bool &running);
 void *anchor(Runtime &, Visit, int nodeIndex); // borrowed RectTransform on current screen
 bool owns(Runtime &, void *button);
 bool press(Runtime &, void *button); // true consumes only an owned Button, including disabled ones

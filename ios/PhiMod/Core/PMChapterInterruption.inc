@@ -29,8 +29,8 @@ static int declareSongInterruption(lua_State *L) {
     if (page->songInterruptionCount >= PMOSMaxSongInterruptions)
         return luaL_error(L, "too many songInterruptions (maximum %d)", PMOSMaxSongInterruptions);
     PMOSSongInterruption value = {0};
-    value.delay = 2;
-    int hasAt = 0;
+    value.delay = 2; value.audioVolume = 1;
+    int hasAt = 0, hasBlue = 0, hasAudioConfig = 0, audioDelayMask = 0;
     lua_pushnil(L);
     while (lua_next(L, 1)) {
         char field[32];
@@ -51,6 +51,32 @@ static int declareSongInterruption(lua_State *L) {
             value.delay = interruptionSeconds(L, field);
             if (value.delay > PMOSSongInterruptionMaxDelay)
                 return luaL_error(L, "songInterruption delay must be in [0,600]");
+        } else if (!strcmp(field, "effectDuration") || !strcmp(field, "blackDuration") || !strcmp(field, "blueDuration")) {
+            double seconds=interruptionSeconds(L,field);
+            if(seconds>600)return luaL_error(L,"songInterruption stage duration must be in [0,600]");
+            value.staged=1;
+            if(!strcmp(field,"effectDuration"))value.effectDuration=seconds;
+            else if(!strcmp(field,"blackDuration"))value.blackDuration=seconds;
+            else {value.blueDuration=seconds;hasBlue=1;}
+        } else if (!strcmp(field,"audioTail")) {
+            if(!lua_isboolean(L,-1))return luaL_error(L,"songInterruption audioTail expects boolean");
+            value.audioTail=lua_toboolean(L,-1);hasAudioConfig=1;
+        } else if (!strcmp(field,"effectAudioDelay") || !strcmp(field,"blackAudioDelay") || !strcmp(field,"blueAudioDelay")) {
+            double seconds=interruptionSeconds(L,field);hasAudioConfig=1;
+            if(seconds>600)return luaL_error(L,"songInterruption audio delay must be in [0,600]");
+            if(!strcmp(field,"effectAudioDelay")){value.effectAudioDelay=seconds;audioDelayMask|=1;}
+            else if(!strcmp(field,"blackAudioDelay")){value.blackAudioDelay=seconds;audioDelayMask|=2;}
+            else {value.blueAudioDelay=seconds;audioDelayMask|=4;}
+        } else if (!strcmp(field,"audioVolume")) {
+            hasAudioConfig=1;
+            value.audioVolume=interruptionSeconds(L,field);
+            if(value.audioVolume>1)return luaL_error(L,"songInterruption audioVolume must be in [0,1]");
+        } else if (!strcmp(field,"effectAudioSrc") || !strcmp(field,"blackAudioSrc") || !strcmp(field,"blueAudioSrc")) {
+            hasAudioConfig=1;
+            char *dst=!strcmp(field,"effectAudioSrc")?value.effectAudioSrc:
+                      !strcmp(field,"blackAudioSrc")?value.blackAudioSrc:value.blueAudioSrc;
+            interruptionText(L,-1,field,dst,256,0);
+            if(!audioLocalName(dst))return luaL_error(L,"songInterruption audio expects a local audio basename");
         } else if (!strcmp(field, "src")) {
             interruptionText(L, -1, field, value.src, sizeof(value.src), 0);
             if (!entryLocalName(value.src) || !cueImageName(value.src))
@@ -73,6 +99,19 @@ static int declareSongInterruption(lua_State *L) {
     if (!value.song || !hasAt || !value.src[0] || !value.title[0] ||
         !value.message[0] || !value.button[0] || !value.action)
         return luaL_error(L, "songInterruption requires song, at, src, title, message, button and action");
+    if(!hasBlue)value.blueDuration=value.delay;
+    if(hasAudioConfig && !value.staged)return luaL_error(L,"songInterruption audio requires an enabled positive-duration stage");
+    if(((audioDelayMask&1) && !value.effectAudioSrc[0]) || ((audioDelayMask&2) && !value.blackAudioSrc[0]) || ((audioDelayMask&4) && !value.blueAudioSrc[0]))
+        return luaL_error(L,"songInterruption audio delay requires its source");
+    if((value.effectAudioSrc[0] && value.effectAudioDelay>=value.effectDuration) ||
+       (value.blackAudioSrc[0] && value.blackAudioDelay>=value.blackDuration) ||
+       (value.blueAudioSrc[0] && value.blueAudioDelay>=value.blueDuration))
+        return luaL_error(L,"songInterruption audio requires an enabled positive-duration stage with delay before its end");
+
+    if((value.effectAudioSrc[0] && (!value.staged || value.effectDuration<=0)) ||
+       (value.blackAudioSrc[0] && (!value.staged || value.blackDuration<=0)) ||
+       (value.blueAudioSrc[0] && (!value.staged || value.blueDuration<=0)))
+        return luaL_error(L,"songInterruption audio requires an enabled positive-duration stage");
     for (int i = 0; i < page->songInterruptionCount; ++i) {
         const PMOSSongInterruption *other = &page->songInterruptions[i];
         if (other->song == value.song && !strcmp(other->difficulty, value.difficulty))

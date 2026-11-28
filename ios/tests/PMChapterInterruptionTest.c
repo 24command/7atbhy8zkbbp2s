@@ -219,8 +219,34 @@ static void callbacksAndLegacy(void) {
     assert(!page.songInterruptionCount && page.nodes == 2 && page.elements[1].open == 1);
 }
 
+static void stagedMedia(void) {
+    accepts(BASE "songInterruption(d)");
+    assert(!page.songInterruptions[0].staged && page.songInterruptions[0].delay==2);
+    accepts(BASE "d.blackDuration=5;d.blueDuration=3;d.effectDuration=4;d.effectAudioSrc='fault.m4a';d.blackAudioSrc='black.wav';d.audioVolume=.8;songInterruption(d)");
+    const PMOSSongInterruption *v=&page.songInterruptions[0];
+    assert(v->staged && v->blackDuration==5 && v->blueDuration==3 && v->effectDuration==4 && v->audioVolume==.8);
+    assert(!strcmp(v->effectAudioSrc,"fault.m4a") && !strcmp(v->blackAudioSrc,"black.wav"));
+    accepts(BASE "d.blackDuration=5;d.delay=7;songInterruption(d)");
+    assert(page.songInterruptions[0].blueDuration==7);
+    accepts(BASE "d.blueDuration=0;songInterruption(d)");
+    assert(page.songInterruptions[0].staged && page.songInterruptions[0].blueDuration==0);
+    accepts(BASE "d.blackDuration=5;d.blackAudioSrc='fault.m4a';d.blackAudioDelay=.1;d.audioTail=true;songInterruption(d)");
+    assert(page.songInterruptions[0].blackAudioDelay==.1 && page.songInterruptions[0].audioTail);
+    rejectsEdit("d.blackDuration=5;d.blackAudioDelay=.1", "requires its source");
+    rejectsEdit("d.blackDuration=5;d.blackAudioSrc='fault.m4a';d.blackAudioDelay=5", "delay before its end");
+    rejectsEdit("d.audioTail=1", "expects boolean");
+    rejectsEdit("d.effectDuration=-1", "finite nonnegative");
+    rejectsEdit("d.blackDuration=601", "stage duration");
+    rejectsEdit("d.blueDuration=0/0", "finite nonnegative");
+    rejectsEdit("d.audioVolume=2", "audioVolume");
+    rejectsEdit("d.blackAudioSrc='a.wav'", "positive-duration stage");
+    rejectsEdit("d.blueAudioSrc='a.wav'", "positive-duration stage");
+    rejectsEdit("d.blackDuration=5;d.blackAudioSrc='../a.wav'", "local audio basename");
+    rejectsEdit("d.effectDuration=4;d.effectAudioSrc='a.exe'", "local audio basename");
+}
+
 int main(void) {
-    schemaAndOwnership(); requiredAndTypes(); utf8AndBasenames(); stringBounds();
+    stagedMedia(); schemaAndOwnership(); requiredAndTypes(); utf8AndBasenames(); stringBounds();
     duplicatesAndLimit(); callbacksAndLegacy();
     puts("chapter song interruption VM tests passed");
     return 0;

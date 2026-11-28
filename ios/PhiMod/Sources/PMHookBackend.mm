@@ -13,6 +13,7 @@
 #import "PMDiagnostics.h"
 #import <UIKit/UIKit.h>
 #include "PMIL2CPP.hpp"
+#include "PMSongInterruptionGlitch.inc"
 #include "PMOptions.hpp"
 #include "PMChallengeRun.hpp"
 #include "PMSecretCourseRuntime.hpp"

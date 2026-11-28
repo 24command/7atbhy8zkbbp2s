@@ -256,8 +256,9 @@ static int actionSong(lua_State *L, const PMOSSession *s, const char *action) {
 
 #include "PMChapterUnlockAnimation.inc"
 #include "PMChapterEntryTransition.inc"
-#include "PMChapterInterruption.inc"
 #include "PMChapterEnterScene.inc"
+#include "PMChapterAudio.inc"
+#include "PMChapterInterruption.inc"
 
 typedef struct { const char *source; size_t length; } Script;
 
@@ -266,6 +267,7 @@ static int evaluate(lua_State *L) {
     lua_pushcfunction(L,onEnterMovie); lua_setglobal(L,"onEnterMovie");
     lua_pushcfunction(L, declareEntryTransition); lua_setglobal(L, "entryTransition");
     lua_pushcfunction(L, declareSongInterruption); lua_setglobal(L, "songInterruption");
+    lua_pushcfunction(L, declareAudio); lua_setglobal(L, "audio");
     lua_pushcfunction(L, declareEnterScene); lua_setglobal(L, "onEnterScene");
     lua_pushcfunction(L, nativeChapter); lua_setglobal(L, "nativeChapter");
     lua_pushcfunction(L, home);
@@ -296,6 +298,7 @@ static int evaluate(lua_State *L) {
     resolveLinks(L);
     resolveEntryTransition(L, declarationPage(L));
     resolveEnterScene(L, declarationPage(L));
+    resolveAudio(L, declarationPage(L));
     resolveChallengeBindings(L, declarationPage(L));
     resolveSongVisibility(session(L), declarationPage(L));
     PMOSSession *s=session(L);
@@ -391,6 +394,7 @@ PMOSSession *PMOSStartWithProgress(const char *src, size_t len, int songs,
     s->declaring = NULL;
     if (!ok) {
         page->songInterruptionCount = 0;
+        page->audioCueCount = 0;
         memset(&page->enterScene, 0, sizeof(page->enterScene));
         page->enterScene.sourceScreen = page->enterScene.toScreen = page->enterScene.initialScreen = -1;
         page->count = page->nodes = page->screens = page->challengeCount = page->unlockAnimationCount = page->trackKeyCount = 0;

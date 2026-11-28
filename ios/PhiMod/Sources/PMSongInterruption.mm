@@ -4,6 +4,7 @@
 #import "PMDiagnostics.h"
 #include "PMSongInterruptionWindow.hpp"
 #import <UIKit/UIKit.h>
+#import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/QuartzCore.h>
 #include "PMSongInterruptionState.hpp"
 #include <dlfcn.h>
@@ -40,21 +41,20 @@ struct PMInterruptionFD {
     PMInterruptionFD& operator=(const PMInterruptionFD&) = delete;
 };
 }
-static NSData *PMReadInterruptionImage(NSString *chapter, NSString *src, NSError **error) {
+static NSData *PMReadInterruptionMedia(NSString *chapter, NSString *src, NSArray<NSString *> *extensions, NSError **error, off_t limit = 32 * 1024 * 1024) {
     // Keep the shared whitelist; descriptor-relative opens also close its symlink
     // check/open race for chapter, os-media and the final file. No arbitrary URL.
-    if (!PMOSLocalMediaPath(chapter, src, @[@"png", @"jpg", @"jpeg", @"webp"])) {
-        if (error) *error = PMInterruptionError(@"Invalid interruption image basename");
+    if (!PMOSLocalMediaPath(chapter, src, extensions)) {
+        if (error) *error = PMInterruptionError(@"Invalid interruption media basename");
         return nil;
     }
     PMInterruptionFD root(open(chapter.fileSystemRepresentation, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
     PMInterruptionFD media(root.value < 0 ? -1 : openat(root.value, "os-media", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
     PMInterruptionFD file(media.value < 0 ? -1 : openat(media.value, src.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC));
     struct stat before = {}, after = {};
-    constexpr off_t limit = 32 * 1024 * 1024;
     if (file.value < 0 || fstat(file.value, &before) || !S_ISREG(before.st_mode) ||
         before.st_size <= 0 || before.st_size > limit) {
-        if (error) *error = PMInterruptionError(@"Interruption image must be a regular file of 1 byte to 32 MiB");
+        if (error) *error = PMInterruptionError(@"Interruption media must be a nonempty regular file within the remaining byte budget");
         return nil;
     }
     NSMutableData *bytes = [NSMutableData dataWithLength:(NSUInteger)before.st_size];
@@ -70,7 +70,7 @@ static NSData *PMReadInterruptionImage(NSString *chapter, NSString *src, NSError
     do { tail = read(file.value, &extra, 1); } while (tail < 0 && errno == EINTR);
     if (offset != bytes.length || tail != 0 || fstat(file.value, &after) ||
         before.st_size != after.st_size || before.st_mtime != after.st_mtime) {
-        if (error) *error = PMInterruptionError(@"Interruption image changed or could not be read");
+        if (error) *error = PMInterruptionError(@"Interruption media changed or could not be read");
         return nil;
     }
     return bytes;
@@ -78,13 +78,27 @@ static NSData *PMReadInterruptionImage(NSString *chapter, NSString *src, NSError
 
 @interface PMPreparedSongInterruption ()
 @property(nonatomic, strong) UIImage *image;
-- (instancetype)initWithConfig:(NSDictionary *)config image:(UIImage *)image;
+@property(nonatomic, copy) NSDictionary<NSString *, NSData *> *audioData;
+- (instancetype)initWithConfig:(NSDictionary *)config image:(UIImage *)image audio:(NSDictionary<NSString *, NSData *> *)audio;
 @end
 @implementation PMPreparedSongInterruption
-- (instancetype)initWithConfig:(NSDictionary *)config image:(UIImage *)image {
+- (instancetype)initWithConfig:(NSDictionary *)config image:(UIImage *)image audio:(NSDictionary<NSString *, NSData *> *)audio {
     if ((self = [super init])) {
         _at = [config[@"at"] doubleValue];
         _delay = config[@"delay"] ? [config[@"delay"] doubleValue] : 2;
+        _staged = config[@"effectDuration"] || config[@"blackDuration"] || config[@"blueDuration"];
+        _effectDuration = [config[@"effectDuration"] doubleValue];
+        _blackDuration = [config[@"blackDuration"] doubleValue];
+        _blueDuration = config[@"blueDuration"] ? [config[@"blueDuration"] doubleValue] : _delay;
+        _effectAudioSrc = [config[@"effectAudioSrc"] copy] ?: @"";
+        _blackAudioSrc = [config[@"blackAudioSrc"] copy] ?: @"";
+        _blueAudioSrc = [config[@"blueAudioSrc"] copy] ?: @"";
+        _audioVolume = config[@"audioVolume"] ? [config[@"audioVolume"] doubleValue] : 1;
+        _effectAudioDelay=[config[@"effectAudioDelay"] doubleValue];
+        _blackAudioDelay=[config[@"blackAudioDelay"] doubleValue];
+        _blueAudioDelay=[config[@"blueAudioDelay"] doubleValue];
+        _audioTail=[config[@"audioTail"] boolValue];
+        _audioData = [audio copy];
         _song = [config[@"song"] integerValue];
         _difficulty = [config[@"difficulty"] copy] ?: @"";
         _src = [config[@"src"] copy];
@@ -128,10 +142,55 @@ PMPreparedSongInterruption *PMPrepareSongInterruption(NSDictionary *config, NSSt
                 return nil;
             }
         }
-        NSData *data = PMReadInterruptionImage(chapterDir, config[@"src"], error);
+        for (NSString *key in @[@"effectDuration", @"blackDuration", @"blueDuration"]) {
+            if (config[key] && (!PMInterruptionNumber(config[key]) || [config[key] doubleValue] < 0 || [config[key] doubleValue] > 600)) {
+                if (error) *error = PMInterruptionError([@"Invalid interruption duration: " stringByAppendingString:key]);
+                return nil;
+            }
+        }
+        BOOL staged = config[@"effectDuration"] || config[@"blackDuration"] || config[@"blueDuration"];
+        BOOL hasAudio = config[@"effectAudioSrc"] || config[@"blackAudioSrc"] || config[@"blueAudioSrc"] || config[@"audioVolume"] || config[@"audioTail"] || config[@"effectAudioDelay"] || config[@"blackAudioDelay"] || config[@"blueAudioDelay"];
+        if (hasAudio && !staged) {
+            if (error) *error = PMInterruptionError(@"Interruption audio requires an explicit staged timeline");
+            return nil;
+        }
+        if (config[@"audioVolume"] && (!PMInterruptionNumber(config[@"audioVolume"]) ||
+            [config[@"audioVolume"] doubleValue] < 0 || [config[@"audioVolume"] doubleValue] > 1)) {
+            if (error) *error = PMInterruptionError(@"Invalid interruption audio volume");
+            return nil;
+        }
+        if(config[@"audioTail"] && CFGetTypeID((__bridge CFTypeRef)config[@"audioTail"])!=CFBooleanGetTypeID()) {
+            if(error)*error=PMInterruptionError(@"audioTail expects boolean");return nil;
+        }
+        NSMutableDictionary<NSString *, NSData *> *audio = [NSMutableDictionary dictionary];
+        off_t remainingAudioBytes = 32 * 1024 * 1024;
+        for (NSString *phase in @[@"effect", @"black", @"blue"]) {
+            NSString *key = [phase stringByAppendingString:@"AudioSrc"];
+            NSString *delayKey=[phase stringByAppendingString:@"AudioDelay"];
+            if(config[delayKey] && (!PMInterruptionNumber(config[delayKey]) || [config[delayKey] doubleValue]<0 || [config[delayKey] doubleValue]>600 || !config[key])) {
+                if(error)*error=PMInterruptionError(@"Invalid stage audio delay or missing source");return nil;
+            }
+            if (!config[key]) continue;
+            NSString *durationKey = [phase stringByAppendingString:@"Duration"];
+            double duration = config[durationKey] ? [config[durationKey] doubleValue] : ([phase isEqual:@"blue"] ? delay : 0);
+            if (!PMInterruptionText(config[key]) || duration <= 0 || [config[delayKey] doubleValue]>=duration) {
+                if (error) *error = PMInterruptionError([@"Invalid interruption audio or disabled stage: " stringByAppendingString:key]);
+                return nil;
+            }
+            NSData *data = PMReadInterruptionMedia(chapterDir, config[key], @[@"wav", @"mp3", @"m4a", @"aac", @"caf", @"aiff", @"aif"], error, remainingAudioBytes);
+            if (!data) return nil;
+            remainingAudioBytes -= (off_t)data.length;
+            AVAudioPlayer *probe = [[AVAudioPlayer alloc] initWithData:data error:error];
+            if (!probe || !std::isfinite(probe.duration) || probe.duration <= 0 || probe.numberOfChannels == 0) {
+                if (error && !*error) *error = PMInterruptionError(@"Cannot decode interruption audio");
+                return nil;
+            }
+            audio[phase] = data;
+        }
+        NSData *data = PMReadInterruptionMedia(chapterDir, config[@"src"], @[@"png", @"jpg", @"jpeg", @"webp"], error);
         if (!data) return nil;
         UIImage *image = PMDecodeCoverData(data, error);
-        return image ? [[PMPreparedSongInterruption alloc] initWithConfig:config image:image] : nil;
+        return image ? [[PMPreparedSongInterruption alloc] initWithConfig:config image:image audio:audio] : nil;
     } @catch (NSException *exception) {
         if (error) *error = PMInterruptionError(exception.reason ?: @"Interruption preparation failed");
         return nil;
@@ -143,6 +202,7 @@ struct PMInterruptionPayload {
     PMPreparedSongInterruption *prepared = nil;
     UIImage *cover = nil;
     CGFloat aspect = 0;
+    BOOL (^effect)(PMSongInterruptionEffectEvent, UIView *, NSTimeInterval) = nil;
     BOOL (^guard)(void) = nil;
     void (^invalidated)(void) = nil;
 };
@@ -153,6 +213,7 @@ struct PMInterruptionHost {
     UIView *view = nil;
     UIWindow *window = nil;
 };
+static BOOL (^configuredEffect)(PMSongInterruptionEffectEvent, UIView *, NSTimeInterval);
 static BOOL (^configuredGuard)(void);
 static void (^configuredInvalidation)(void);
 
@@ -198,7 +259,7 @@ static double continuousSeconds() {
     static mach_timebase_info_data_t scale;
     static dispatch_once_t once;
     dispatch_once(&once, ^{ mach_timebase_info(&scale); });
-    // Unlike frame delta / active time, this includes device sleep and suspension.
+    // Continuous clock; explicit timelines subtract inactive intervals in Owner.
     return (double)mach_continuous_time() * ((double)scale.numer / scale.denom) * 1e-9;
 }
 static BOOL activeWindow(UIWindow *window) {
@@ -223,8 +284,61 @@ static UIImage *completeCover(const std::shared_ptr<PMInterruptionPayload>& payl
 }
 }
 
+@interface PMInterruptionMediaSession : NSObject {
+    pmsonginterruption::MediaLifecycle lifecycle;
+    BOOL resumeAudio;
+}
+@property(nonatomic, copy) BOOL (^effect)(PMSongInterruptionEffectEvent, UIView *, NSTimeInterval);
+@property(nonatomic, strong) UIView *container;
+@property(nonatomic) NSTimeInterval duration;
+@property(nonatomic, strong) AVAudioPlayer *audio;
+- (BOOL)start;
+- (BOOL)event:(PMSongInterruptionEffectEvent)event;
+- (BOOL)pause;
+- (BOOL)resume;
+- (void)stop;
+@end
+@implementation PMInterruptionMediaSession
+- (BOOL)event:(PMSongInterruptionEffectEvent)event {
+    @try { try { return self.effect ? self.effect(event, self.container, self.duration) : YES; }
+        catch (...) { return NO; } } @catch (NSException *exception) { (void)exception; return NO; }
+}
+- (BOOL)start {
+    if (lifecycle.start() == pmsonginterruption::MediaLifecycle::Event::None) return YES;
+    if (self.audio) {
+        @try { return [self.audio prepareToPlay] && [self.audio play]; }
+        @catch (NSException *exception) { (void)exception; return NO; }
+    }
+    return [self event:PMSongInterruptionEffectStart];
+}
+- (BOOL)pause {
+    if (lifecycle.pause() == pmsonginterruption::MediaLifecycle::Event::None) return YES;
+    if (self.audio) {
+        @try { resumeAudio = self.audio.playing; [self.audio pause]; return YES; }
+        @catch (NSException *exception) { (void)exception; resumeAudio = NO; return NO; }
+    }
+    return [self event:PMSongInterruptionEffectPause];
+}
+- (BOOL)resume {
+    if (lifecycle.resume() == pmsonginterruption::MediaLifecycle::Event::None) return YES;
+    if (self.audio) {
+        BOOL play = resumeAudio; resumeAudio = NO;
+        @try { return !play || [self.audio play]; }
+        @catch (NSException *exception) { (void)exception; return NO; }
+    }
+    return [self event:PMSongInterruptionEffectResume];
+}
+- (void)stop {
+    if (lifecycle.stop() == pmsonginterruption::MediaLifecycle::Event::None) return;
+    @try { [self.audio stop]; } @catch (NSException *exception) { (void)exception; }
+    if (self.effect) [self event:PMSongInterruptionEffectStop];
+    self.effect = nil; self.container = nil; self.audio = nil;
+}
+@end
+
 @interface PMSongInterruptionController : UIViewController
 @property(nonatomic, strong) UIImageView *imageView;
+@property(nonatomic, strong) UIView *effectView;
 @property(nonatomic, weak) UIViewController *gameController;
 @property(nonatomic, copy) void (^layoutChanged)(CGSize);
 @end
@@ -237,10 +351,15 @@ static UIImage *completeCover(const std::shared_ptr<PMInterruptionPayload>& payl
     self.imageView.contentMode = UIViewContentModeScaleAspectFill;
     self.imageView.clipsToBounds = YES;
     [self.view addSubview:self.imageView];
+    self.effectView = [[UIView alloc] initWithFrame:CGRectZero];
+    self.effectView.backgroundColor = UIColor.clearColor;
+    self.effectView.hidden = YES;
+    [self.view addSubview:self.effectView];
     self.view.accessibilityViewIsModal = YES;
 }
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
+    self.effectView.frame = self.view.bounds;
     self.imageView.frame = self.view.bounds; // Full bounds, NOT safeAreaLayoutGuide.
     if (self.layoutChanged) self.layoutChanged(self.view.bounds.size);
 }
@@ -265,9 +384,17 @@ static UIImage *completeCover(const std::shared_ptr<PMInterruptionPayload>& payl
 @property(nonatomic, strong) PMSongInterruptionController *imageController;
 @property(nonatomic, strong) UIAlertController *alert;
 @property(nonatomic, strong) CADisplayLink *clock;
+@property(nonatomic, strong) PMInterruptionMediaSession *effectSession;
+@property(nonatomic, strong) NSMutableDictionary<NSString *,PMInterruptionMediaSession *> *audioSessions;
+@property(nonatomic) BOOL mediaSuspended;
 @property(nonatomic, strong) NSMutableArray *observers;
 @property(nonatomic, copy) void (^quit)(void);
 - (void)clearUI;
+- (BOOL)renderStage:(PMInterruptionTicket)ticket;
+- (BOOL)displayMedia:(PMInterruptionTicket)ticket;
+- (void)suspend:(PMInterruptionTicket)ticket;
+- (void)muteFailedAudio:(NSString *)phase;
+- (void)stopAudio;
 - (void)invalidate:(PMInterruptionTicket)ticket;
 - (BOOL)validHost:(PMInterruptionTicket)ticket;
 - (void)observe:(PMInterruptionTicket)ticket;
@@ -296,6 +423,9 @@ static void notifyInvalidation(const std::shared_ptr<PMInterruptionPayload>& pay
     UIWindow *window = self.imageWindow, *gameWindow = self.gameWindow;
     UIWindowScene *scene = self.gameScene;
     UIAlertController *alert = self.alert;
+    PMInterruptionMediaSession *effect = self.effectSession;
+    self.effectSession = nil;[self stopAudio];
+    self.mediaSuspended = NO;
     self.imageController.layoutChanged = nil;
     self.clock = nil; self.observers = nil; self.quit = nil; self.alert = nil;
     self.imageWindow = nil; self.imageController = nil;
@@ -309,6 +439,7 @@ static void notifyInvalidation(const std::shared_ptr<PMInterruptionPayload>& pay
     window.rootViewController = nil;
     if (restoreKey && !self.imageWindow && gameWindow && !gameWindow.hidden && gameWindow.windowScene == scene)
         [gameWindow makeKeyWindow];
+    [effect stop]; // Last: user-supplied handler may synchronously install a new owner.
 }
 - (void)invalidate:(PMInterruptionTicket)ticket {
     if (!state.owns(ticket)) return;
@@ -335,6 +466,72 @@ static void notifyInvalidation(const std::shared_ptr<PMInterruptionPayload>& pay
     if (!valid) [self invalidate:ticket];
     return valid && state.owns(ticket);
 }
+- (BOOL)renderStage:(PMInterruptionTicket)ticket {
+    if (!state.owns(ticket)) return NO;
+    PMInterruptionMediaSession *effect = self.effectSession;
+    self.effectSession = nil;self.mediaSuspended=NO;
+    if(!state.payload()->prepared.audioTail)[self stopAudio];
+    [effect stop];
+    if (!state.owns(ticket)) return NO;
+    auto stage = state.stage();
+    self.imageController.view.backgroundColor = stage == pmsonginterruption::Stage::Effect ? UIColor.clearColor : UIColor.blackColor;
+    self.imageController.imageView.hidden = stage != pmsonginterruption::Stage::Blue;
+    self.imageController.effectView.hidden = stage != pmsonginterruption::Stage::Effect;
+    if (stage == pmsonginterruption::Stage::Effect) {
+        PMInterruptionMediaSession *session = [PMInterruptionMediaSession new];
+        session.effect = state.payload()->effect;
+        session.container = self.imageController.effectView;
+        session.duration = state.payload()->prepared.effectDuration;
+        self.effectSession = session;
+        if (!session.effect || ![session start]) { [self invalidate:ticket]; return NO; }
+    }
+    return state.owns(ticket);
+}
+- (void)stopAudio {
+    NSDictionary *sessions=self.audioSessions;self.audioSessions=nil;
+    for(PMInterruptionMediaSession *media in sessions.allValues)[media stop];
+}
+- (void)muteFailedAudio:(NSString *)phase {
+    PMInterruptionMediaSession *media=self.audioSessions[phase];[self.audioSessions removeObjectForKey:phase];[media stop];
+    PMDiagnosticsWrite("Song interruption: stage audio failed; continuing visual timeline silently");
+}
+- (BOOL)displayMedia:(PMInterruptionTicket)ticket {
+    if(!state.owns(ticket))return NO;
+    if(self.mediaSuspended){
+        self.mediaSuspended=NO;
+        if(self.effectSession && ![self.effectSession resume]){[self invalidate:ticket];return NO;}
+        if(!state.owns(ticket))return NO;
+        for(NSString *phase in self.audioSessions.allKeys)
+            if(![self.audioSessions[phase] resume])[self muteFailedAudio:phase];
+    }
+    if(!state.owns(ticket))return NO;
+    if(self.effectSession && ![self.effectSession event:PMSongInterruptionEffectFrame]){[self invalidate:ticket];return NO;}
+    if(!state.owns(ticket))return NO;
+    auto payload=state.payload();
+    NSString *phase=state.stage()==pmsonginterruption::Stage::Effect?@"effect":state.stage()==pmsonginterruption::Stage::Black?@"black":@"blue";
+    double delay=state.stage()==pmsonginterruption::Stage::Effect?payload->prepared.effectAudioDelay:
+                 state.stage()==pmsonginterruption::Stage::Black?payload->prepared.blackAudioDelay:payload->prepared.blueAudioDelay;
+    if(payload->prepared.audioData[phase] && state.claimAudio(ticket,continuousSeconds(),delay)){
+        // The owner consumes before playback, including failed decode/start.
+        if(!self.audioSessions)self.audioSessions=[NSMutableDictionary dictionary];
+        PMInterruptionMediaSession *media=[PMInterruptionMediaSession new];
+        @try {
+            NSError *error=nil;media.audio=[[AVAudioPlayer alloc]initWithData:payload->prepared.audioData[phase] error:&error];
+            media.audio.volume=(float)payload->prepared.audioVolume;media.audio.numberOfLoops=0;
+            self.audioSessions[phase]=media;
+            if(!media.audio || ![media start])[self muteFailedAudio:phase];
+        } @catch(NSException *exception){(void)exception;[self muteFailedAudio:phase];}
+    }
+    return state.owns(ticket);
+}
+- (void)suspend:(PMInterruptionTicket)ticket {
+    if(!state.owns(ticket) || self.mediaSuspended)return;
+    state.suspend(ticket,continuousSeconds());self.clock.paused=YES;self.mediaSuspended=YES;
+    if(self.effectSession && ![self.effectSession pause]){[self invalidate:ticket];return;}
+    if(!state.owns(ticket))return;
+    for(NSString *phase in self.audioSessions.allKeys)
+        if(![self.audioSessions[phase] pause])[self muteFailedAudio:phase];
+}
 - (void)observe:(PMInterruptionTicket)ticket {
     self.observers = [NSMutableArray array];
     __weak PMSongInterruptionOwner *weak = self;
@@ -351,9 +548,16 @@ static void notifyInvalidation(const std::shared_ptr<PMInterruptionPayload>& pay
                 [owner invalidate:ticket]; return;
             }
             if (![owner validHost:ticket]) return;
+            // Scene notifications from other windows cannot pause this owner.
+            BOOL sceneNote = [note.name isEqual:UISceneWillDeactivateNotification] ||
+                [note.name isEqual:UISceneDidActivateNotification] || [note.name isEqual:UISceneDidDisconnectNotification];
+            if (sceneNote && note.object != owner.gameScene) return;
+            BOOL deactivating = [note.name isEqual:UIApplicationWillResignActiveNotification] ||
+                [note.name isEqual:UIApplicationDidEnterBackgroundNotification] ||
+                [note.name isEqual:UISceneWillDeactivateNotification];
+            if (deactivating || !activeWindow(owner.gameWindow)) { [owner suspend:ticket]; return; }
             owner.clock.paused = !activeWindow(owner.gameWindow);
-            // Activation never presents synchronously: wait for the next displayed
-            // image frame. The continuous deadline itself is NOT paused or reset.
+            // Resume only on the next displayed frame, never in a notification.
         }];
         [self.observers addObject:observer];
     }
@@ -363,7 +567,7 @@ static void notifyInvalidation(const std::shared_ptr<PMInterruptionPayload>& pay
     auto ticket = state.ticket();
     if (![self validHost:ticket]) return;
     BOOL active = activeWindow(self.gameWindow);
-    if (!active) { self.clock.paused = YES; return; }
+    if (!active) { [self suspend:ticket]; return; }
     if (!self.imageWindow || self.imageWindow.hidden ||
         self.imageController.imageView.window != self.imageWindow || !self.imageController.imageView.image) {
         [self invalidate:ticket]; return;
@@ -371,8 +575,14 @@ static void notifyInvalidation(const std::shared_ptr<PMInterruptionPayload>& pay
     [self.imageWindow layoutIfNeeded];
     if (!state.owns(ticket)) return;
     const double now = continuousSeconds();
-    if (state.firstDisplay(ticket, now, true, true)) { PMDiagnosticsWrite("Song interruption: blue image displayed; realtime delay started"); return; } // Even delay=0 gets an image frame.
+    if (state.firstDisplay(ticket, now, true, true)) {
+        [self displayMedia:ticket];
+        return; // Every stage, including zero-length blue, gets a displayed frame.
+    }
+    if (![self displayMedia:ticket]) return; // Legacy resume also preserves media position.
+    if (state.advanceStage(ticket, now, true)) { [self renderStage:ticket]; return; }
     if (!state.claimAlert(ticket, now, true)) return;
+    if(!state.payload()->prepared.audioTail)[self stopAudio];
     auto payload = state.payload();
     if (self.imageController.presentedViewController) { [self invalidate:ticket]; return; }
     PMDiagnosticsWrite("Song interruption: presenting single-button quit alert");
@@ -384,7 +594,7 @@ static void notifyInvalidation(const std::shared_ptr<PMInterruptionPayload>& pay
     alert.modalInPresentation = YES;
     self.alert = alert;
     @try {
-        [self.imageController presentViewController:alert animated:NO completion:^{
+        [self.imageController presentViewController:alert animated:YES completion:^{
             PMSongInterruptionOwner *owner = weak;
             if (!owner || !owner->state.owns(ticket)) return;
             if (owner.alert != alert || alert.presentingViewController != owner.imageController)
@@ -403,6 +613,9 @@ static void notifyInvalidation(const std::shared_ptr<PMInterruptionPayload>& pay
 }
 @end
 
+void PMSetSongInterruptionEffectHandler(BOOL (^handler)(PMSongInterruptionEffectEvent, UIView *, NSTimeInterval)) {
+    if (NSThread.isMainThread) configuredEffect = [handler copy];
+}
 void PMSetSongInterruptionHostGuard(BOOL (^guard)(void), void (^invalidated)(void)) {
     if (!NSThread.isMainThread) return;
     configuredGuard = [guard copy];
@@ -421,7 +634,8 @@ BOOL PMArmSongInterruption(PMPreparedSongInterruption *prepared, NSString *chart
     if (host.window && !completeCover(payload, windowAspect(host.window))) {
         owner->state.cancelLaunch(); return NO;
     }
-    BOOL armed=owner->state.arm(std::move(payload), chartID.UTF8String, slot, prepared.at, prepared.delay);
+    BOOL armed=owner->state.arm(std::move(payload), chartID.UTF8String, slot, prepared.at, prepared.delay,
+        {bool(prepared.staged), prepared.effectDuration, prepared.blackDuration, prepared.blueDuration});
     PMDiagnosticsWrite([[NSString stringWithFormat:@"Song interruption arm chart=%@ slot=%d at=%.3f accepted=%d",chartID,slot,prepared.at,armed] UTF8String]);
     return armed;
 }
@@ -436,11 +650,15 @@ BOOL PMBeginSongInterruption(NSString *chartID, int slot) {
     auto ticket = owner->state.ticket();
     if (accepted) {
         auto playing = owner->state.payload();
+        playing->effect = [configuredEffect copy];
         playing->guard = [configuredGuard copy];
         playing->invalidated = [configuredInvalidation copy];
     }
     [owner clearUI];
     notifyInvalidation(previous);
+    if (accepted && owner->state.owns(ticket) && owner->state.payload()->prepared.effectDuration > 0 && !owner->state.payload()->effect) {
+        [owner invalidate:ticket]; accepted = NO;
+    }
     PMDiagnosticsWrite([[NSString stringWithFormat:@"Song interruption begin chart=%@ slot=%d accepted=%d",chartID,slot,accepted] UTF8String]);
     return accepted && owner->state.owns(ticket); // Invalidation may reenter.
 }
@@ -510,13 +728,19 @@ BOOL PMTriggerSongInterruption(BOOL (^freeze)(void), void (^quit)(void)) {
             if (!image) { [current invalidate:ticket]; return; }
             current.imageController.imageView.image = image;
         };
+        window.backgroundColor = UIColor.clearColor;
+        window.opaque = NO;
+        controller.view.frame = window.bounds;
+        [controller.view layoutIfNeeded];
+        if (![owner renderStage:ticket]) return NO;
         [window makeKeyAndVisible];
         [window layoutIfNeeded];
         if (!owner->state.owns(ticket) || ![owner validHost:ticket]) return NO;
         [owner observe:ticket];
         owner.clock = [CADisplayLink displayLinkWithTarget:owner selector:@selector(step:)];
         [owner.clock addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
-        return YES;
+        if (!activeWindow(host.window)) [owner suspend:ticket];
+        return owner->state.owns(ticket);
     } @catch (NSException *exception) { (void)exception; [owner invalidate:ticket]; return NO; }
 }
 BOOL PMSongInterruptionBlocking(void) {

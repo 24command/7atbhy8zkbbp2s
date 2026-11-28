@@ -34,6 +34,7 @@ jobs:
             ios/PhiMod/Sources/PMNativeOSEntryTimeline.mm \
             ios/PhiMod/Sources/PMNativeOSMap.mm \
             ios/PhiMod/Sources/PMNativeOSProgram.mm \
+            ios/PhiMod/Sources/PMNativeOSAudio.mm \
             ios/PhiMod/Sources/PMNativeOSLoadError.mm \
             ios/PhiMod/Sources/PMNativeOSActions.mm \
             ios/PhiMod/Sources/PMUnlockMedia.mm \
