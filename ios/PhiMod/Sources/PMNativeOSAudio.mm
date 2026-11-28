@@ -15,14 +15,17 @@
 namespace {
 #if defined(PM_NATIVE_OS_AUDIO_HOST_TEST)
 // macOS Foundation-only test host. This switch replaces ONLY application
-// lifecycle signals; AVAudioPlayer and all file/decoder code remain real.
+// lifecycle notification signals; AVAudioPlayer and all file/decoder code remain real.
 BOOL hostApplicationActive = YES;
 NSString *applicationResignNotification() { return @"PhiMod.AudioHost.WillResignActive"; }
 NSString *applicationActiveNotification() { return @"PhiMod.AudioHost.DidBecomeActive"; }
 BOOL applicationInactive() { return !hostApplicationActive; }
+NSString *interruptionNotification() { return @"PhiMod.AudioHost.Interruption"; }
+NSString *interruptionTypeKey() { return @"type"; }
+NSString *interruptionOptionKey() { return @"options"; }
 // Test TU includes this implementation, so no production/exported test hook.
 [[maybe_unused]] void injectHostApplicationActive(BOOL active) {
-    NSAssert(NSThread.isMainThread, @"Audio host lifecycle injection is main-thread-only");
+    NSCAssert(NSThread.isMainThread, @"Audio host lifecycle injection is main-thread-only");
     hostApplicationActive = active;
     [NSNotificationCenter.defaultCenter postNotificationName:active ? applicationActiveNotification() : applicationResignNotification()
                                                      object:nil];
@@ -31,6 +34,9 @@ BOOL applicationInactive() { return !hostApplicationActive; }
 NSString *applicationResignNotification() { return UIApplicationWillResignActiveNotification; }
 NSString *applicationActiveNotification() { return UIApplicationDidBecomeActiveNotification; }
 BOOL applicationInactive() { return UIApplication.sharedApplication.applicationState != UIApplicationStateActive; }
+NSString *interruptionNotification() { return AVAudioSessionInterruptionNotification; }
+NSString *interruptionTypeKey() { return AVAudioSessionInterruptionTypeKey; }
+NSString *interruptionOptionKey() { return AVAudioSessionInterruptionOptionKey; }
 #endif
 constexpr NSUInteger FileLimit = 32u * 1024u * 1024u;
 constexpr NSUInteger TotalLimit = 64u * 1024u * 1024u;
@@ -280,14 +286,14 @@ struct NativePlayer {
         if (!s) return;
         s->_background = NO; [s reconcile];
     }]];
-    [_observers addObject:[center addObserverForName:AVAudioSessionInterruptionNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+    [_observers addObject:[center addObserverForName:interruptionNotification() object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
         PMNativeOSAudio *s = weakSelf;
         if (!s) return;
-        if ([note.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue] == AVAudioSessionInterruptionTypeBegan)
+        if ([note.userInfo[interruptionTypeKey()] unsignedIntegerValue] == AVAudioSessionInterruptionTypeBegan)
             s->_interrupted = YES;
         else {
             s->_interrupted = NO;
-            s->_resumeBlocked = ([note.userInfo[AVAudioSessionInterruptionOptionKey] unsignedIntegerValue] & AVAudioSessionInterruptionOptionShouldResume) == 0;
+            s->_resumeBlocked = ([note.userInfo[interruptionOptionKey()] unsignedIntegerValue] & AVAudioSessionInterruptionOptionShouldResume) == 0;
         }
         [s reconcile];
     }]];
