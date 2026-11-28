@@ -54,12 +54,31 @@ void observeDoorLoss(P pc,const phimod::Session &session,bool accepted,float bef
 
 void settleDoorEnd(P pc,const phimod::Session *session,bool ending){
  if(!doorProgress || pc!=doorProgress)return;
+ if(!session){abandonBoundDoor();return;}
  try{
   auto &r=R();P info=r.get<P>(pc,"levelInformation");
-  if(session && doorPlayEligible(session->options()) && !ending && !session->trackLost() && session->hp()>0 &&
-     !r.get<bool>(pc,"levelBreak") && !r.get<bool>(pc,"leave") && !r.get<bool>(pc,"_inChallengeMode") &&
-     info && r.get<bool>(info,"chartLoaded") && r.get<bool>(info,"levelBegan") &&
-     r.get<bool>(info,"levelOver") && r.get<bool>(info,"canLevelOver"))finishBoundDoor(YES);
+  const bool loaded=info && r.get<bool>(info,"chartLoaded");
+  const bool over=info && r.get<bool>(info,"levelOver");
+  const bool canOver=info && r.get<bool>(info,"canLevelOver");
+  const bool broken=r.get<bool>(pc,"levelBreak"),course=r.get<bool>(pc,"_inChallengeMode");
+  // 4.0.4 ProgressControl.Update (0x1593AC0..0x1593AE8) latches
+  // levelOver only when canLevelOver permits the native audio-end transition.
+  // levelBegan can remain false throughout play. leave is a transient focus/
+  // pause request (0x1593220..0x1593240), not LevelBreak's exit latch (+0xA5).
+  const bool clear=doorPlayEligible(session->options()) && session->options().hpEnabled &&
+   !ending && !session->trackLost() && session->hp()>0 && !broken && !course && loaded && over && canOver;
+  // The binding is consumed below, so repeated end/result callbacks cannot
+  // repeat this diagnostic or the outcome. PMDoorFinish retains nextSongs.
+  const std::string detail=std::string(clear?"clear":"abandon")+
+   " hp="+std::to_string(session->hp())+" lost="+std::to_string(session->trackLost())+
+   " ending="+std::to_string(ending)+" eligible="+std::to_string(doorPlayEligible(session->options()))+
+   " hpEnabled="+std::to_string(session->options().hpEnabled)+" loaded="+std::to_string(loaded)+
+   " began="+std::to_string(info && r.get<bool>(info,"levelBegan"))+
+   " leave="+std::to_string(r.get<bool>(pc,"leave"))+
+   " over="+std::to_string(over)+" canOver="+std::to_string(canOver)+
+   " break="+std::to_string(broken)+" course="+std::to_string(course);
+  diagf("Door level end: %s",detail.c_str());
+  if(clear)finishBoundDoor(YES);
   else abandonBoundDoor();
  }catch(const std::exception &e){diagf("Door level end unavailable: %s",e.what());abandonBoundDoor();}
 }

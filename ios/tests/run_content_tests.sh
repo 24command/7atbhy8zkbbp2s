@@ -55,6 +55,10 @@ clang++ -std=c++17 -fobjc-arc -DPMDOOR_RUN_HOST_TEST -framework Foundation -fram
     "$ROOT/tests/PMChapterCoverTest.mm" "$ROOT/PhiMod/Sources/PMDoorRun.mm" \
     "$ROOT/PhiMod/Sources/PMOSAuthorProgress.mm" ./*.o -o chaptercover
   ./chaptercover
+  clang++ -std=c++17 -fobjc-arc -DPMDOOR_RUN_HOST_TEST -framework Foundation -framework CoreFoundation \
+    "$ROOT/tests/PMDoorReturnFlowTest.mm" "$ROOT/PhiMod/Sources/PMDoorRun.mm" \
+    "$ROOT/PhiMod/Sources/PMOSAuthorProgress.mm" ./*.o -o chaptercover
+  ./chaptercover
 )
 python3 "$ROOT/tests/test_native_os_frame_sequence.py"
 python3 "$ROOT/tests/run_chapter_puzzle.py" clang -O2
